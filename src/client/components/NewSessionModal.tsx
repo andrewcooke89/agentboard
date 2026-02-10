@@ -5,13 +5,14 @@ import { DirectoryBrowser } from './DirectoryBrowser'
 interface NewSessionModalProps {
   isOpen: boolean
   onClose: () => void
-  onCreate: (projectPath: string, name?: string, command?: string) => void
+  onCreate: (projectPath: string, name?: string, command?: string, prompt?: string) => void
   defaultProjectDir: string
   commandPresets: CommandPreset[]
   defaultPresetId: string
   onUpdateModifiers: (presetId: string, modifiers: string) => void
   lastProjectPath?: string | null
   activeProjectPath?: string
+  projectPathPresets?: string[]
 }
 
 export default function NewSessionModal({
@@ -24,9 +25,11 @@ export default function NewSessionModal({
   onUpdateModifiers,
   lastProjectPath,
   activeProjectPath,
+  projectPathPresets,
 }: NewSessionModalProps) {
   const [projectPath, setProjectPath] = useState('')
   const [name, setName] = useState('')
+  const [prompt, setPrompt] = useState('')
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
   const [modifiers, setModifiers] = useState('')
   const [customCommand, setCustomCommand] = useState('')
@@ -52,6 +55,7 @@ export default function NewSessionModal({
     if (!isOpen) {
       setProjectPath('')
       setName('')
+      setPrompt('')
       setSelectedPresetId(null)
       setModifiers('')
       setCustomCommand('')
@@ -125,7 +129,7 @@ export default function NewSessionModal({
         return
       }
 
-      if (e.key === 'Enter' && document.activeElement?.tagName !== 'INPUT') {
+      if (e.key === 'Enter' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
         e.preventDefault()
         if (typeof e.stopPropagation === 'function') e.stopPropagation()
         formRef.current?.requestSubmit()
@@ -200,7 +204,8 @@ export default function NewSessionModal({
     onCreate(
       trimmedPath,
       name.trim() || undefined,
-      finalCommand || undefined
+      finalCommand || undefined,
+      prompt.trim() || undefined
     )
     onClose()
   }
@@ -317,6 +322,26 @@ export default function NewSessionModal({
             <label className="mb-1.5 block text-xs text-secondary">
               Project Path
             </label>
+            {/* Project path preset quick-select buttons */}
+            {projectPathPresets && projectPathPresets.length > 0 && (
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {projectPathPresets.map((preset) => {
+                  const label = preset.replace(/\/+$/, '').split('/').pop() || preset
+                  const isActive = projectPath === preset
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      title={preset}
+                      onClick={() => setProjectPath(preset)}
+                      className={`btn text-xs focus:outline-none focus:ring-2 focus:ring-primary ${isActive ? 'btn-primary' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <div className="flex gap-2">
               <input
                 ref={projectPathRef}
@@ -341,12 +366,24 @@ export default function NewSessionModal({
           </div>
           <div>
             <label className="mb-1.5 block text-xs text-secondary">
+              Initial Prompt <span className="text-muted">(optional)</span>
+            </label>
+            <textarea
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="e.g., Review the codebase and suggest improvements"
+              rows={2}
+              className="input text-sm resize-y"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs text-secondary">
               Display Name
             </label>
             <input
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="auto-generated"
+              placeholder="auto-generated from project path"
               className="input text-sm placeholder:italic"
             />
           </div>

@@ -258,7 +258,7 @@ describe('component rendering', () => {
 
   test('renders header', () => {
     const html = renderMarkup(
-      <Header connectionStatus="connected" onNewSession={() => {}} onOpenSettings={() => {}} tailscaleIp={null} />
+      <Header connectionStatus="connected" onNewSession={() => {}} onOpenSettings={() => {}} onToggleTaskQueue={() => {}} taskQueueActive={false} taskQueueCount={0} tailscaleIp={null} />
     )
     expect(html).toContain('AGENTBOARD')
   })

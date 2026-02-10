@@ -52,6 +52,11 @@ const defaultConfig = {
   logMatchProfile: false,
   claudeResumeCmd: 'claude --resume {sessionId}',
   codexResumeCmd: 'codex resume {sessionId}',
+  taskMaxConcurrent: 5,
+  taskPollIntervalMs: 5000,
+  taskDefaultTimeoutSeconds: 1800,
+  taskRateLimitPerHour: 30,
+  taskOutputDir: '/tmp/agentboard-test-task-outputs',
 }
 
 const configState = { ...defaultConfig }
@@ -254,6 +259,7 @@ mock.module('../../config', () => ({
 }))
 mock.module('../../db', () => ({
   initDatabase: () => ({
+    db: new (require('bun:sqlite').Database)(':memory:'),
     getSessionById: (sessionId: string) => dbState.records.get(sessionId) ?? null,
     getSessionByLogPath: (logFilePath: string) =>
       Array.from(dbState.records.values()).find(

@@ -35,6 +35,7 @@ export function getFontFamily(fontOption: FontOption, customFontFamily: string):
   return option?.family || FONT_OPTIONS[0].family
 }
 
+export type SessionGroupMode = 'none' | 'project'
 export type SessionSortMode = 'status' | 'created' | 'manual'
 export type SessionSortDirection = 'asc' | 'desc'
 export type ShortcutModifier = 'ctrl-option' | 'ctrl-shift' | 'cmd-option' | 'cmd-shift'
@@ -159,6 +160,21 @@ interface SettingsState {
   updatePresetModifiers: (presetId: string, modifiers: string) => void
   addPreset: (preset: Omit<CommandPreset, 'id' | 'isBuiltIn'>) => void
   removePreset: (presetId: string) => void
+  // Project path presets (favorite project directories)
+  projectPathPresets: string[]
+  addProjectPathPreset: (path: string) => void
+  removeProjectPathPreset: (path: string) => void
+  reorderProjectPathPresets: (presets: string[]) => void
+  // Browser notifications
+  notifyOnPermission: boolean
+  setNotifyOnPermission: (enabled: boolean) => void
+  notifyOnIdle: boolean
+  setNotifyOnIdle: (enabled: boolean) => void
+  // Session grouping
+  sessionGroupMode: SessionGroupMode
+  setSessionGroupMode: (mode: SessionGroupMode) => void
+  collapsedProjects: string[]
+  toggleProjectCollapsed: (projectPath: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -211,7 +227,7 @@ export const useSettingsStore = create<SettingsState>()(
       projectFilters: [],
       setProjectFilters: (filters) => set({ projectFilters: filters }),
       // Sound notifications
-      soundOnPermission: false,
+      soundOnPermission: true,
       setSoundOnPermission: (enabled) => set({ soundOnPermission: enabled }),
       soundOnIdle: false,
       setSoundOnIdle: (enabled) => set({ soundOnIdle: enabled }),
@@ -251,6 +267,36 @@ export const useSettingsStore = create<SettingsState>()(
           : defaultPresetId
         set({ commandPresets: filtered, defaultPresetId: newDefault })
       },
+      // Project path presets
+      projectPathPresets: [],
+      addProjectPathPreset: (path) => {
+        const { projectPathPresets } = get()
+        const trimmed = path.trim()
+        if (!trimmed || projectPathPresets.includes(trimmed)) return
+        set({ projectPathPresets: [...projectPathPresets, trimmed] })
+      },
+      removeProjectPathPreset: (path) => {
+        const { projectPathPresets } = get()
+        set({ projectPathPresets: projectPathPresets.filter(p => p !== path) })
+      },
+      reorderProjectPathPresets: (presets) => {
+        set({ projectPathPresets: presets })
+      },
+      // Browser notifications
+      notifyOnPermission: true,
+      setNotifyOnPermission: (enabled) => set({ notifyOnPermission: enabled }),
+      notifyOnIdle: false,
+      setNotifyOnIdle: (enabled) => set({ notifyOnIdle: enabled }),
+      // Session grouping
+      sessionGroupMode: 'none' as SessionGroupMode,
+      setSessionGroupMode: (mode) => set({ sessionGroupMode: mode }),
+      collapsedProjects: [],
+      toggleProjectCollapsed: (projectPath) => set((state) => {
+        const collapsed = state.collapsedProjects.includes(projectPath)
+          ? state.collapsedProjects.filter(p => p !== projectPath)
+          : [...state.collapsedProjects, projectPath]
+        return { collapsedProjects: collapsed }
+      }),
     }),
     {
       name: 'agentboard-settings',

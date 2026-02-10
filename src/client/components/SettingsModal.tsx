@@ -14,6 +14,7 @@ import { useThemeStore, type Theme } from '../stores/themeStore'
 import { getEffectiveModifier, getModifierDisplay } from '../utils/device'
 import { Switch } from './Switch'
 import { playPermissionSound, playIdleSound, primeAudio } from '../utils/sound'
+import { requestNotificationPermission, getNotificationPermission, showNotification } from '../utils/notification'
 
 interface SettingsChangeFlags {
   webglChanged: boolean
@@ -84,8 +85,18 @@ export default function SettingsModal({
   const setSoundOnPermission = useSettingsStore((state) => state.setSoundOnPermission)
   const soundOnIdle = useSettingsStore((state) => state.soundOnIdle)
   const setSoundOnIdle = useSettingsStore((state) => state.setSoundOnIdle)
+  const projectPathPresets = useSettingsStore((state) => state.projectPathPresets)
+  const addProjectPathPreset = useSettingsStore((state) => state.addProjectPathPreset)
+  const removeProjectPathPreset = useSettingsStore((state) => state.removeProjectPathPreset)
+  const notifyOnPermission = useSettingsStore((state) => state.notifyOnPermission)
+  const setNotifyOnPermission = useSettingsStore((state) => state.setNotifyOnPermission)
+  const notifyOnIdle = useSettingsStore((state) => state.notifyOnIdle)
+  const setNotifyOnIdle = useSettingsStore((state) => state.setNotifyOnIdle)
+  const sessionGroupMode = useSettingsStore((state) => state.sessionGroupMode)
+  const setSessionGroupMode = useSettingsStore((state) => state.setSessionGroupMode)
 
   const [draftDir, setDraftDir] = useState(defaultProjectDir)
+  const [newPresetPath, setNewPresetPath] = useState('')
   const [draftPresets, setDraftPresets] = useState<CommandPreset[]>(commandPresets)
   const [draftDefaultPresetId, setDraftDefaultPresetId] = useState(defaultPresetId)
   const [draftSortMode, setDraftSortMode] =
@@ -106,12 +117,15 @@ export default function SettingsModal({
   const [draftShowLastUserMessage, setDraftShowLastUserMessage] = useState(
     showLastUserMessage
   )
-  const [draftShowSessionIdPrefix, setDraftShowSessionIdSuffix] = useState(
+  const [draftShowSessionIdPrefix, setDraftShowSessionIdPrefix] = useState(
     showSessionIdPrefix
   )
   const [draftTheme, setDraftTheme] = useState<Theme>(theme)
   const [draftSoundOnPermission, setDraftSoundOnPermission] = useState(soundOnPermission)
   const [draftSoundOnIdle, setDraftSoundOnIdle] = useState(soundOnIdle)
+  const [draftNotifyOnPermission, setDraftNotifyOnPermission] = useState(notifyOnPermission)
+  const [draftNotifyOnIdle, setDraftNotifyOnIdle] = useState(notifyOnIdle)
+  const [draftSessionGroupMode, setDraftSessionGroupMode] = useState(sessionGroupMode)
 
   // New preset form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -142,10 +156,13 @@ export default function SettingsModal({
       setDraftShortcutModifier(shortcutModifier)
       setDraftShowProjectName(showProjectName)
       setDraftShowLastUserMessage(showLastUserMessage)
-      setDraftShowSessionIdSuffix(showSessionIdPrefix)
+      setDraftShowSessionIdPrefix(showSessionIdPrefix)
       setDraftTheme(theme)
       setDraftSoundOnPermission(soundOnPermission)
       setDraftSoundOnIdle(soundOnIdle)
+      setDraftNotifyOnPermission(notifyOnPermission)
+      setDraftNotifyOnIdle(notifyOnIdle)
+      setDraftSessionGroupMode(sessionGroupMode)
       setShowAddForm(false)
       setNewLabel('')
       setNewBaseCommand('')
@@ -199,6 +216,9 @@ export default function SettingsModal({
     theme,
     soundOnPermission,
     soundOnIdle,
+    notifyOnPermission,
+    notifyOnIdle,
+    sessionGroupMode,
     isOpen,
   ])
 
@@ -209,7 +229,8 @@ export default function SettingsModal({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (typeof e.stopPropagation === 'function') e.stopPropagation()
+        e.preventDefault()
+        e.stopPropagation()
         onClose()
       }
     }
@@ -243,6 +264,9 @@ export default function SettingsModal({
     setTheme(draftTheme)
     setSoundOnPermission(draftSoundOnPermission)
     setSoundOnIdle(draftSoundOnIdle)
+    setNotifyOnPermission(draftNotifyOnPermission)
+    setNotifyOnIdle(draftNotifyOnIdle)
+    setSessionGroupMode(draftSessionGroupMode)
     onClose({ webglChanged })
   }
 
@@ -318,6 +342,66 @@ export default function SettingsModal({
               className="input"
               autoFocus
             />
+          </div>
+
+          {/* Project Path Presets Section */}
+          <div className="border-t border-border pt-4">
+            <label className="mb-2 block text-xs text-secondary">
+              Favorite Project Paths
+            </label>
+            <p className="text-[10px] text-muted mb-3">
+              Quick-select buttons shown in the new session dialog.
+            </p>
+            {projectPathPresets.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {projectPathPresets.map((preset) => (
+                  <div
+                    key={preset}
+                    className="flex items-center gap-2 border border-border p-2"
+                  >
+                    <span className="flex-1 text-xs font-mono truncate" title={preset}>
+                      {preset}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn text-xs px-2 py-0.5"
+                      onClick={() => removeProjectPathPreset(preset)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={newPresetPath}
+                onChange={(e) => setNewPresetPath(e.target.value)}
+                placeholder="~/projects/my-project"
+                className="input flex-1 text-xs font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    if (newPresetPath.trim()) {
+                      addProjectPathPreset(newPresetPath.trim())
+                      setNewPresetPath('')
+                    }
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn text-xs"
+                onClick={() => {
+                  if (newPresetPath.trim()) {
+                    addProjectPathPreset(newPresetPath.trim())
+                    setNewPresetPath('')
+                  }
+                }}
+              >
+                Add
+              </button>
+            </div>
           </div>
 
           {/* Command Presets Section */}
@@ -535,6 +619,33 @@ export default function SettingsModal({
             </div>
           )}
 
+          <div className="border-t border-border pt-4">
+            <label className="mb-2 block text-xs text-secondary">
+              Group Sessions By
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={`btn flex-1 ${draftSessionGroupMode === 'none' ? 'btn-primary' : ''}`}
+                onClick={() => setDraftSessionGroupMode('none')}
+              >
+                None
+              </button>
+              <button
+                type="button"
+                className={`btn flex-1 ${draftSessionGroupMode === 'project' ? 'btn-primary' : ''}`}
+                onClick={() => setDraftSessionGroupMode('project')}
+              >
+                Project
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted">
+              {draftSessionGroupMode === 'project'
+                ? 'Sessions grouped by project folder with collapsible headers'
+                : 'Sessions shown as a flat list'}
+            </p>
+          </div>
+
           <div className="border-t border-border pt-4 space-y-3">
             <label className="mb-1 block text-xs text-secondary">
               Session List Details
@@ -572,7 +683,7 @@ export default function SettingsModal({
               </div>
               <Switch
                 checked={draftShowSessionIdPrefix}
-                onCheckedChange={setDraftShowSessionIdSuffix}
+                onCheckedChange={setDraftShowSessionIdPrefix}
               />
             </div>
           </div>
@@ -625,6 +736,67 @@ export default function SettingsModal({
                   onCheckedChange={(checked) => {
                     setDraftSoundOnIdle(checked)
                     if (checked) void primeAudio() // Unlock audio on user gesture
+                  }}
+                />
+              </div>
+            </div>
+            {/* Browser Notifications */}
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex-1">
+                <div className="text-sm text-primary">Permission Notification</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notification when a session needs permission.
+                  {getNotificationPermission() === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
+                  className="btn text-xs px-2 py-1"
+                >
+                  Test
+                </button>
+                <Switch
+                  checked={draftNotifyOnPermission}
+                  onCheckedChange={async (checked) => {
+                    if (checked) {
+                      const perm = await requestNotificationPermission()
+                      if (perm !== 'granted') return
+                    }
+                    setDraftNotifyOnPermission(checked)
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex-1">
+                <div className="text-sm text-primary">Idle Notification</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notification when a session finishes working.
+                  {getNotificationPermission() === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
+                  className="btn text-xs px-2 py-1"
+                >
+                  Test
+                </button>
+                <Switch
+                  checked={draftNotifyOnIdle}
+                  onCheckedChange={async (checked) => {
+                    if (checked) {
+                      const perm = await requestNotificationPermission()
+                      if (perm !== 'granted') return
+                    }
+                    setDraftNotifyOnIdle(checked)
                   }}
                 />
               </div>

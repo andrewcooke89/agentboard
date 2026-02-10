@@ -1,0 +1,53 @@
+id: TKT-0009
+version: 1
+created_at: 2026-02-04T07:36:45.405Z
+updated_at: 2026-02-04T07:36:45.405Z
+category: error-handling
+subcategory: state-safety
+severity: high
+status: open
+source:
+  file: src/server/taskWorker.ts
+  line_start: 37
+  line_end: 37
+  code_snippet: const processingIds = new Set<string>()
+  content_hash: cb9189e06c2102be
+related_locations:
+  - file: src/server/taskWorker.ts
+    line_start: 276
+    role: sink
+    description: processingIds.add() called without lock protection
+  - file: src/server/taskWorker.ts
+    line_start: 304
+    role: sink
+    description: processingIds.delete() called without lock protection
+title: Shared processingIds Set without synchronization
+description: "The processingIds Set is used to prevent double-processing of
+  tasks but is mutated without locks in dequeueTasks() (line 276:
+  processingIds.add) and spawnTask() (line 304: processingIds.delete). If poll()
+  is called re-entrantly (e.g., via async intervals or manual trigger), two poll
+  cycles could simultaneously process the same task. Comment acknowledges
+  potential re-entrancy but no synchronization primitives used."
+suggestion: "Add pollInFlight boolean flag checked/set at poll() entry (pattern
+  from sessionRefresh.ts). Guard poll() execution: if (pollInFlight) return;
+  pollInFlight = true; try { ... } finally { pollInFlight = false }. Consider
+  using mutex/semaphore if async conversion planned."
+auto_fixable: false
+fix_confidence: high
+effort: small
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - concurrency
+  - state-safety
+  - race-condition
+  - state-003
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

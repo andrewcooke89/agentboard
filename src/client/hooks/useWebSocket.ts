@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ClientMessage, ServerMessage } from '@shared/types'
 import type { ConnectionStatus } from '../stores/sessionStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAuthStore } from '../stores/authStore'
+import { useWorkflowStore } from '../stores/workflowStore'
 
 type MessageListener = (message: ServerMessage) => void
 
@@ -31,13 +33,37 @@ export class WebSocketManager {
     this.ws = ws
 
     ws.onopen = () => {
+      const isReconnect = this.reconnectAttempts > 0
       this.reconnectAttempts = 0
       this.setStatus('connected')
+
+      // Send auth message on open if token is available
+      const token = useAuthStore.getState().token
+      if (token) {
+        ws.send(JSON.stringify({ type: 'auth', token }))
+      }
+
+      // On reconnect, refresh workflow state to avoid staleness
+      if (isReconnect) {
+        const workflowStore = useWorkflowStore.getState()
+        if (workflowStore.hasLoaded) {
+          workflowStore.fetchWorkflows()
+        }
+      }
     }
 
     ws.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data as string) as ServerMessage
+
+        // Handle auth-failed: clear token and flag auth required
+        if (parsed.type === 'auth-failed') {
+          const authStore = useAuthStore.getState()
+          authStore.setToken(null)
+          authStore.setAuthRequired(true)
+          return
+        }
+
         this.listeners.forEach((listener) => listener(parsed))
       } catch {
         // Ignore malformed payloads

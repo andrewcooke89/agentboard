@@ -1,0 +1,1110 @@
+/**
+ * workflowSchema.test.ts — Tests for YAML workflow parsing and validation (WO-003)
+ */
+
+import { describe, test, expect } from 'bun:test'
+import { parseWorkflowYAML, substituteVariables } from '../workflowSchema'
+import type { WorkflowStep } from '../../shared/types'
+
+// ─── Test Fixtures ──────────────────────────────────────────────────────────
+
+const VALID_WORKFLOW = `
+name: my-pipeline
+description: "Runs analysis pipeline"
+steps:
+  - name: analyze
+    type: spawn_session
+    projectPath: /path/to/project
+    prompt: "Analyze the codebase"
+    output_path: ./output/analysis.md
+    timeoutSeconds: 3600
+    maxRetries: 2
+
+  - name: verify
+    type: check_file
+    path: ./output/analysis.json
+    timeoutSeconds: 60
+
+  - name: pause
+    type: delay
+    seconds: 30
+
+  - name: validate
+    type: check_output
+    step: analyze
+    contains: "no errors found"
+`
+
+const VALID_MINIMAL = `
+name: simple
+steps:
+  - name: step1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+`
+
+const CONDITIONAL_WORKFLOW = `
+name: conditional-pipeline
+steps:
+  - name: setup
+    type: spawn_session
+    projectPath: /tmp
+    prompt: "setup"
+
+  - name: check-ready
+    type: check_file
+    path: ./ready.txt
+    condition:
+      type: file_exists
+      path: ./pre-check.txt
+
+  - name: verify-output
+    type: check_output
+    step: setup
+    contains: "SUCCESS"
+    condition:
+      type: output_contains
+      step: setup
+      contains: "READY"
+`
+
+// ─── Valid Workflow Tests ────────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — valid workflows', () => {
+  test('parses a full valid workflow', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toEqual([])
+    expect(result.workflow).toBeDefined()
+    expect(result.workflow!.name).toBe('my-pipeline')
+    expect(result.workflow!.description).toBe('Runs analysis pipeline')
+    expect(result.workflow!.steps).toHaveLength(4)
+  })
+
+  test('parses minimal valid workflow', () => {
+    const result = parseWorkflowYAML(VALID_MINIMAL)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toEqual([])
+    expect(result.workflow!.name).toBe('simple')
+    expect(result.workflow!.description).toBeNull()
+    expect(result.workflow!.steps).toHaveLength(1)
+  })
+
+  test('parses step types correctly', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    const steps = result.workflow!.steps
+    expect(steps[0].type).toBe('spawn_session')
+    expect(steps[1].type).toBe('check_file')
+    expect(steps[2].type).toBe('delay')
+    expect(steps[3].type).toBe('check_output')
+  })
+
+  test('parses spawn_session fields', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    const step = result.workflow!.steps[0]
+    expect(step.projectPath).toBe('/path/to/project')
+    expect(step.prompt).toBe('Analyze the codebase')
+    expect(step.output_path).toBe('./output/analysis.md')
+    expect(step.timeoutSeconds).toBe(3600)
+    expect(step.maxRetries).toBe(2)
+  })
+
+  test('parses agentType from spawn_session step', () => {
+    const yaml = `name: test\nsteps:\n  - name: s1\n    type: spawn_session\n    projectPath: /tmp\n    prompt: hello\n    agentType: codex\n`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].agentType).toBe('codex')
+  })
+
+  test('ignores invalid agentType values', () => {
+    const yaml = `name: test\nsteps:\n  - name: s1\n    type: spawn_session\n    projectPath: /tmp\n    prompt: hello\n    agentType: invalid\n`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].agentType).toBeUndefined()
+  })
+
+  test('parses check_file fields', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    const step = result.workflow!.steps[1]
+    expect(step.path).toBe('./output/analysis.json')
+    expect(step.timeoutSeconds).toBe(60)
+  })
+
+  test('parses delay fields', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    const step = result.workflow!.steps[2]
+    expect(step.seconds).toBe(30)
+  })
+
+  test('parses check_output fields', () => {
+    const result = parseWorkflowYAML(VALID_WORKFLOW)
+    const step = result.workflow!.steps[3]
+    expect(step.step).toBe('analyze')
+    expect(step.contains).toBe('no errors found')
+  })
+
+  test('parses conditions correctly', () => {
+    const result = parseWorkflowYAML(CONDITIONAL_WORKFLOW)
+    expect(result.valid).toBe(true)
+
+    const step1 = result.workflow!.steps[1]
+    expect(step1.condition).toEqual({ type: 'file_exists', path: './pre-check.txt' })
+
+    const step2 = result.workflow!.steps[2]
+    expect(step2.condition).toEqual({ type: 'output_contains', step: 'setup', contains: 'READY' })
+  })
+
+  test('missing description is null', () => {
+    const result = parseWorkflowYAML(VALID_MINIMAL)
+    expect(result.workflow!.description).toBeNull()
+  })
+
+  test('missing condition is undefined', () => {
+    const result = parseWorkflowYAML(VALID_MINIMAL)
+    expect(result.workflow!.steps[0].condition).toBeUndefined()
+  })
+})
+
+// ─── YAML Syntax Error Tests ────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — YAML syntax errors', () => {
+  test('catches YAML syntax error', () => {
+    const result = parseWorkflowYAML('name: test\nsteps:\n  - bad: [unclosed')
+    expect(result.valid).toBe(false)
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0]).toContain('YAML syntax error')
+  })
+
+  test('handles empty input', () => {
+    const result = parseWorkflowYAML('')
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain('empty')
+  })
+
+  test('handles whitespace-only input', () => {
+    const result = parseWorkflowYAML('   \n  \n  ')
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain('empty')
+  })
+
+  test('rejects non-object YAML (string)', () => {
+    const result = parseWorkflowYAML('just a string')
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain('must parse to an object')
+  })
+
+  test('rejects non-object YAML (array)', () => {
+    const result = parseWorkflowYAML('- item1\n- item2')
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain('must parse to an object')
+  })
+})
+
+// ─── Required Field Validation Tests ────────────────────────────────────────
+
+describe('parseWorkflowYAML — required fields', () => {
+  test('missing name field', () => {
+    const result = parseWorkflowYAML(`
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('name is required'))
+  })
+
+  test('empty name field', () => {
+    const result = parseWorkflowYAML(`
+name: ""
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('name'))).toBe(true)
+  })
+
+  test('missing steps field', () => {
+    const result = parseWorkflowYAML('name: test')
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('steps is required'))
+  })
+
+  test('empty steps array', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps: []
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('at least 1 step'))
+  })
+
+  test('steps is not an array', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps: "not-an-array"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('must be an array'))
+  })
+
+  test('step missing name', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - type: delay
+    seconds: 5
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('steps[0].name is required'))
+  })
+
+  test('step missing type', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('steps[0].type is required'))
+  })
+
+  test('step is not an object', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - "just a string"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('steps[0] must be an object'))
+  })
+})
+
+// ─── Step Type Validation ───────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — step type validation', () => {
+  test('invalid step type', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: run_command
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('"run_command" is invalid'))
+    expect(result.errors[0]).toContain('spawn_session')
+  })
+})
+
+// ─── Type-Specific Field Validation ─────────────────────────────────────────
+
+describe('parseWorkflowYAML — type-specific required fields', () => {
+  test('spawn_session missing projectPath', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    prompt: test
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('projectPath is required'))
+  })
+
+  test('spawn_session missing prompt', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('prompt is required'))
+  })
+
+  test('check_file missing path', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: check_file
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('path is required'))
+  })
+
+  test('delay missing seconds', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('seconds is required'))
+  })
+
+  test('delay with zero seconds', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 0
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('greater than 0'))
+  })
+
+  test('delay with negative seconds', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: -5
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('greater than 0'))
+  })
+
+  test('check_output missing step field', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: prior
+    type: delay
+    seconds: 1
+  - name: s1
+    type: check_output
+    contains: "text"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('step is required'))
+  })
+
+  test('check_output missing contains field', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: prior
+    type: delay
+    seconds: 1
+  - name: s1
+    type: check_output
+    step: prior
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('contains is required'))
+  })
+})
+
+// ─── Step Name Uniqueness ───────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — step name uniqueness', () => {
+  test('detects duplicate step names', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: my-step
+    type: delay
+    seconds: 1
+  - name: my-step
+    type: delay
+    seconds: 2
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('duplicate'))
+    expect(result.errors).toContainEqual(expect.stringContaining('"my-step"'))
+  })
+
+  test('case-sensitive name comparison', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: step-1
+    type: delay
+    seconds: 1
+  - name: Step-1
+    type: delay
+    seconds: 2
+`)
+    // "step-1" and "Step-1" are different — should be valid
+    expect(result.valid).toBe(true)
+  })
+
+  test('reports multiple duplicate names', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: dup-a
+    type: delay
+    seconds: 1
+  - name: dup-b
+    type: delay
+    seconds: 1
+  - name: dup-a
+    type: delay
+    seconds: 2
+  - name: dup-b
+    type: delay
+    seconds: 2
+`)
+    expect(result.valid).toBe(false)
+    const dupErrors = result.errors.filter(e => e.includes('duplicate'))
+    expect(dupErrors.length).toBe(2)
+  })
+})
+
+// ─── check_output Reference Validation ──────────────────────────────────────
+
+describe('parseWorkflowYAML — check_output reference validation', () => {
+  test('valid reference to prior step', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+  - name: check
+    type: check_output
+    step: first
+    contains: "ok"
+`)
+    expect(result.valid).toBe(true)
+  })
+
+  test('reference to non-existent step', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+  - name: check
+    type: check_output
+    step: nonexistent
+    contains: "ok"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('"nonexistent"'))
+    expect(result.errors).toContainEqual(expect.stringContaining('unknown or later step'))
+  })
+
+  test('reference to self', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+  - name: self-ref
+    type: check_output
+    step: self-ref
+    contains: "ok"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('references itself'))
+  })
+
+  test('reference to later step', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: check
+    type: check_output
+    step: later
+    contains: "ok"
+  - name: later
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('"later"'))
+    expect(result.errors).toContainEqual(expect.stringContaining('unknown or later step'))
+  })
+})
+
+// ─── Condition Validation ───────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — condition validation', () => {
+  test('valid file_exists condition', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: file_exists
+      path: ./check.txt
+`)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'file_exists',
+      path: './check.txt',
+    })
+  })
+
+  test('valid output_contains condition', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+  - name: s2
+    type: delay
+    seconds: 1
+    condition:
+      type: output_contains
+      step: first
+      contains: "SUCCESS"
+`)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[1].condition).toEqual({
+      type: 'output_contains',
+      step: 'first',
+      contains: 'SUCCESS',
+    })
+  })
+
+  test('invalid condition type', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: invalid_type
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('"invalid_type" is invalid'))
+  })
+
+  test('file_exists condition missing path', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: file_exists
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.path is required'))
+  })
+
+  test('output_contains condition missing step', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: output_contains
+      contains: "text"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.step is required'))
+  })
+
+  test('output_contains condition missing contains', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: delay
+    seconds: 1
+  - name: s2
+    type: delay
+    seconds: 1
+    condition:
+      type: output_contains
+      step: first
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.contains is required'))
+  })
+
+  test('output_contains condition references unknown step', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: output_contains
+      step: ghost
+      contains: "text"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(
+      expect.stringContaining('condition.step "ghost" references an unknown or later step'),
+    )
+  })
+
+  test('condition is not an object', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition: "not an object"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition must be an object'))
+  })
+
+  test('condition missing type field', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      path: ./test.txt
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.type is required'))
+  })
+
+  test('missing condition is valid (conditions are optional)', () => {
+    const result = parseWorkflowYAML(VALID_MINIMAL)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toBeUndefined()
+  })
+})
+
+// ─── Error Accumulation ─────────────────────────────────────────────────────
+
+describe('parseWorkflowYAML — error accumulation', () => {
+  test('accumulates multiple errors', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+  - type: delay
+  - name: s1
+    type: invalid_type
+`)
+    expect(result.valid).toBe(false)
+    // Should have at least: missing projectPath, missing prompt, missing name, duplicate name, invalid type
+    expect(result.errors.length).toBeGreaterThanOrEqual(4)
+  })
+
+  test('error messages include field paths', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('steps[0]'))).toBe(true)
+  })
+})
+
+// ─── Security: !! Tag Stripping (YAML-SECURITY-001) ────────────────────────
+
+describe('parseWorkflowYAML — security', () => {
+  test('!! tags are stripped (FAILSAFE_SCHEMA)', () => {
+    // FAILSAFE_SCHEMA treats everything as strings, preventing !! exploits
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: !!js/function "function(){ return 'pwned' }"
+`)
+    // With FAILSAFE_SCHEMA, the !! tag is not interpreted as JS
+    // It either parses as a plain string or causes a parse error — both are safe
+    if (result.valid) {
+      // If it parsed, the value is a string, not an executed function
+      expect(typeof result.workflow!.steps[0].prompt).toBe('string')
+    } else {
+      // If it errored, that's also safe
+      expect(result.errors.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+// ─── Input Validation (HIGH-001) ───────────────────────────────────────────
+
+describe('parseWorkflowYAML — input validation (HIGH-001)', () => {
+  test('step name exceeds 128 characters', () => {
+    const longName = 'a'.repeat(129)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: ${longName}
+    type: delay
+    seconds: 1
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('name exceeds maximum length of 128'))
+  })
+
+  test('prompt exceeds 100000 characters', () => {
+    const longPrompt = 'a'.repeat(100001)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: "${longPrompt}"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('prompt exceeds maximum length of 100000'))
+  })
+
+  test('projectPath exceeds 4096 characters', () => {
+    const longPath = '/tmp/' + 'a'.repeat(4092)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: ${longPath}
+    prompt: test
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('projectPath exceeds maximum length of 4096'))
+  })
+
+  test('output_path exceeds 4096 characters', () => {
+    const longPath = '/tmp/' + 'a'.repeat(4092)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    output_path: ${longPath}
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('output_path exceeds maximum length of 4096'))
+  })
+
+  test('output_path contains .. segments', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    output_path: /tmp/../etc/passwd
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining("output_path must not contain '..' segments"))
+  })
+
+  test('timeoutSeconds exceeds 86400', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    timeoutSeconds: 86401
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('timeoutSeconds must not exceed 86400'))
+  })
+
+  test('timeoutSeconds is not an integer', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    timeoutSeconds: 3.14
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('timeoutSeconds must be an integer'))
+  })
+
+  test('timeoutSeconds is negative', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    timeoutSeconds: -100
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('timeoutSeconds must be a positive integer'))
+  })
+
+  test('maxRetries exceeds 10', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    maxRetries: 11
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('maxRetries must not exceed 10'))
+  })
+
+  test('maxRetries is not an integer', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    maxRetries: 2.5
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('maxRetries must be an integer'))
+  })
+
+  test('maxRetries is negative', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    maxRetries: -1
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('maxRetries must be a non-negative integer'))
+  })
+
+  test('delay seconds exceeds 86400', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 86401
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('seconds must not exceed 86400'))
+  })
+
+  test('check_output contains exceeds 10000 characters', () => {
+    const longContains = 'a'.repeat(10001)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: delay
+    seconds: 1
+  - name: check
+    type: check_output
+    step: first
+    contains: "${longContains}"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('contains exceeds maximum length of 10000'))
+  })
+
+  test('check_file path exceeds 4096 characters', () => {
+    const longPath = '/tmp/' + 'a'.repeat(4092)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: check_file
+    path: ${longPath}
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('path exceeds maximum length of 4096'))
+  })
+
+  test('check_file max_age_seconds is not an integer', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: check_file
+    path: /tmp/test.txt
+    max_age_seconds: 3.14
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('max_age_seconds must be an integer'))
+  })
+
+  test('check_file max_age_seconds is negative', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: check_file
+    path: /tmp/test.txt
+    max_age_seconds: -100
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('max_age_seconds must be a positive integer'))
+  })
+
+  test('condition path exceeds 4096 characters', () => {
+    const longPath = '/tmp/' + 'a'.repeat(4092)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition:
+      type: file_exists
+      path: ${longPath}
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.path exceeds maximum length of 4096'))
+  })
+
+  test('condition contains exceeds 10000 characters', () => {
+    const longContains = 'a'.repeat(10001)
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: first
+    type: delay
+    seconds: 1
+  - name: s2
+    type: delay
+    seconds: 1
+    condition:
+      type: output_contains
+      step: first
+      contains: "${longContains}"
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('condition.contains exceeds maximum length of 10000'))
+  })
+
+  test('valid values at boundaries are accepted', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: ${'a'.repeat(128)}
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+    timeoutSeconds: 86400
+    maxRetries: 10
+  - name: s2
+    type: delay
+    seconds: 86400
+`)
+    expect(result.valid).toBe(true)
+  })
+})
+
+// ─── Result File Validation (WO-008) ───────────────────────────────────────
+
+describe('parseWorkflowYAML — result_file', () => {
+  test('parses result_file from YAML', () => {
+    const yaml = `
+name: test-workflow
+steps:
+  - name: review
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: Do review
+    result_file: review-result.json
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.errors).toEqual([])
+    expect(result.workflow?.steps[0].result_file).toBe('review-result.json')
+  })
+
+  test('rejects result_file with .. segments', () => {
+    const yaml = `
+name: test-workflow
+steps:
+  - name: review
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: Do review
+    result_file: ../escape.json
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.errors.some(e => e.includes('result_file') && e.includes('..'))).toBe(true)
+  })
+
+  test('rejects result_file exceeding 4096 chars', () => {
+    const longPath = 'a'.repeat(4097) + '.json'
+    const yaml = `
+name: test-workflow
+steps:
+  - name: review
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: Do review
+    result_file: ${longPath}
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.errors.some(e => e.includes('result_file') && e.includes('4096'))).toBe(true)
+  })
+
+  test('applies variable substitution to result_file', () => {
+    const yaml = `
+name: test-workflow
+variables:
+  - name: output_name
+    default: review
+steps:
+  - name: review
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: Do review
+    result_file: "{{ output_name }}-result.json"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.errors).toEqual([])
+    // substituteVariables is tested separately, just verify the field is parsed
+    expect(result.workflow?.steps[0].result_file).toBe('{{ output_name }}-result.json')
+  })
+})
+
+// ─── Variable Substitution (WO-008) ────────────────────────────────────────
+
+describe('substituteVariables — result_file', () => {
+  test('substitutes variables in result_file with path safety', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'spawn_session',
+      result_file: '{{ name }}-result.json',
+    }]
+    const result = substituteVariables(steps, { name: 'review' })
+    expect(result[0].result_file).toBe('review-result.json')
+  })
+
+  test('rejects result_file with .. after substitution', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'spawn_session',
+      result_file: '{{ name }}/result.json',
+    }]
+    expect(() => substituteVariables(steps, { name: '..' })).toThrow('..')
+  })
+})

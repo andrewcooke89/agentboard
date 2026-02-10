@@ -84,14 +84,37 @@ class PtyTerminalProxy extends TerminalProxyBase {
         this.options.sessionName,
       ])
     } catch (error) {
-      this.state = TerminalState.DEAD
-      throw new TerminalProxyError(
-        'ERR_SESSION_CREATE_FAILED',
-        error instanceof Error
-          ? error.message
-          : 'Failed to create grouped session',
-        true
-      )
+      // Handle stale grouped session: kill it and retry once
+      const msg = error instanceof Error ? error.message : ''
+      if (msg.includes('duplicate session')) {
+        try {
+          this.runTmux(['kill-session', '-t', this.options.sessionName])
+          this.runTmux([
+            'new-session',
+            '-d',
+            '-t',
+            this.options.baseSession,
+            '-s',
+            this.options.sessionName,
+          ])
+        } catch (retryError) {
+          this.state = TerminalState.DEAD
+          throw new TerminalProxyError(
+            'ERR_SESSION_CREATE_FAILED',
+            retryError instanceof Error
+              ? retryError.message
+              : 'Failed to create grouped session',
+            true
+          )
+        }
+      } else {
+        this.state = TerminalState.DEAD
+        throw new TerminalProxyError(
+          'ERR_SESSION_CREATE_FAILED',
+          msg || 'Failed to create grouped session',
+          true
+        )
+      }
     }
 
     let proc: ReturnType<typeof Bun.spawn>

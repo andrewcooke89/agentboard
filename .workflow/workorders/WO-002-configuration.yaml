@@ -1,0 +1,190 @@
+work_order_id: WO-002
+title: "Phase 2: Add Workflow Configuration Values"
+phase: 2
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 2
+depends_on:
+  - WO-001  # Needs workflow types for config validation
+
+description: |
+  Add workflow-specific configuration values to src/server/config.ts.
+  Follow existing environment variable parsing pattern with defaults.
+
+  New config values:
+  - WORKFLOW_ENGINE_ENABLED (default: true) - Master kill switch
+  - WORKFLOW_DIR (default: ~/.agentboard/workflows/) - YAML file directory
+  - WORKFLOW_MAX_CONCURRENT_RUNS (default: 20) - Limit concurrent runs
+  - WORKFLOW_RUN_RETENTION_DAYS (default: 30) - Auto-cleanup threshold
+  - WORKFLOW_POLL_INTERVAL_MS (default: 2000) - Engine poll interval
+
+context:
+  existing_patterns:
+    - "Env var parsing with Number() and validation (see taskMaxConcurrent lines 85-89)"
+    - "Path resolution with path.join(homeDir, ...) (see taskOutputDir line 99)"
+    - "Boolean parsing with === 'false' check (see historyEnabled lines 107-108)"
+    - "Default values provided for all optional configs"
+  files_to_modify:
+    - src/server/config.ts
+  reference_files:
+    - feature_brief.md (lines 428-432 for feature flags)
+    - src/server/config.ts (lines 85-108 for task queue config pattern)
+
+subtasks:
+  - id: ST-002-01
+    title: "Parse WORKFLOW_ENGINE_ENABLED env var"
+    description: |
+      Add boolean config value for master feature flag.
+      Default to true (enabled). Parse 'false' or '0' as disabled.
+    acceptance_criteria:
+      - Read process.env.WORKFLOW_ENGINE_ENABLED
+      - Default to true if not set
+      - Treat 'false' or '0' as disabled
+      - Export as workflowEngineEnabled: boolean
+      - Follow same pattern as historyEnabled (lines 107-108)
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Invalid values default to true (safe default for dev)
+
+  - id: ST-002-02
+    title: "Parse WORKFLOW_DIR env var with path resolution"
+    description: |
+      Add directory path config for YAML workflow files.
+      Default to ~/.agentboard/workflows/ with proper path resolution.
+    acceptance_criteria:
+      - Read process.env.WORKFLOW_DIR
+      - Default to path.join(homeDir, '.agentboard', 'workflows')
+      - Export as workflowDir: string
+      - Follow same pattern as taskOutputDir (line 99)
+      - Path is absolute (resolved)
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Relative paths resolved against homeDir
+
+  - id: ST-002-03
+    title: "Parse WORKFLOW_MAX_CONCURRENT_RUNS with validation"
+    description: |
+      Add numeric config for maximum concurrent workflow runs.
+      Default to 20. Validate as positive integer.
+    acceptance_criteria:
+      - Read process.env.WORKFLOW_MAX_CONCURRENT_RUNS
+      - Parse with Number() and validate Number.isFinite()
+      - Validate > 0 with Math.floor() for integer
+      - Default to 20 if not set or invalid
+      - Export as workflowMaxConcurrentRuns: number
+      - Follow same pattern as taskMaxConcurrent (lines 85-89)
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Invalid/negative values default to 20
+
+  - id: ST-002-04
+    title: "Parse WORKFLOW_RUN_RETENTION_DAYS with validation"
+    description: |
+      Add numeric config for workflow run cleanup threshold (days).
+      Default to 30. Validate as positive integer.
+    acceptance_criteria:
+      - Read process.env.WORKFLOW_RUN_RETENTION_DAYS
+      - Parse with Number() and validate Number.isFinite()
+      - Validate > 0 with Math.floor() for integer
+      - Default to 30 if not set or invalid
+      - Export as workflowRunRetentionDays: number
+      - Same validation pattern as workflowMaxConcurrentRuns
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Invalid/negative values default to 30 days
+
+  - id: ST-002-05
+    title: "Parse WORKFLOW_POLL_INTERVAL_MS with validation"
+    description: |
+      Add numeric config for workflow engine poll interval (milliseconds).
+      Default to 2000ms (matching existing task worker pattern).
+    acceptance_criteria:
+      - Read process.env.WORKFLOW_POLL_INTERVAL_MS
+      - Parse with Number() and validate Number.isFinite() && > 0
+      - Default to 2000 if not set or invalid
+      - Export as workflowPollIntervalMs: number
+      - Follow same pattern as taskPollIntervalMs (lines 90-93)
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Invalid/zero/negative values default to 2000ms
+
+  - id: ST-002-06
+    title: "Add workflow config to exported config object"
+    description: |
+      Add all workflow config values to the exported config object.
+      Group with task queue config for logical organization.
+    acceptance_criteria:
+      - All 5 workflow config values added to config export
+      - Added near task queue config (after line 147)
+      - Comments added for each field describing purpose
+      - Config object still compiles and exports correctly
+      - Alphabetically ordered within workflow section
+    files_modified:
+      - src/server/config.ts
+    estimated_hours: 0.3
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "Config values parse correctly with defaults"
+    command: |
+      # Test in Node REPL or simple test file
+      import { config } from './src/server/config.ts'
+      assert(config.workflowEngineEnabled === true)
+      assert(config.workflowDir.includes('.agentboard/workflows'))
+      assert(config.workflowMaxConcurrentRuns === 20)
+      assert(config.workflowRunRetentionDays === 30)
+      assert(config.workflowPollIntervalMs === 2000)
+    expected_output: "All assertions pass"
+
+  - test_type: validation
+    description: "Env var overrides work correctly"
+    command: |
+      WORKFLOW_ENGINE_ENABLED=false \
+      WORKFLOW_MAX_CONCURRENT_RUNS=10 \
+      bun eval "import {config} from './src/server/config.ts'; console.log(config.workflowEngineEnabled, config.workflowMaxConcurrentRuns)"
+    expected_output: "false 10"
+
+acceptance_criteria:
+  - All 5 workflow config values defined
+  - Default values match feature brief specification
+  - Environment variable parsing follows existing patterns
+  - Invalid values fall back to safe defaults
+  - Path resolution works correctly for workflowDir
+  - Config values exported in config object
+  - bun run typecheck passes
+  - No breaking changes to existing config
+
+rollback_procedures:
+  - "git diff src/server/config.ts to see changes"
+  - "git checkout src/server/config.ts if issues arise"
+  - "No database or file system changes in this phase"
+  - "Config changes are additive only"
+
+notes:
+  - "Follow existing codebase patterns exactly (see task queue config lines 85-108)"
+  - "Default values chosen for reasonable production use"
+  - "WORKFLOW_ENGINE_ENABLED=true by default (opt-out via env var)"
+  - "workflowDir path should be created by file watcher in Phase 6"
+  - "These configs will be logged at server startup (observability requirement)"
+
+specs_covered:
+  - CONFIG-001  # WORKFLOW_ENGINE_ENABLED flag
+  - CONFIG-002  # WORKFLOW_DIR path configuration
+  - CONFIG-003  # WORKFLOW_MAX_CONCURRENT_RUNS limit
+  - CONFIG-004  # WORKFLOW_RUN_RETENTION_DAYS cleanup threshold
+  - CONFIG-005  # WORKFLOW_POLL_INTERVAL_MS engine timing

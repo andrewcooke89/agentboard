@@ -1,0 +1,46 @@
+id: TKT-0004
+version: 1
+created_at: 2026-02-04T07:36:06.205Z
+updated_at: 2026-02-04T07:36:06.205Z
+category: error-handling
+severity: critical
+status: open
+source:
+  file: src/server/workflowEngine.ts
+  line_start: 623
+  line_end: 626
+  code_snippet: |-
+    } catch (err) {
+      ctx.logger.error('workflow_engine_poll_fatal', { error: String(err) })
+      stop()
+    }
+  content_hash: a0e30b08847eb737
+related_locations: []
+title: WorkflowEngine poll fatal error stops polling without recovery
+description: If getRunningRuns() throws an exception, the entire workflow engine
+  stops polling permanently via stop(). This means a single transient database
+  error can halt all workflow execution until the server restarts. No retry
+  logic or graceful degradation exists for transient errors.
+suggestion: "Replace stop() with retry logic: log error, increment failure
+  counter, use exponential backoff, and retry. Only stop after N consecutive
+  failures (e.g., 5). Add health check endpoint to expose engine status and
+  failure count."
+auto_fixable: false
+fix_confidence: high
+effort: medium
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - blocker
+  - error-recovery
+  - workflow
+  - ERR-005
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

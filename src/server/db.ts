@@ -35,6 +35,8 @@ export interface SessionDatabase {
   displayNameExists: (displayName: string, excludeSessionId?: string) => boolean
   setPinned: (sessionId: string, isPinned: boolean) => AgentSessionRecord | null
   getPinnedOrphaned: () => AgentSessionRecord[]
+  deleteInactiveSession: (sessionId: string) => boolean
+  deleteOldInactiveSessions: (retentionDays: number) => number
   close: () => void
 }
 
@@ -120,6 +122,15 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   )
   const selectByDisplayNameExcluding = db.prepare(
     'SELECT 1 FROM agent_sessions WHERE display_name = $displayName AND session_id != $excludeSessionId LIMIT 1'
+  )
+  const deleteInactiveSessionStmt = db.prepare(
+    'DELETE FROM agent_sessions WHERE session_id = $sessionId AND current_window IS NULL'
+  )
+  const deleteOldInactiveSessionsStmt = db.prepare(
+    `DELETE FROM agent_sessions
+     WHERE current_window IS NULL
+       AND last_activity_at < datetime('now', $olderThan)
+     RETURNING session_id`
   )
 
   const updateStmt = (fields: string[]) =>
@@ -269,6 +280,14 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
         )
         .all() as Record<string, unknown>[]
       return rows.map(mapRow)
+    },
+    deleteInactiveSession: (sessionId) => {
+      const result = deleteInactiveSessionStmt.run({ $sessionId: sessionId })
+      return result.changes > 0
+    },
+    deleteOldInactiveSessions: (retentionDays) => {
+      const rows = deleteOldInactiveSessionsStmt.all({ $olderThan: `-${retentionDays} days` }) as Record<string, unknown>[]
+      return rows.length
     },
     close: () => {
       db.close()

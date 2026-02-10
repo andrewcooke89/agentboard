@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DirectoryListing } from '@shared/types'
 import { FolderIcon } from '@untitledui-icons/react/line'
 import { useSettingsStore } from '../stores/settingsStore'
+import { authFetch } from '../utils/api'
 
 interface DirectoryBrowserProps {
   onSelect: (path: string) => void
@@ -35,7 +36,7 @@ export function DirectoryBrowser({
     setCurrentPath(path)
 
     try {
-      const response = await fetch(
+      const response = await authFetch(
         `/api/directories?path=${encodeURIComponent(path)}`,
         { signal }
       )

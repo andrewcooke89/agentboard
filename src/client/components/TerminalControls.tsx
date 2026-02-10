@@ -11,6 +11,8 @@ import { CornerDownLeftIcon } from '@untitledui-icons/react/line'
 import DPad from './DPad'
 import NumPad from './NumPad'
 import { isIOSDevice } from '../utils/device'
+import { authFetch } from '../utils/api'
+import { toastManager } from './Toast'
 
 interface SessionInfo {
   id: string
@@ -205,14 +207,18 @@ export default function TerminalControls({
           try {
             const formData = new FormData()
             formData.append('image', blob, `paste.${item.type.split('/')[1] || 'png'}`)
-            const res = await fetch('/api/paste-image', { method: 'POST', body: formData })
+            const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
             if (res.ok) {
               const { path } = await res.json()
               onSendKey(path)
               setShowPasteInput(false)
               setPasteValue('')
               onRefocus?.()
+            } else {
+              toastManager.add({ title: 'Failed to upload image', type: 'error', description: `Server returned ${res.status}` })
             }
+          } catch (err) {
+            toastManager.add({ title: 'Failed to upload image', type: 'error', description: err instanceof Error ? err.message : 'Network error' })
           } finally {
             setIsUploading(false)
           }
@@ -275,7 +281,7 @@ export default function TerminalControls({
           // Upload image to server
           const formData = new FormData()
           formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
-          const res = await fetch('/api/paste-image', { method: 'POST', body: formData })
+          const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
           if (res.ok) {
             const { path } = await res.json()
             // Send file path - Claude Code can reference images by path

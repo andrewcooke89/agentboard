@@ -11,3 +11,9 @@ coverage
 playwright-report
 test-results
 systemd/agentboard.service
+
+# Junk files from shell accidents
+cat
+echo
+---END---
+---FILE---

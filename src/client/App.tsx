@@ -5,8 +5,16 @@ import SessionList from './components/SessionList'
 import Terminal from './components/Terminal'
 import NewSessionModal from './components/NewSessionModal'
 import SettingsModal from './components/SettingsModal'
+import TaskQueue from './components/TaskQueue'
+import WorkflowList from './components/WorkflowList'
+import WorkflowDetail from './components/WorkflowDetail'
+import WorkflowEditor from './components/WorkflowEditor'
+import WorkflowPanel from './components/WorkflowPanel'
+import ErrorBoundary from './components/ErrorBoundary'
 import { ToastViewport, toastManager } from './components/Toast'
 import { useSessionStore } from './stores/sessionStore'
+import { useTaskStore } from './stores/taskStore'
+import { useWorkflowStore } from './stores/workflowStore'
 import {
   useSettingsStore,
   SIDEBAR_MAX_WIDTH,
@@ -18,6 +26,11 @@ import { useVisualViewport } from './hooks/useVisualViewport'
 import { sortSessions } from './utils/sessions'
 import { getEffectiveModifier, matchesModifier } from './utils/device'
 import { playPermissionSound, playIdleSound, primeAudio } from './utils/sound'
+import { authFetch } from './utils/api'
+import { showNotification, getNotificationPermission, requestNotificationPermission } from './utils/notification'
+import HistorySection from './components/HistorySection'
+import { useHistoryStore } from './stores/historyStore'
+import type { Task } from '@shared/types'
 
 interface ServerInfo {
   port: number
@@ -30,6 +43,10 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
+  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor'>('sessions')
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false)
+  const [dismissedPermissionBanners, setDismissedPermissionBanners] = useState<Set<string>>(new Set())
 
   const sessions = useSessionStore((state) => state.sessions)
   const agentSessions = useSessionStore((state) => state.agentSessions)
@@ -68,8 +85,29 @@ export default function App() {
   const sidebarWidth = useSettingsStore((state) => state.sidebarWidth)
   const setSidebarWidth = useSettingsStore((state) => state.setSidebarWidth)
   const projectFilters = useSettingsStore((state) => state.projectFilters)
+  const projectPathPresets = useSettingsStore((state) => state.projectPathPresets)
   const soundOnPermission = useSettingsStore((state) => state.soundOnPermission)
   const soundOnIdle = useSettingsStore((state) => state.soundOnIdle)
+  const notifyOnPermission = useSettingsStore((state) => state.notifyOnPermission)
+
+  const showHistory = useHistoryStore((state) => state.showHistory)
+  const setShowHistory = useHistoryStore((state) => state.setShowHistory)
+  const loadRecentHistory = useHistoryStore((state) => state.loadRecent)
+
+  const showTaskQueue = useTaskStore((state) => state.showTaskQueue)
+  const setShowTaskQueue = useTaskStore((state) => state.setShowTaskQueue)
+  const taskStats = useTaskStore((state) => state.stats)
+  const setTasks = useTaskStore((state) => state.setTasks)
+  const setTaskStats = useTaskStore((state) => state.setStats)
+  const addTask = useTaskStore((state) => state.addTask)
+  const updateTask = useTaskStore((state) => state.updateTask)
+  const setTemplates = useTaskStore((state) => state.setTemplates)
+
+  const handleWorkflowList = useWorkflowStore((state) => state.handleWorkflowList)
+  const handleWorkflowUpdated = useWorkflowStore((state) => state.handleWorkflowUpdated)
+  const handleWorkflowRemoved = useWorkflowStore((state) => state.handleWorkflowRemoved)
+  const handleWorkflowRunUpdate = useWorkflowStore((state) => state.handleWorkflowRunUpdate)
+  const handleWorkflowRunList = useWorkflowStore((state) => state.handleWorkflowRunList)
 
   const { sendMessage, subscribe } = useWebSocket()
 
@@ -99,8 +137,18 @@ export default function App() {
     }
   }, [soundOnPermission, soundOnIdle])
 
+  // Auto-request notification permission on first load when notifyOnPermission is enabled
+  useEffect(() => {
+    if (typeof window === 'undefined' || !notifyOnPermission) return
+    const permission = getNotificationPermission()
+    if (permission === 'default') {
+      void requestNotificationPermission()
+    }
+  }, [notifyOnPermission])
+
   // Sidebar resize handling
   const isResizing = useRef(false)
+  const lastNotifyTimeRef = useRef(0)
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     isResizing.current = true
@@ -144,17 +192,27 @@ export default function App() {
       if (message.type === 'sessions') {
         // Detect status transitions for sound notifications before updating
         const currentSessions = useSessionStore.getState().sessions
-        const { soundOnPermission, soundOnIdle } = useSettingsStore.getState()
+        const { soundOnPermission, soundOnIdle, notifyOnPermission, notifyOnIdle } = useSettingsStore.getState()
 
-        if (soundOnPermission || soundOnIdle) {
+        if (soundOnPermission || soundOnIdle || notifyOnPermission || notifyOnIdle) {
+          const now = Date.now()
+          const canNotify = getNotificationPermission() === 'granted' && (now - lastNotifyTimeRef.current > 2000)
           for (const nextSession of message.sessions) {
             const prevSession = currentSessions.find((s) => s.id === nextSession.id)
             if (prevSession && prevSession.status !== nextSession.status) {
-              if (prevSession.status !== 'permission' && nextSession.status === 'permission' && soundOnPermission) {
-                void playPermissionSound()
+              if (prevSession.status !== 'permission' && nextSession.status === 'permission') {
+                if (soundOnPermission) void playPermissionSound()
+                if (notifyOnPermission && canNotify) {
+                  showNotification('Permission Required', { body: `Session "${nextSession.name}" needs input` })
+                  lastNotifyTimeRef.current = Date.now()
+                }
               }
-              if (prevSession.status === 'working' && nextSession.status === 'waiting' && soundOnIdle) {
-                void playIdleSound()
+              if (prevSession.status === 'working' && nextSession.status === 'waiting') {
+                if (soundOnIdle) void playIdleSound()
+                if (notifyOnIdle && canNotify) {
+                  showNotification('Session Idle', { body: `Session "${nextSession.name}" finished working` })
+                  lastNotifyTimeRef.current = Date.now()
+                }
               }
             }
           }
@@ -174,13 +232,23 @@ export default function App() {
 
         // Only play sounds for known sessions (skip new/unknown sessions)
         if (prevStatus) {
-          const { soundOnPermission, soundOnIdle } = useSettingsStore.getState()
+          const { soundOnPermission, soundOnIdle, notifyOnPermission, notifyOnIdle } = useSettingsStore.getState()
+          const now = Date.now()
+          const canNotify = getNotificationPermission() === 'granted' && (now - lastNotifyTimeRef.current > 2000)
 
-          if (prevStatus !== 'permission' && nextStatus === 'permission' && soundOnPermission) {
-            void playPermissionSound()
+          if (prevStatus !== 'permission' && nextStatus === 'permission') {
+            if (soundOnPermission) void playPermissionSound()
+            if (notifyOnPermission && canNotify) {
+              showNotification('Permission Required', { body: `Session "${message.session.name}" needs input` })
+              lastNotifyTimeRef.current = Date.now()
+            }
           }
-          if (prevStatus === 'working' && nextStatus === 'waiting' && soundOnIdle) {
-            void playIdleSound()
+          if (prevStatus === 'working' && nextStatus === 'waiting') {
+            if (soundOnIdle) void playIdleSound()
+            if (notifyOnIdle && canNotify) {
+              showNotification('Session Idle', { body: `Session "${message.session.name}" finished working` })
+              lastNotifyTimeRef.current = Date.now()
+            }
           }
         }
       }
@@ -263,6 +331,36 @@ export default function App() {
           timeout: 8000,
         })
       }
+      // Task queue messages
+      if (message.type === 'task-created') {
+        addTask(message.task)
+      }
+      if (message.type === 'task-updated') {
+        updateTask(message.task)
+      }
+      if (message.type === 'task-list') {
+        setTasks(message.tasks)
+        setTaskStats(message.stats)
+      }
+      if (message.type === 'template-list') {
+        setTemplates(message.templates)
+      }
+      // Workflow engine messages
+      if (message.type === 'workflow-list') {
+        handleWorkflowList(message.workflows)
+      }
+      if (message.type === 'workflow-updated') {
+        handleWorkflowUpdated(message.workflow)
+      }
+      if (message.type === 'workflow-removed') {
+        handleWorkflowRemoved(message.workflowId)
+      }
+      if (message.type === 'workflow-run-update') {
+        handleWorkflowRunUpdate(message.run)
+      }
+      if (message.type === 'workflow-run-list') {
+        handleWorkflowRunList(message.runs)
+      }
     })
 
     return () => { unsubscribe() }
@@ -276,6 +374,16 @@ export default function App() {
     setAgentSessions,
     subscribe,
     updateSession,
+    addTask,
+    updateTask,
+    setTasks,
+    setTaskStats,
+    setTemplates,
+    handleWorkflowList,
+    handleWorkflowUpdated,
+    handleWorkflowRemoved,
+    handleWorkflowRunUpdate,
+    handleWorkflowRunList,
   ])
 
   const selectedSession = useMemo(() => {
@@ -387,11 +495,39 @@ export default function App() {
         }
         return
       }
+
+      // Toggle task queue: [mod]+Shift+T
+      if (isShortcut && event.shiftKey && code === 'KeyT') {
+        event.preventDefault()
+        setShowTaskQueue(!useTaskStore.getState().showTaskQueue)
+        return
+      }
+
+      // Toggle history: [mod]+H
+      if (isShortcut && code === 'KeyH') {
+        event.preventDefault()
+        setShowHistory(!useHistoryStore.getState().showHistory)
+        return
+      }
+
+      // Toggle workflow list view: [mod]+Shift+W
+      if (isShortcut && event.shiftKey && code === 'KeyW') {
+        event.preventDefault()
+        setActiveView((prev) => (prev === 'workflow-list' ? 'sessions' : 'workflow-list'))
+        return
+      }
+
+      // Toggle workflow monitoring panel: [mod]+Shift+M
+      if (isShortcut && event.shiftKey && code === 'KeyM') {
+        event.preventDefault()
+        setWorkflowPanelOpen((prev) => !prev)
+        return
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isModalOpen, selectedSessionId, setSelectedSessionId, filteredSortedSessions, handleKillSession, shortcutModifier])
+  }, [isModalOpen, selectedSessionId, setSelectedSessionId, filteredSortedSessions, handleKillSession, shortcutModifier, setShowTaskQueue, setShowHistory])
 
   const handleNewSession = () => setIsModalOpen(true)
   const handleOpenSettings = () => setIsSettingsOpen(true)
@@ -399,9 +535,10 @@ export default function App() {
   const handleCreateSession = (
     projectPath: string,
     name?: string,
-    command?: string
+    command?: string,
+    prompt?: string
   ) => {
-    sendMessage({ type: 'session-create', projectPath, name, command })
+    sendMessage({ type: 'session-create', projectPath, name, command, prompt })
     setLastProjectPath(projectPath)
   }
 
@@ -424,21 +561,104 @@ export default function App() {
     sendMessage({ type: 'session-pin', sessionId, isPinned })
   }, [sendMessage])
 
+  const handleWatchTask = useCallback((task: Task) => {
+    if (task.tmuxWindow) {
+      const session = sessions.find(s => s.tmuxWindow === task.tmuxWindow)
+      if (session) {
+        setSelectedSessionId(session.id)
+      }
+    }
+  }, [sessions, setSelectedSessionId])
+
+  // Cross-navigation helpers: workflow <-> session <-> task
+  const navigateToSession = useCallback((sessionName: string) => {
+    const session = sessions.find(s => s.name === sessionName)
+    if (session) {
+      setActiveView('sessions')
+      setSelectedSessionId(session.id)
+    }
+  }, [sessions, setSelectedSessionId])
+
+  const navigateToWorkflowRun = useCallback((workflowId: string) => {
+    setActiveWorkflowId(workflowId)
+    setActiveView('workflow-detail')
+  }, [])
+
   // Apply theme to document
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
+  // Tab title attention badge for permission sessions
+  useEffect(() => {
+    const permissionCount = sessions.filter(s => s.status === 'permission').length
+    document.title = permissionCount > 0 ? `(${permissionCount}) Agentboard` : 'Agentboard'
+  }, [sessions])
+
+  // Load recent history on mount
+  useEffect(() => {
+    void loadRecentHistory()
+  }, [loadRecentHistory])
+
   // Fetch server info (including Tailscale IP) on mount
   useEffect(() => {
-    fetch('/api/server-info')
+    authFetch('/api/server-info')
       .then((res) => res.json())
       .then((info: ServerInfo) => setServerInfo(info))
-      .catch(() => {})
+      .catch((err) => { console.warn('Failed to fetch server info:', err) })
   }, [])
 
+  // Calculate permission sessions for banner
+  const permissionSessions = useMemo(() => {
+    return sessions.filter(s => s.status === 'permission' && !dismissedPermissionBanners.has(s.id))
+  }, [sessions, dismissedPermissionBanners])
+
+  const handleDismissBanner = useCallback((sessionId: string) => {
+    setDismissedPermissionBanners(prev => new Set(prev).add(sessionId))
+  }, [])
+
+  // Clear dismissed banners when session status changes away from permission
+  useEffect(() => {
+    const permissionIds = new Set(sessions.filter(s => s.status === 'permission').map(s => s.id))
+    setDismissedPermissionBanners(prev => {
+      const next = new Set<string>()
+      for (const id of prev) {
+        if (permissionIds.has(id)) next.add(id)
+      }
+      return next
+    })
+  }, [sessions])
+
   return (
-    <div className="flex h-full overflow-hidden">
+    <ErrorBoundary>
+      <div className="flex h-full overflow-hidden flex-col">
+      {/* Permission attention banner - shown when any session needs permission */}
+      {permissionSessions.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-[var(--warning)] text-black border-b border-black/10 shrink-0">
+          <span className="font-medium">⚠ Permission Required:</span>
+          <div className="flex gap-2 flex-wrap flex-1">
+            {permissionSessions.map(session => (
+              <button
+                key={session.id}
+                onClick={() => setSelectedSessionId(session.id)}
+                className="px-2 py-1 bg-black/10 hover:bg-black/20 rounded text-sm font-medium transition-colors"
+              >
+                {session.name}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => handleDismissBanner(permissionSessions[0].id)}
+            className="px-2 py-1 hover:bg-black/10 rounded text-sm transition-colors"
+            aria-label="Dismiss banner"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Main content wrapper */}
+      <div className="flex h-full overflow-hidden flex-1">
       {/* Left column: header + sidebar - always hidden on mobile (drawer handles it) */}
       <div
         className="hidden h-full flex-col md:flex md:shrink-0"
@@ -448,7 +668,16 @@ export default function App() {
           connectionStatus={connectionStatus}
           onNewSession={handleNewSession}
           onOpenSettings={handleOpenSettings}
+          onToggleTaskQueue={() => setShowTaskQueue(!showTaskQueue)}
+          taskQueueActive={showTaskQueue}
+          taskQueueCount={taskStats.queued + taskStats.running}
           tailscaleIp={serverInfo?.tailscaleIp ?? null}
+          onToggleHistory={() => setShowHistory(!showHistory)}
+          historyActive={showHistory}
+          onToggleWorkflows={() => setActiveView((prev) => (prev === 'workflow-list' ? 'sessions' : 'workflow-list'))}
+          workflowsActive={activeView !== 'sessions'}
+          onToggleWorkflowPanel={() => setWorkflowPanelOpen((prev) => !prev)}
+          workflowPanelActive={workflowPanelOpen}
         />
         <SessionList
           sessions={sessions}
@@ -462,7 +691,13 @@ export default function App() {
           onSetPinned={handleSetPinned}
           loading={!hasLoaded}
           error={connectionError || serverError}
+          onNavigateToWorkflow={navigateToWorkflowRun}
         />
+        {showHistory && (
+          <div className="border-t border-border shrink-0" style={{ maxHeight: '40%', overflow: 'auto' }}>
+            <HistorySection onResumed={() => sendMessage({ type: 'session-refresh' })} />
+          </div>
+        )}
       </div>
 
       {/* Sidebar resize handle */}
@@ -471,25 +706,81 @@ export default function App() {
         onMouseDown={handleResizeStart}
       />
 
-      {/* Terminal - full height on desktop */}
-      <Terminal
-        session={selectedSession}
-        sessions={filteredSortedSessions}
-        connectionStatus={connectionStatus}
-        sendMessage={sendMessage}
-        subscribe={subscribe}
-        onClose={() => setSelectedSessionId(null)}
-        onSelectSession={setSelectedSessionId}
-        onNewSession={handleNewSession}
-        onKillSession={handleKillSession}
-        onRenameSession={handleRenameSession}
-        onOpenSettings={handleOpenSettings}
-        onResumeSession={handleResumeSession}
-        onSetPinned={handleSetPinned}
-        inactiveSessions={agentSessions.inactive}
-        loading={!hasLoaded}
-        error={connectionError || serverError}
-      />
+      {/* Main content area - view routing */}
+      {activeView === 'sessions' && (
+        <Terminal
+          session={selectedSession}
+          sessions={filteredSortedSessions}
+          connectionStatus={connectionStatus}
+          sendMessage={sendMessage}
+          subscribe={subscribe}
+          onClose={() => setSelectedSessionId(null)}
+          onSelectSession={setSelectedSessionId}
+          onNewSession={handleNewSession}
+          onKillSession={handleKillSession}
+          onRenameSession={handleRenameSession}
+          onOpenSettings={handleOpenSettings}
+          onResumeSession={handleResumeSession}
+          onSetPinned={handleSetPinned}
+          inactiveSessions={agentSessions.inactive}
+          loading={!hasLoaded}
+          error={connectionError || serverError}
+        />
+      )}
+      {activeView === 'workflow-list' && (
+        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
+          <ErrorBoundary>
+            <WorkflowList
+              onSelectWorkflow={(id) => { setActiveWorkflowId(id); setActiveView('workflow-detail') }}
+              onCreateNew={() => { setActiveWorkflowId(null); setActiveView('workflow-editor') }}
+            />
+          </ErrorBoundary>
+        </div>
+      )}
+      {activeView === 'workflow-detail' && activeWorkflowId && (
+        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
+          <ErrorBoundary>
+            <WorkflowDetail
+              workflowId={activeWorkflowId}
+              onBack={() => setActiveView('workflow-list')}
+              onEdit={(id) => { setActiveWorkflowId(id); setActiveView('workflow-editor') }}
+              onNavigateToSession={navigateToSession}
+            />
+          </ErrorBoundary>
+        </div>
+      )}
+      {activeView === 'workflow-editor' && (
+        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
+          <ErrorBoundary>
+            <WorkflowEditor
+              workflowId={activeWorkflowId ?? undefined}
+              onSave={() => setActiveView('workflow-list')}
+              onCancel={() => setActiveView(activeWorkflowId ? 'workflow-detail' : 'workflow-list')}
+            />
+          </ErrorBoundary>
+        </div>
+      )}
+
+      {/* Task queue panel - toggleable right sidebar */}
+      {showTaskQueue && (
+        <div className="hidden md:flex md:flex-col md:shrink-0 w-80 border-l border-white/10 bg-[var(--bg-primary)]">
+          <TaskQueue
+            sendMessage={sendMessage}
+            defaultProjectPath={lastProjectPath || defaultProjectDir}
+            onWatchTask={handleWatchTask}
+            onNavigateToWorkflow={navigateToWorkflowRun}
+          />
+        </div>
+      )}
+      </div>
+
+      {/* Workflow monitoring panel - fixed overlay */}
+      <ErrorBoundary>
+        <WorkflowPanel
+          isOpen={workflowPanelOpen}
+          onClose={() => setWorkflowPanelOpen(false)}
+        />
+      </ErrorBoundary>
 
       <NewSessionModal
         isOpen={isModalOpen}
@@ -501,6 +792,7 @@ export default function App() {
         onUpdateModifiers={updatePresetModifiers}
         lastProjectPath={lastProjectPath}
         activeProjectPath={selectedSession?.projectPath}
+        projectPathPresets={projectPathPresets}
       />
 
       <SettingsModal
@@ -509,6 +801,7 @@ export default function App() {
       />
 
       <ToastViewport />
-    </div>
+      </div>
+    </ErrorBoundary>
   )
 }

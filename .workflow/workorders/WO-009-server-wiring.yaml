@@ -1,0 +1,261 @@
+work_order_id: WO-009
+title: "Phase 9: Wire Workflow System into Server Startup"
+phase: 9
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 4
+depends_on:
+  - WO-004  # Needs workflowStore
+  - WO-005  # Needs workflowEngine
+  - WO-006  # Needs workflowFileWatcher
+  - WO-007  # Needs REST handlers
+  - WO-008  # Needs WebSocket handlers
+
+description: |
+  Integrate all workflow components into server startup sequence.
+  Initialize store, start file watcher, start engine, register routes.
+  Respect WORKFLOW_ENGINE_ENABLED flag.
+  Log configuration at startup.
+
+  Startup sequence:
+  1. Init workflow store (after task store init)
+  2. Start file watcher (if enabled)
+  3. Recover running workflows (engine recovery)
+  4. Start workflow engine (if enabled)
+  5. Register HTTP routes (if enabled)
+  6. Log workflow config
+
+context:
+  existing_patterns:
+    - "Server startup in src/server/index.ts (lines 100-170)"
+    - "Factory pattern: store = initTaskStore(db), worker = createTaskWorker(ctx, store)"
+    - "Conditional init: if (config.historyEnabled) { ... }"
+    - "ServerContext passed to all modules"
+  files_to_modify:
+    - src/server/index.ts
+  reference_files:
+    - src/server/index.ts (server startup lines 100-170)
+    - feature_brief.md (lines 540-549 for Phase 9 spec)
+
+subtasks:
+  - id: ST-009-01
+    title: "Initialize workflow store"
+    description: |
+      Init workflow store after task store initialization.
+      Add to ServerContext.
+    acceptance_criteria:
+      - After initTaskStore(db) call (around line 120)
+      - Add: const workflowStore = initWorkflowStore(db)
+      - Add workflowStore to ctx object
+      - Only if config.workflowEngineEnabled === true
+      - Log "Workflow store initialized" at info level
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Store init errors crash server with clear error message
+
+  - id: ST-009-02
+    title: "Start workflow file watcher"
+    description: |
+      Create and start file watcher after workflow store init.
+    acceptance_criteria:
+      - After workflowStore init
+      - Add: const workflowFileWatcher = createWorkflowFileWatcher(ctx)
+      - Call: workflowFileWatcher.start()
+      - Only if config.workflowEngineEnabled === true
+      - Log "Workflow file watcher started, watching {dir}" at info level
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Watcher start errors logged, server continues (watcher optional)
+
+  - id: ST-009-03
+    title: "Recover running workflows"
+    description: |
+      Call engine recovery before starting poll loop.
+      Resumes workflows that were running when server stopped.
+    acceptance_criteria:
+      - After workflowStore and engine creation
+      - Add: const workflowEngine = createWorkflowEngine(ctx)
+      - Call: await workflowEngine.recoverRunningWorkflows()
+      - Log "Recovered N running workflows" at info level
+      - Wait for recovery to complete before starting engine
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Recovery errors logged, individual workflows marked failed
+
+  - id: ST-009-04
+    title: "Start workflow engine poll loop"
+    description: |
+      Start engine after recovery completes.
+    acceptance_criteria:
+      - After recoverRunningWorkflows()
+      - Call: workflowEngine.start()
+      - Only if config.workflowEngineEnabled === true
+      - Log "Workflow engine started (poll interval: {ms}ms)" at info level
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.2
+    error_handling:
+      - Engine start errors crash server with clear error message
+
+  - id: ST-009-05
+    title: "Add workflow cleanup on server shutdown"
+    description: |
+      Stop engine and watcher on SIGINT/SIGTERM.
+    acceptance_criteria:
+      - In process.on('SIGINT') handler (around line 250)
+      - Call: workflowEngine.stop()
+      - Call: workflowFileWatcher.stop()
+      - Log "Workflow engine stopped" at info level
+      - Wait for cleanup before process.exit()
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Stop errors logged, server shuts down anyway
+
+  - id: ST-009-06
+    title: "Log workflow configuration at startup"
+    description: |
+      Log all workflow config values at server startup.
+      Aid debugging and observability.
+    acceptance_criteria:
+      - After config loaded (around line 100)
+      - Log workflow config if enabled:
+        - WORKFLOW_ENGINE_ENABLED
+        - WORKFLOW_DIR
+        - WORKFLOW_MAX_CONCURRENT_RUNS
+        - WORKFLOW_RUN_RETENTION_DAYS
+        - WORKFLOW_POLL_INTERVAL_MS
+      - Log at info level
+      - Format: "Workflow engine config: { enabled: true, dir: '...', ... }"
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.3
+
+  - id: ST-009-07
+    title: "Add integration test for server startup with workflows"
+    description: |
+      Test server starts successfully with workflow engine enabled.
+    acceptance_criteria:
+      - Start server with WORKFLOW_ENGINE_ENABLED=true
+      - Verify workflow store initialized
+      - Verify file watcher started
+      - Verify engine started
+      - Verify HTTP routes registered
+      - Verify server responds to /api/workflows
+      - Server stops cleanly
+      - All tests pass with bun test
+    files_modified:
+      - src/server/index.test.ts (or create workflow-integration.test.ts)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify graceful degradation if components fail
+
+  - id: ST-009-08
+    title: "Add integration test for server startup with workflows disabled"
+    description: |
+      Test server starts successfully with WORKFLOW_ENGINE_ENABLED=false.
+    acceptance_criteria:
+      - Start server with WORKFLOW_ENGINE_ENABLED=false
+      - Verify workflow components NOT initialized
+      - Verify /api/workflows routes NOT registered (404)
+      - Verify existing functionality (task queue) still works
+      - All tests pass with bun test
+    files_modified:
+      - src/server/index.test.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Tests verify no workflow functionality available when disabled
+
+  - id: ST-009-09
+    title: "Schedule periodic workflow run cleanup"
+    description: |
+      Set up periodic cleanup of old workflow runs based on retention policy.
+      On server startup, run initial cleanup. Then setInterval every 24 hours.
+      Call workflowStore.deleteOldRuns(config.workflowRunRetentionDays).
+      Log: "[workflow-engine] cleanup deleted N runs older than X days".
+      Stop interval on server shutdown (add to cleanup/shutdown logic).
+    acceptance_criteria:
+      - On server startup run initial cleanup via deleteOldRuns()
+      - setInterval every 24 hours to repeat cleanup
+      - Log cleanup results with count of deleted runs
+      - Stop interval on server shutdown
+      - Cleanup errors logged but do not crash server
+    test_criteria:
+      - "Unit: mock deleteOldRuns, verify called on startup"
+      - "Unit: verify interval created with 24h period"
+      - "Unit: verify interval cleared on shutdown"
+    estimated_hours: 1.5
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: integration
+    description: "Server startup integration tests pass"
+    command: "bun test src/server/index.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "Server starts and responds to workflow API"
+    command: |
+      WORKFLOW_ENGINE_ENABLED=true bun run dev &
+      sleep 3
+      curl http://localhost:4040/api/workflows
+      kill %1
+    expected_output: '{"workflows":[]}'
+
+  - test_type: integration
+    description: "Server starts with workflow engine disabled"
+    command: |
+      WORKFLOW_ENGINE_ENABLED=false bun run dev &
+      sleep 3
+      curl http://localhost:4040/api/workflows
+      kill %1
+    expected_output: '404' (routes not registered)
+
+acceptance_criteria:
+  - Workflow store initialized after task store
+  - File watcher started if engine enabled
+  - Workflow recovery runs before engine starts
+  - Engine started with poll loop
+  - HTTP routes registered if engine enabled
+  - WebSocket handlers registered if engine enabled
+  - Graceful shutdown stops engine and watcher
+  - Configuration logged at startup
+  - Integration tests pass for enabled and disabled modes
+  - bun run typecheck passes
+  - bun run test passes
+  - Server starts successfully with WORKFLOW_ENGINE_ENABLED=true
+  - Server starts successfully with WORKFLOW_ENGINE_ENABLED=false
+
+rollback_procedures:
+  - "git checkout src/server/index.ts to remove workflow wiring"
+  - "Set WORKFLOW_ENGINE_ENABLED=false to disable feature"
+  - "No database schema changes in this phase"
+  - "Server still starts even if workflow components fail to init"
+
+notes:
+  - "Follow existing server startup patterns (conditional init, factory functions)"
+  - "Workflow components only active if WORKFLOW_ENGINE_ENABLED=true"
+  - "Recovery before engine start ensures crash-safe behavior"
+  - "Graceful shutdown prevents orphaned workflows"
+  - "Config logging aids production debugging"
+  - "Integration tests verify both enabled and disabled states"
+
+specs_covered:
+  - SERVER-001  # Workflow store initialization
+  - SERVER-002  # File watcher startup
+  - SERVER-003  # Workflow recovery
+  - SERVER-004  # Engine startup
+  - SERVER-005  # HTTP route registration
+  - SERVER-006  # Graceful shutdown
+  - SERVER-007  # Config logging

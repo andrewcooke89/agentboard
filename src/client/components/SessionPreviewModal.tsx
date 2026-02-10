@@ -3,6 +3,7 @@ import type { AgentSession } from '@shared/types'
 import { formatRelativeTime } from '../utils/time'
 import { getPathLeaf } from '../utils/sessionLabel'
 import AgentIcon from './AgentIcon'
+import { authFetch } from '../utils/api'
 
 interface SessionPreviewModalProps {
   session: AgentSession
@@ -106,7 +107,7 @@ export default function SessionPreviewModal({
   useEffect(() => {
     const fetchPreview = async () => {
       try {
-        const response = await fetch(`/api/session-preview/${session.sessionId}`)
+        const response = await authFetch(`/api/session-preview/${session.sessionId}`)
         if (!response.ok) {
           const data = await response.json()
           throw new Error(data.error || 'Failed to load preview')

@@ -1,0 +1,58 @@
+id: TKT-0011
+version: 1
+created_at: 2026-02-04T07:37:12.239Z
+updated_at: 2026-02-04T07:37:12.239Z
+category: error-handling
+severity: high
+status: open
+source:
+  file: src/server/handlers/workflowHandlers.ts
+  line_start: 371
+  line_end: 394
+  code_snippet: >-
+    try {
+      const result = Bun.spawnSync(['tmux', 'kill-window', '-t', task.tmuxWindow], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      if (result.exitCode !== 0) {
+        logger.warn('tmux_kill_window_failed', { ... })
+      }
+    } catch (err) {
+      logger.warn('tmux_kill_window_error', { ... })
+    }
+
+    // Always mark the task as cancelled regardless of tmux kill outcome
+
+    ctx.taskStore.updateTask(currentStep.taskId, { status: 'cancelled' })
+  content_hash: 63cef32be585aa2f
+related_locations: []
+title: Tmux kill-window errors silently swallowed during workflow cancellation
+description: When cancelling a workflow run, if the tmux kill-window command
+  fails, the error is logged but the task is marked as cancelled anyway. This
+  can leave orphaned tmux sessions consuming resources. Comment explicitly
+  states 'Always mark the task as cancelled regardless of tmux kill outcome',
+  which creates resource leaks when tmux operations fail.
+suggestion: Track kill failures and retry with exponential backoff. If kill
+  fails after N retries, mark task as 'cancelled-with-orphan' and emit alert for
+  operator intervention. Add health check endpoint that lists orphaned tmux
+  windows. Consider using tmux list-windows to verify kill succeeded.
+auto_fixable: false
+fix_confidence: medium
+effort: medium
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - error-handling
+  - resource-leak
+  - workflow
+  - ERR-004
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

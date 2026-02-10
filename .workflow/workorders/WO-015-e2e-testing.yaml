@@ -1,0 +1,284 @@
+work_order_id: WO-015
+title: "Phase 15: End-to-End Testing & Deployment Preparation"
+phase: 15
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 8
+depends_on:
+  - WO-001  # All phases
+  - WO-002
+  - WO-003
+  - WO-004
+  - WO-005
+  - WO-006
+  - WO-007
+  - WO-008
+  - WO-009
+  - WO-010
+  - WO-011
+  - WO-012
+  - WO-013
+  - WO-014
+
+description: |
+  Create comprehensive end-to-end test suite using Playwright.
+  Verify full workflow lifecycle from file creation to execution.
+  Verify server restart recovery.
+  Verify feature flag disable path.
+  Run full linting, type checking, and test suite.
+
+  E2E scenarios:
+  - Create workflow file, see in UI, trigger run, monitor completion
+  - Failed step resume flow
+  - Form builder to YAML roundtrip
+  - Server restart recovery
+  - Feature flag disable
+
+context:
+  existing_patterns:
+    - "Playwright e2e tests (if exists in codebase)"
+    - "bun run lint, typecheck, test commands"
+  files_to_create:
+    - e2e/workflow-lifecycle.spec.ts
+    - e2e/workflow-recovery.spec.ts
+    - e2e/workflow-disable.spec.ts
+  reference_files:
+    - feature_brief.md (lines 592-599 for Phase 15 spec)
+    - feature_brief.md (lines 386-398 for test strategy)
+
+subtasks:
+  - id: ST-015-01
+    title: "Set up Playwright e2e test infrastructure"
+    description: |
+      Configure Playwright for e2e testing if not already set up.
+    acceptance_criteria:
+      - package.json has @playwright/test dependency
+      - playwright.config.ts configured
+      - Test helpers for server start/stop
+      - Test fixtures for temp workflow directory
+      - Test database cleanup helpers
+    files_modified:
+      - package.json (if Playwright not installed)
+      - playwright.config.ts (create if needed)
+      - e2e/helpers.ts (create)
+    estimated_hours: 1.0
+    error_handling:
+      - Server start failures skip tests gracefully
+
+  - id: ST-015-02
+    title: "E2E test: Full workflow lifecycle"
+    description: |
+      Test complete workflow from creation to execution.
+    acceptance_criteria:
+      - Test: "user creates workflow file and runs it successfully"
+      - Steps:
+        1. Start server with temp workflow directory
+        2. Write valid-workflow.yaml to directory
+        3. Open browser, navigate to workflow list
+        4. Assert workflow appears in list
+        5. Click workflow to open detail
+        6. Click "Run" button
+        7. Assert run appears in history
+        8. Wait for workflow to complete
+        9. Assert pipeline diagram shows all steps completed
+      - Test passes with all assertions
+    files_modified:
+      - e2e/workflow-lifecycle.spec.ts (create)
+    estimated_hours: 2.5
+    error_handling:
+      - Timeouts configurable, tests don't hang
+
+  - id: ST-015-03
+    title: "E2E test: Failed step resume"
+    description: |
+      Test resuming a failed workflow run.
+    acceptance_criteria:
+      - Test: "user resumes failed workflow run"
+      - Steps:
+        1. Create workflow with step that will fail
+        2. Trigger run
+        3. Wait for step to fail
+        4. Assert pipeline shows failed step in red
+        5. Click "Resume" button
+        6. Assert run status changes to running
+        7. Fix failure condition (modify file, etc.)
+        8. Wait for step to complete
+        9. Assert workflow completes successfully
+      - Test passes with all assertions
+    files_modified:
+      - e2e/workflow-lifecycle.spec.ts
+    estimated_hours: 1.5
+    error_handling:
+      - Test cleanup removes temp files
+
+  - id: ST-015-04
+    title: "E2E test: Form builder YAML roundtrip"
+    description: |
+      Test form builder and YAML editor toggle preserves content.
+    acceptance_criteria:
+      - Test: "form builder to YAML editor roundtrip"
+      - Steps:
+        1. Open workflow editor
+        2. Fill in form: name, description, add 2 steps
+        3. Toggle to YAML editor
+        4. Assert YAML contains workflow name and 2 steps
+        5. Modify YAML (add step description)
+        6. Toggle to form builder
+        7. Assert form shows 2 steps and description
+        8. Save workflow
+        9. Verify workflow created in API
+      - Test passes with all assertions
+    files_modified:
+      - e2e/workflow-lifecycle.spec.ts
+    estimated_hours: 1.5
+    error_handling:
+      - Invalid YAML doesn't break toggle
+
+  - id: ST-015-05
+    title: "E2E test: Server restart recovery"
+    description: |
+      Test workflows resume after server restart.
+    acceptance_criteria:
+      - Test: "server restart recovers running workflows"
+      - Steps:
+        1. Start server, create workflow with long-running step
+        2. Trigger run, wait for step to start
+        3. Stop server (SIGINT)
+        4. Restart server
+        5. Assert workflow recovery logs
+        6. Assert workflow continues from current step
+        7. Wait for workflow to complete
+        8. Assert workflow completed successfully
+      - Test passes with all assertions
+    files_modified:
+      - e2e/workflow-recovery.spec.ts (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Server restart cleanup properly
+
+  - id: ST-015-06
+    title: "E2E test: Feature flag disable"
+    description: |
+      Test server works with WORKFLOW_ENGINE_ENABLED=false.
+    acceptance_criteria:
+      - Test: "workflow engine disabled via flag"
+      - Steps:
+        1. Start server with WORKFLOW_ENGINE_ENABLED=false
+        2. Verify workflow routes not registered (404)
+        3. Verify existing functionality works (task queue)
+        4. Stop server
+        5. Start server with WORKFLOW_ENGINE_ENABLED=true
+        6. Verify workflow routes registered (200)
+      - Test passes with all assertions
+    files_modified:
+      - e2e/workflow-disable.spec.ts (create)
+    estimated_hours: 1.0
+    error_handling:
+      - Server starts cleanly in both modes
+
+  - id: ST-015-07
+    title: "Run full linting and type checking"
+    description: |
+      Verify all code passes lint and type checks.
+    acceptance_criteria:
+      - Run: bun run lint
+      - Assert: no lint errors
+      - Run: bun run typecheck
+      - Assert: no TypeScript errors
+      - Fix any issues found
+    files_modified:
+      - (various files if lint/type errors found)
+    estimated_hours: 1.0
+    error_handling:
+      - Document any acceptable lint suppressions
+
+  - id: ST-015-08
+    title: "Run full test suite"
+    description: |
+      Verify all unit, integration, and e2e tests pass.
+    acceptance_criteria:
+      - Run: bun run test (all unit and integration tests)
+      - Run: bun run test:e2e (all e2e tests)
+      - Assert: all tests pass
+      - Fix any failing tests
+      - Test coverage >90% for workflow modules
+    files_modified:
+      - (various test files if failures found)
+    estimated_hours: 1.5
+    error_handling:
+      - Flaky tests made deterministic or documented
+
+  - id: ST-015-09
+    title: "Create deployment checklist"
+    description: |
+      Document deployment steps and verification.
+    acceptance_criteria:
+      - Create DEPLOYMENT.md with:
+        - Environment variables to set
+        - Migration steps (none for additive changes)
+        - Verification steps (health checks)
+        - Rollback procedure
+        - Feature flag configuration
+        - Observability setup (log monitoring)
+      - Checklist reviewed and approved
+    files_modified:
+      - DEPLOYMENT.md (create)
+    estimated_hours: 0.5
+
+test_criteria:
+  - test_type: e2e
+    description: "All Playwright e2e tests pass"
+    command: "bun run test:e2e"
+    expected_output: "All e2e tests pass"
+
+  - test_type: lint
+    description: "Linting passes"
+    command: "bun run lint"
+    expected_output: "No lint errors"
+
+  - test_type: typecheck
+    description: "Type checking passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All unit tests pass"
+    command: "bun run test"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - Playwright e2e test infrastructure set up
+  - Full workflow lifecycle test passes
+  - Failed step resume test passes
+  - Form builder roundtrip test passes
+  - Server restart recovery test passes
+  - Feature flag disable test passes
+  - bun run lint passes with no errors
+  - bun run typecheck passes with no errors
+  - bun run test passes with all tests green
+  - Test coverage >90% for workflow modules
+  - Deployment checklist created and reviewed
+  - All acceptance criteria from feature brief verified
+
+rollback_procedures:
+  - "Set WORKFLOW_ENGINE_ENABLED=false to disable feature"
+  - "No destructive migrations - all changes additive"
+  - "Rollback via git revert or feature flag"
+  - "Database tables remain but unused when disabled"
+
+notes:
+  - "E2E tests verify requirements from feature brief acceptance criteria (lines 329-384)"
+  - "Server restart recovery is critical requirement (RISK-001)"
+  - "Feature flag disable verifies rollback path (lines 419-423)"
+  - "Full test suite ensures no regressions in existing functionality"
+  - "Deployment checklist enables safe production rollout"
+  - "Test fixtures use temp directories and in-memory databases"
+
+specs_covered:
+  - E2E-001  # Full workflow lifecycle
+  - E2E-002  # Failed step resume
+  - E2E-003  # Form builder roundtrip
+  - E2E-004  # Server restart recovery
+  - E2E-005  # Feature flag disable
+  - DEPLOY-001  # Deployment checklist
+  - QA-001  # All acceptance criteria verified

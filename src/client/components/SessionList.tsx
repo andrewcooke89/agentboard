@@ -22,6 +22,7 @@ import ChevronDownIcon from '@untitledui-icons/react/line/esm/ChevronDownIcon'
 import ChevronRightIcon from '@untitledui-icons/react/line/esm/ChevronRightIcon'
 import Edit05Icon from '@untitledui-icons/react/line/esm/Edit05Icon'
 import Pin02Icon from '@untitledui-icons/react/line/esm/Pin02Icon'
+import SearchMdIcon from '@untitledui-icons/react/line/esm/SearchMdIcon'
 import type { AgentSession, Session } from '@shared/types'
 import { getSessionOrderKey, getUniqueProjects, sortSessions } from '../utils/sessions'
 import { formatRelativeTime } from '../utils/time'
@@ -32,6 +33,8 @@ import { useSessionStore } from '../stores/sessionStore'
 import { getEffectiveModifier, getModifierDisplay } from '../utils/device'
 import { useCounterBump } from '../hooks/useCounterBump'
 import { useExitCleanup } from '../hooks/useExitCleanup'
+import { useTaskStore } from '../stores/taskStore'
+import { useWorkflowStore } from '../stores/workflowStore'
 import AgentIcon from './AgentIcon'
 import InactiveSessionItem from './InactiveSessionItem'
 import ProjectBadge from './ProjectBadge'
@@ -50,6 +53,7 @@ interface SessionListProps {
   onKill?: (sessionId: string) => void
   onDuplicate?: (sessionId: string) => void
   onSetPinned?: (sessionId: string, isPinned: boolean) => void
+  onNavigateToWorkflow?: (workflowId: string) => void
 }
 
 const statusBarClass: Record<Session['status'], string> = {
@@ -59,13 +63,14 @@ const statusBarClass: Record<Session['status'], string> = {
   unknown: 'status-bar-waiting',
 }
 
-// Force re-render every 30s to update relative timestamps
-function useTimestampRefresh() {
+// Force re-render every 30s to update relative timestamps (only when sessions exist)
+function useTimestampRefresh(active: boolean) {
   const [, setTick] = useState(0)
   useEffect(() => {
+    if (!active) return
     const id = setInterval(() => setTick((n) => n + 1), 30000)
     return () => clearInterval(id)
-  }, [])
+  }, [active])
 }
 
 export default function SessionList({
@@ -80,9 +85,12 @@ export default function SessionList({
   onKill,
   onDuplicate,
   onSetPinned,
+  onNavigateToWorkflow,
 }: SessionListProps) {
-  useTimestampRefresh()
+  useTimestampRefresh(sessions.length > 0)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const showInactive = useSettingsStore((state) => state.inactiveSessionsExpanded)
   const setShowInactive = useSettingsStore((state) => state.setInactiveSessionsExpanded)
   const [previewSession, setPreviewSession] = useState<AgentSession | null>(null)
@@ -165,6 +173,9 @@ export default function SessionList({
   )
   const projectFilters = useSettingsStore((state) => state.projectFilters)
   const setProjectFilters = useSettingsStore((state) => state.setProjectFilters)
+  const sessionGroupMode = useSettingsStore((state) => state.sessionGroupMode)
+  const collapsedProjects = useSettingsStore((state) => state.collapsedProjects)
+  const toggleProjectCollapsed = useSettingsStore((state) => state.toggleProjectCollapsed)
 
   // Get exiting sessions from store (for kill-failed rollback only)
   const exitingSessions = useSessionStore((state) => state.exitingSessions)
@@ -210,15 +221,85 @@ export default function SessionList({
     [sessions, inactiveSessions]
   )
 
+  // Helper function to check if a session matches search query
+  const matchesSearch = useCallback((session: Session | AgentSession, query: string): boolean => {
+    if (!query) return true
+    const lowerQuery = query.toLowerCase()
+
+    // For Session type
+    if ('name' in session) {
+      const name = session.name?.toLowerCase() || ''
+      const agentSessionName = session.agentSessionName?.toLowerCase() || ''
+      const projectPath = session.projectPath?.toLowerCase() || ''
+      const lastUserMessage = session.lastUserMessage?.toLowerCase() || ''
+      const projectLeaf = getPathLeaf(session.projectPath)?.toLowerCase() || ''
+
+      return (
+        name.includes(lowerQuery) ||
+        agentSessionName.includes(lowerQuery) ||
+        projectPath.includes(lowerQuery) ||
+        projectLeaf.includes(lowerQuery) ||
+        lastUserMessage.includes(lowerQuery)
+      )
+    }
+
+    // For AgentSession type
+    const displayName = session.displayName?.toLowerCase() || ''
+    const projectPath = session.projectPath?.toLowerCase() || ''
+    const lastUserMessage = session.lastUserMessage?.toLowerCase() || ''
+    const projectLeaf = getPathLeaf(session.projectPath)?.toLowerCase() || ''
+
+    return (
+      displayName.includes(lowerQuery) ||
+      projectPath.includes(lowerQuery) ||
+      projectLeaf.includes(lowerQuery) ||
+      lastUserMessage.includes(lowerQuery)
+    )
+  }, [])
+
   const filteredSessions = useMemo(() => {
-    if (projectFilters.length === 0) return sortedSessions
-    return sortedSessions.filter((session) => projectFilters.includes(session.projectPath))
-  }, [sortedSessions, projectFilters])
+    let result = sortedSessions
+
+    // Apply project filter
+    if (projectFilters.length === 0) {
+      result = sortedSessions
+    } else {
+      result = sortedSessions.filter((session) => projectFilters.includes(session.projectPath))
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      result = result.filter((session) => matchesSearch(session, searchQuery))
+    }
+
+    return result
+  }, [sortedSessions, projectFilters, searchQuery, matchesSearch])
 
   const filterKey = useMemo(
     () => (projectFilters.length === 0 ? 'all-projects' : projectFilters.join('|')),
     [projectFilters]
   )
+
+  const groupedSessions = useMemo(() => {
+    if (sessionGroupMode !== 'project') return null
+    const groups: { projectPath: string; projectName: string; sessions: typeof filteredSessions }[] = []
+    const groupMap = new Map<string, typeof filteredSessions>()
+    for (const session of filteredSessions) {
+      const existing = groupMap.get(session.projectPath)
+      if (existing) {
+        existing.push(session)
+      } else {
+        const arr = [session]
+        groupMap.set(session.projectPath, arr)
+        groups.push({
+          projectPath: session.projectPath,
+          projectName: getPathLeaf(session.projectPath) || session.projectPath,
+          sessions: arr,
+        })
+      }
+    }
+    return groups
+  }, [filteredSessions, sessionGroupMode])
 
   // Track sessions that became visible due to filter changes (for entry animation)
   const prevFilteredIdsRef = useRef<Set<string>>(new Set(filteredSessions.map((s) => s.id)))
@@ -255,11 +336,20 @@ export default function SessionList({
   }, [newlyFilteredInIds])
 
   const filteredInactiveSessions = useMemo(() => {
-    if (projectFilters.length === 0) return inactiveSessions
-    return inactiveSessions.filter(
-      (session) => projectFilters.includes(session.projectPath)
-    )
-  }, [inactiveSessions, projectFilters])
+    let result = inactiveSessions
+
+    // Apply project filter
+    if (projectFilters.length > 0) {
+      result = result.filter((session) => projectFilters.includes(session.projectPath))
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      result = result.filter((session) => matchesSearch(session, searchQuery))
+    }
+
+    return result
+  }, [inactiveSessions, projectFilters, searchQuery, matchesSearch])
 
   const hiddenPermissionCount = useMemo(() => {
     if (projectFilters.length === 0) return 0
@@ -294,6 +384,11 @@ export default function SessionList({
   const [overId, setOverId] = useState<string | null>(null)
   // Disable layout animations briefly after drag to prevent conflicts
   const [layoutAnimationsDisabled, setLayoutAnimationsDisabled] = useState(false)
+  const layoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reenableLayoutAnimations = useCallback(() => {
+    if (layoutTimeoutRef.current) clearTimeout(layoutTimeoutRef.current)
+    layoutTimeoutRef.current = setTimeout(() => setLayoutAnimationsDisabled(false), 100)
+  }, [])
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(event.active.id as string)
@@ -312,14 +407,14 @@ export default function SessionList({
 
       if (!over || active.id === over.id) {
         // Re-enable layout animations after a brief delay
-        setTimeout(() => setLayoutAnimationsDisabled(false), 100)
+        reenableLayoutAnimations()
         return
       }
 
       const oldIndex = filteredSessions.findIndex((s) => s.id === active.id)
       const newIndex = filteredSessions.findIndex((s) => s.id === over.id)
       if (oldIndex === -1 || newIndex === -1) {
-        setTimeout(() => setLayoutAnimationsDisabled(false), 100)
+        reenableLayoutAnimations()
         return
       }
 
@@ -343,7 +438,7 @@ export default function SessionList({
       }
       setManualSessionOrder(newOrder)
       // Re-enable layout animations after state settles
-      setTimeout(() => setLayoutAnimationsDisabled(false), 100)
+      reenableLayoutAnimations()
     },
     [
       filteredSessions,
@@ -357,7 +452,7 @@ export default function SessionList({
   const handleDragCancel = useCallback(() => {
     setActiveId(null)
     setOverId(null)
-    setTimeout(() => setLayoutAnimationsDisabled(false), 100)
+    reenableLayoutAnimations()
   }, [])
 
   useEffect(() => {
@@ -382,6 +477,43 @@ export default function SessionList({
     setEditingSessionId(null)
   }
 
+  // Keyboard shortcut for search (Cmd+K or Cmd+Shift+F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+      const modifier = isMac ? e.metaKey : e.ctrlKey
+
+      // Cmd+K or Cmd+Shift+F to focus search
+      if (modifier && (e.key === 'k' || (e.shiftKey && e.key === 'f'))) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+
+      // Escape to clear search (only if search input is focused)
+      if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
+        e.preventDefault()
+        setSearchQuery('')
+        searchInputRef.current?.blur()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  const handleClearSearch = () => {
+    setSearchQuery('')
+    searchInputRef.current?.focus()
+  }
+
+  const totalActiveSessions = useMemo(() => {
+    let count = sortedSessions.length
+    if (projectFilters.length > 0) {
+      count = sortedSessions.filter((s) => projectFilters.includes(s.projectPath)).length
+    }
+    return count
+  }, [sortedSessions, projectFilters])
+
   return (
     <aside className="flex min-h-0 flex-1 flex-col border-r border-border bg-elevated">
       {error && (
@@ -391,25 +523,51 @@ export default function SessionList({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-10 flex h-10 items-center justify-between border-b border-border bg-elevated px-3">
-          <span className="text-xs font-medium uppercase tracking-wider text-muted">
-            Sessions
-          </span>
-          <div className="flex items-center gap-4">
-            <ProjectFilterDropdown
-              projects={uniqueProjects}
-              selectedProjects={projectFilters}
-              onSelect={setProjectFilters}
-              hasHiddenPermissions={hiddenPermissionCount > 0}
-            />
-            <motion.span
-              className="w-8 text-right text-xs text-muted"
-              animate={activeCounterBump && !prefersReducedMotion ? { scale: [1, 1.3, 1] } : {}}
-              transition={{ duration: 0.3 }}
-              onAnimationComplete={clearActiveCounterBump}
-            >
-              {filteredSessions.length}
-            </motion.span>
+        <div className="sticky top-0 z-10 border-b border-border bg-elevated">
+          <div className="flex h-10 items-center justify-between px-3">
+            <span className="text-xs font-medium uppercase tracking-wider text-muted">
+              Sessions
+            </span>
+            <div className="flex items-center gap-4">
+              <ProjectFilterDropdown
+                projects={uniqueProjects}
+                selectedProjects={projectFilters}
+                onSelect={setProjectFilters}
+                hasHiddenPermissions={hiddenPermissionCount > 0}
+              />
+              <motion.span
+                className="w-8 text-right text-xs text-muted"
+                animate={activeCounterBump && !prefersReducedMotion ? { scale: [1, 1.3, 1] } : {}}
+                transition={{ duration: 0.3 }}
+                onAnimationComplete={clearActiveCounterBump}
+              >
+                {searchQuery.trim() ? `${filteredSessions.length}/${totalActiveSessions}` : filteredSessions.length}
+              </motion.span>
+            </div>
+          </div>
+          {/* Search input */}
+          <div className="border-t border-border px-3 py-2">
+            <div className={`relative flex items-center gap-2 rounded border ${searchQuery.trim() ? 'border-accent bg-surface' : 'border-border bg-surface'}`}>
+              <SearchMdIcon className="ml-2 h-3.5 w-3.5 shrink-0 text-muted" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter sessions..."
+                className="min-w-0 flex-1 bg-transparent py-1.5 pr-2 text-xs text-primary placeholder-muted outline-none"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  className="mr-1 rounded p-0.5 text-muted hover:bg-hover hover:text-primary"
+                  aria-label="Clear search"
+                >
+                  <XCloseIcon className="h-3 w-3" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
         {loading ? (
@@ -424,6 +582,58 @@ export default function SessionList({
         ) : filteredSessions.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-muted">
             No sessions
+          </div>
+        ) : groupedSessions ? (
+          <div key={filterKey}>
+            {groupedSessions.map((group) => (
+              <div key={group.projectPath} className="border-b border-border last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => toggleProjectCollapsed(group.projectPath)}
+                  className="flex w-full items-center justify-between px-3 py-1.5 text-left text-xs font-medium text-muted hover:text-primary hover:bg-hover"
+                >
+                  <span className="flex items-center gap-1.5">
+                    {collapsedProjects.includes(group.projectPath) ? (
+                      <ChevronRightIcon className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDownIcon className="h-3.5 w-3.5" />
+                    )}
+                    {group.projectName}
+                  </span>
+                  <span className="text-xs tabular-nums">{group.sessions.length}</span>
+                </button>
+                {!collapsedProjects.includes(group.projectPath) && (
+                  <AnimatePresence initial={false}>
+                    {group.sessions.map((session) => (
+                      <motion.div
+                        key={session.id}
+                        initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                        transition={{ duration: EXIT_DURATION / 1000 }}
+                      >
+                        <SessionRow
+                          session={session}
+                          isSelected={session.id === selectedSessionId}
+                          isEditing={session.id === editingSessionId}
+                          showSessionIdPrefix={showSessionIdPrefix}
+                          showProjectName={false}
+                          showLastUserMessage={showLastUserMessage}
+                          onSelect={() => onSelect(session.id)}
+                          onStartEdit={() => setEditingSessionId(session.id)}
+                          onCancelEdit={() => setEditingSessionId(null)}
+                          onRename={(newName) => handleRename(session.id, newName)}
+                          onKill={onKill ? () => onKill(session.id) : undefined}
+                          onDuplicate={onDuplicate ? () => onDuplicate(session.id) : undefined}
+                          onSetPinned={onSetPinned && session.agentSessionId ? (isPinned) => onSetPinned(session.agentSessionId!.trim(), isPinned) : undefined}
+                          onNavigateToWorkflow={onNavigateToWorkflow}
+                        />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                )}
+              </div>
+            ))}
           </div>
         ) : (
           <DndContext
@@ -443,13 +653,11 @@ export default function SessionList({
                   {filteredSessions.map((session, index) => {
                     const isTrulyNew = newlyActiveIds.has(session.id)
                     const isFilteredIn = newlyFilteredInIds.has(session.id)
-                    // Calculate drop indicator position
                     const activeIndex = activeId
                       ? filteredSessions.findIndex((s) => s.id === activeId)
                       : -1
                     const isOver = overId === session.id && activeId !== session.id
                     const showDropIndicator = isOver ? (activeIndex > index ? 'above' : 'below') : null
-                    // Show bounce for both new and filter-in, but delay only for truly new
                     const isNew = isTrulyNew || isFilteredIn
                     return (
                       <SortableSessionItem
@@ -472,6 +680,7 @@ export default function SessionList({
                         onKill={onKill ? () => onKill(session.id) : undefined}
                         onDuplicate={onDuplicate ? () => onDuplicate(session.id) : undefined}
                         onSetPinned={onSetPinned && session.agentSessionId ? (isPinned) => onSetPinned(session.agentSessionId!.trim(), isPinned) : undefined}
+                        onNavigateToWorkflow={onNavigateToWorkflow}
                       />
                     )
                   })}
@@ -576,6 +785,7 @@ interface SortableSessionItemProps {
   onKill?: () => void
   onDuplicate?: () => void
   onSetPinned?: (isPinned: boolean) => void
+  onNavigateToWorkflow?: (workflowId: string) => void
 }
 
 const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>(function SortableSessionItem({
@@ -597,6 +807,7 @@ const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>
   onKill,
   onDuplicate,
   onSetPinned,
+  onNavigateToWorkflow,
 }, ref) {
   const {
     attributes,
@@ -678,6 +889,7 @@ const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>
         onKill={onKill}
         onDuplicate={onDuplicate}
         onSetPinned={onSetPinned}
+        onNavigateToWorkflow={onNavigateToWorkflow}
       />
       {dropIndicator === 'below' && (
         <div className="absolute -bottom-px left-3 right-3 h-0.5 border-t-2 border-dashed border-accent" />
@@ -703,6 +915,7 @@ interface SessionRowProps {
   onKill?: () => void
   onDuplicate?: () => void
   onSetPinned?: (isPinned: boolean) => void
+  onNavigateToWorkflow?: (workflowId: string) => void
 }
 
 function SessionRow({
@@ -720,6 +933,7 @@ function SessionRow({
   onKill,
   onDuplicate,
   onSetPinned,
+  onNavigateToWorkflow,
 }: SessionRowProps) {
   const lastActivity = formatRelativeTime(session.lastActivity)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -732,6 +946,26 @@ function SessionRow({
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const directoryLeaf = getPathLeaf(session.projectPath)
+
+  // Check if this session was spawned by a workflow
+  const workflowInfo = (() => {
+    const tasks = useTaskStore.getState().tasks
+    const task = tasks.find(t => t.sessionName === session.name && t.metadata)
+    if (!task?.metadata) return null
+    try {
+      const meta = JSON.parse(task.metadata)
+      if (meta.workflow_run_id && meta.workflow_step_name) {
+        const runs = useWorkflowStore.getState().workflowRuns
+        const run = runs.find(r => r.id === meta.workflow_run_id)
+        return {
+          workflowId: run?.workflow_id ?? null,
+          workflowName: run?.workflow_name ?? null,
+          stepName: meta.workflow_step_name as string,
+        }
+      }
+    } catch { /* ignore parse errors */ }
+    return null
+  })()
   const needsInput = session.status === 'permission'
   const agentSessionId = session.agentSessionId?.trim()
   const sessionIdPrefix =
@@ -909,11 +1143,24 @@ function SessionRow({
           )}
         </div>
 
-        {/* Line 2: Project badge + last user message (up to 2 lines total) */}
-        {(showDirectory || showMessage) && (
+        {/* Line 2: Project badge + workflow badge + last user message (up to 2 lines total) */}
+        {(showDirectory || showMessage || workflowInfo) && (
           <div className="flex flex-wrap items-center gap-1 pl-[1.375rem]">
             {showDirectory && (
               <ProjectBadge name={directoryLeaf!} fullPath={session.projectPath} />
+            )}
+            {workflowInfo && (
+              <span
+                className={`text-[10px] px-1.5 rounded-full bg-indigo-500/20 text-indigo-300 inline-flex items-center gap-0.5${onNavigateToWorkflow && workflowInfo.workflowId ? ' cursor-pointer hover:bg-indigo-500/30 transition-colors' : ''}`}
+                title={workflowInfo.workflowName ? `Workflow: ${workflowInfo.workflowName} / ${workflowInfo.stepName}` : `Step: ${workflowInfo.stepName}`}
+                onClick={onNavigateToWorkflow && workflowInfo.workflowId ? (e) => {
+                  e.stopPropagation()
+                  onNavigateToWorkflow(workflowInfo.workflowId!)
+                } : undefined}
+                role={onNavigateToWorkflow && workflowInfo.workflowId ? 'button' : undefined}
+              >
+                &#x1f504; {workflowInfo.stepName}
+              </span>
             )}
             {showMessage && (
               <span className="line-clamp-2 text-xs italic text-muted">

@@ -81,10 +81,86 @@ const logLevel = ['debug', 'info', 'warn', 'error'].includes(logLevelRaw || '')
 const defaultLogFile = path.join(homeDir, '.agentboard', 'agentboard.log')
 const logFile = process.env.LOG_FILE ?? defaultLogFile
 
+// Authentication token for remote access (static bearer token)
+// If not set, auth is disabled (dev mode - no auth required)
+const authToken = process.env.AUTH_TOKEN || ''
+
+// Comma-separated list of allowed filesystem roots for the directory browser
+// If not set, no restrictions (dev mode)
+const allowedRoots = (process.env.ALLOWED_ROOTS || '')
+  .split(',')
+  .map((p) => p.trim())
+  .filter(Boolean)
+  .map((p) => path.resolve(p))
+
+// Task queue configuration
+const taskMaxConcurrentRaw = Number(process.env.TASK_MAX_CONCURRENT)
+const taskMaxConcurrent = Number.isFinite(taskMaxConcurrentRaw) && taskMaxConcurrentRaw > 0
+  ? Math.floor(taskMaxConcurrentRaw)
+  : 5
+const taskPollIntervalMsRaw = Number(process.env.TASK_POLL_INTERVAL_MS)
+const taskPollIntervalMs = Number.isFinite(taskPollIntervalMsRaw) && taskPollIntervalMsRaw > 0
+  ? taskPollIntervalMsRaw
+  : 5000
+const taskDefaultTimeoutSecondsRaw = Number(process.env.TASK_DEFAULT_TIMEOUT_SECONDS)
+const taskDefaultTimeoutSeconds = Number.isFinite(taskDefaultTimeoutSecondsRaw) && taskDefaultTimeoutSecondsRaw > 0
+  ? taskDefaultTimeoutSecondsRaw
+  : 1800
+const taskRateLimitPerHourRaw = Number(process.env.TASK_RATE_LIMIT_PER_HOUR)
+const taskRateLimitPerHour = Number.isFinite(taskRateLimitPerHourRaw) && taskRateLimitPerHourRaw > 0
+  ? Math.floor(taskRateLimitPerHourRaw)
+  : 30
+const taskOutputDir = process.env.TASK_OUTPUT_DIR || path.join(homeDir, '.agentboard', 'task-outputs')
+
 const claudeConfigDir =
   process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude')
 const codexHomeDir =
   process.env.CODEX_HOME || path.join(homeDir, '.codex')
+
+// History configuration
+const historyEnabledRaw = process.env.AGENTBOARD_HISTORY_ENABLED
+const historyEnabled = historyEnabledRaw === 'false' || historyEnabledRaw === '0' ? false : true
+const historyMaxFilesRaw = Number(process.env.HISTORY_MAX_FILES)
+const historyMaxFiles = Number.isFinite(historyMaxFilesRaw) && historyMaxFilesRaw > 0
+  ? Math.floor(historyMaxFilesRaw) : 20000
+const historyMaxResultsRaw = Number(process.env.HISTORY_MAX_RESULTS)
+const historyMaxResults = Number.isFinite(historyMaxResultsRaw) && historyMaxResultsRaw > 0
+  ? Math.floor(historyMaxResultsRaw) : 200
+const historyReadMaxBytesRaw = Number(process.env.HISTORY_READ_MAX_BYTES)
+const historyReadMaxBytes = Number.isFinite(historyReadMaxBytesRaw) && historyReadMaxBytesRaw > 0
+  ? Math.floor(historyReadMaxBytesRaw) : 65536
+const historyReadMaxLinesRaw = Number(process.env.HISTORY_READ_MAX_LINES)
+const historyReadMaxLines = Number.isFinite(historyReadMaxLinesRaw) && historyReadMaxLinesRaw > 0
+  ? Math.floor(historyReadMaxLinesRaw) : 200
+const historyCountsTtlMsRaw = Number(process.env.HISTORY_COUNTS_TTL_MS)
+const historyCountsTtlMs = Number.isFinite(historyCountsTtlMsRaw) && historyCountsTtlMsRaw > 0
+  ? historyCountsTtlMsRaw : 60000
+const historyResumeTimeoutMsRaw = Number(process.env.HISTORY_RESUME_TIMEOUT_MS)
+const historyResumeTimeoutMs = Number.isFinite(historyResumeTimeoutMsRaw) && historyResumeTimeoutMsRaw > 0
+  ? historyResumeTimeoutMsRaw : 2000
+
+// Workflow engine configuration
+const workflowEngineEnabledRaw = process.env.WORKFLOW_ENGINE_ENABLED
+const workflowEngineEnabled = workflowEngineEnabledRaw === 'false' || workflowEngineEnabledRaw === '0' ? false : true
+const workflowDir = process.env.WORKFLOW_DIR || path.join(homeDir, '.agentboard', 'workflows')
+const workflowMaxConcurrentRunsRaw = Number(process.env.WORKFLOW_MAX_CONCURRENT_RUNS)
+const workflowMaxConcurrentRuns = Number.isFinite(workflowMaxConcurrentRunsRaw) && workflowMaxConcurrentRunsRaw > 0
+  ? Math.floor(workflowMaxConcurrentRunsRaw)
+  : 20
+const workflowRunRetentionDaysRaw = Number(process.env.WORKFLOW_RUN_RETENTION_DAYS)
+const workflowRunRetentionDays = Number.isFinite(workflowRunRetentionDaysRaw) && workflowRunRetentionDaysRaw > 0
+  ? Math.floor(workflowRunRetentionDaysRaw)
+  : 30
+const workflowPollIntervalMsRaw = Number(process.env.WORKFLOW_POLL_INTERVAL_MS)
+const workflowPollIntervalMs = Number.isFinite(workflowPollIntervalMsRaw) && workflowPollIntervalMsRaw > 0
+  ? workflowPollIntervalMsRaw
+  : 2000
+
+// Session retention configuration
+const sessionRetentionDaysRaw = Number(process.env.AGENTBOARD_SESSION_RETENTION_DAYS)
+const sessionRetentionDays = Number.isFinite(sessionRetentionDaysRaw) && sessionRetentionDaysRaw > 0
+  ? Math.floor(sessionRetentionDaysRaw)
+  : 30
 
 export const config = {
   port: Number(process.env.PORT) || 4040,
@@ -119,4 +195,26 @@ export const config = {
   skipMatchingPatterns,
   logLevel,
   logFile,
+  authToken,
+  allowedRoots,
+  taskMaxConcurrent,
+  taskPollIntervalMs,
+  taskDefaultTimeoutSeconds,
+  taskRateLimitPerHour,
+  taskOutputDir,
+  historyEnabled,
+  historyMaxFiles,
+  historyMaxResults,
+  historyReadMaxBytes,
+  historyReadMaxLines,
+  historyCountsTtlMs,
+  historyResumeTimeoutMs,
+  // Workflow engine
+  workflowEngineEnabled,
+  workflowDir,
+  workflowMaxConcurrentRuns,
+  workflowPollIntervalMs,
+  workflowRunRetentionDays,
+  // Session retention
+  sessionRetentionDays,
 }

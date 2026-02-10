@@ -1,0 +1,54 @@
+id: TKT-0005
+version: 1
+created_at: 2026-02-04T07:36:13.398Z
+updated_at: 2026-02-04T07:36:13.398Z
+category: error-handling
+subcategory: state-safety
+severity: critical
+status: open
+source:
+  file: src/server/db.ts
+  line_start: 422
+  line_end: 474
+  code_snippet: |-
+    function migrateDeduplicateDisplayNames(db: SQLiteDatabase) {
+      const duplicates = db.prepare(
+        `SELECT display_name, COUNT(*) as count
+         FROM agent_sessions
+         GROUP BY display_name
+         HAVING count > 1`
+      ).all()
+      // ... multiple non-atomic operations ...
+      updateStmt.run({ $newName: newName, $sessionId: sessions[i].session_id })
+    }
+  content_hash: 2570ce6e688c753f
+related_locations: []
+title: Display name uniqueness check without transaction protection
+description: Display name collision detection and update operations are not
+  wrapped in a transaction. Multiple processes could simultaneously detect the
+  same duplicate, leading to non-unique display names or lost updates. The
+  function runs during DB initialization when multiple server instances could be
+  starting. Multi-step read-modify-write without transaction wrapper.
+suggestion: Wrap entire migration in db.transaction(). Use SELECT FOR UPDATE or
+  UNIQUE constraint with ON CONFLICT to ensure atomicity. Consider using
+  advisory locks for migration coordination.
+auto_fixable: false
+fix_confidence: high
+effort: medium
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - blocker
+  - state-safety
+  - database
+  - concurrency
+  - state-001
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

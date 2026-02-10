@@ -1,15 +1,15 @@
-import { spawnSync } from 'node:child_process'
+/**
+ * Global teardown for Playwright e2e tests
+ * Cleans up tmux sessions created during testing
+ */
 
-export default async function teardown() {
-  const session = process.env.E2E_TMUX_SESSION
-  if (!session) {
-    return
+import { killTmuxSession } from './helpers'
+
+export default async function globalTeardown() {
+  const tmuxSession = process.env.E2E_TMUX_SESSION
+  
+  if (tmuxSession) {
+    console.log(`[E2E Teardown] Cleaning up tmux session: ${tmuxSession}`)
+    killTmuxSession(tmuxSession)
   }
-
-  const check = spawnSync('tmux', ['-V'], { stdio: 'ignore' })
-  if (check.status !== 0) {
-    return
-  }
-
-  spawnSync('tmux', ['kill-session', '-t', session], { stdio: 'ignore' })
 }

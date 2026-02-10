@@ -1,0 +1,51 @@
+id: TKT-0013
+version: 1
+created_at: 2026-02-04T07:37:25.032Z
+updated_at: 2026-02-04T07:37:25.032Z
+category: error-handling
+severity: high
+status: open
+source:
+  file: src/server/logPoller.ts
+  line_start: 518
+  line_end: 524
+  code_snippet: |-
+    } catch (error) {
+      errors += 1
+      logger.warn('log_match_worker_error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
+      matchSkipped = true
+    }
+  content_hash: 359e9d8065271f1b
+related_locations: []
+title: LogPoller match worker errors suppress matching without failing gracefully
+description: When the log match worker throws an error, matchSkipped is set to
+  true and polling continues. However, the code doesn't distinguish between
+  transient errors and permanent failures, so log-to-window matching may be
+  broken indefinitely without operator awareness. Errors counter increments but
+  no threshold triggers remediation.
+suggestion: "Add error threshold: after N consecutive match failures, stop log
+  poller and emit critical alert. Categorize errors: (1) transient (network
+  timeout) = retry with backoff; (2) permanent (parse error) = disable matching,
+  alert operator. Add health check endpoint exposing match failure rate and last
+  successful match timestamp."
+auto_fixable: false
+fix_confidence: high
+effort: medium
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - error-handling
+  - reliability
+  - log-matching
+  - ERR-007
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null
