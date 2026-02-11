@@ -32,7 +32,8 @@ export interface ParsedWorkflow {
   variables: WorkflowVariable[]
   default_tier?: number
   system?: {
-    engine?: 'sequential' | 'dag'
+    engine?: 'legacy' | 'dag'
+    autoDetectedEngine?: boolean
     session_pool?: boolean
   }
 }
@@ -232,7 +233,7 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     // depends_on on top-level steps is an error (only valid within parallel_group children)
     if ('depends_on' in step && step.depends_on !== undefined && step.depends_on !== null) {
       if (stepType !== 'parallel_group') {
-        errors.push(`${prefix}.depends_on is only valid within parallel_group children, not on top-level steps`)
+        errors.push(`depends_on is only supported within parallel_group children`)
       }
     }
 
@@ -295,8 +296,8 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     systemConfig = {}
     if (hasStringField(sys, 'engine')) {
       const eng = sys.engine as string
-      if (eng !== 'sequential' && eng !== 'dag') {
-        errors.push('system.engine must be "sequential" or "dag"')
+      if (eng !== 'legacy' && eng !== 'dag') {
+        errors.push('system.engine must be "legacy" or "dag"')
       } else {
         systemConfig.engine = eng
       }
@@ -307,21 +308,21 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
   }
 
   // ── Auto-detection (REQ-04): infer DAG engine when parallel_group is used ──
+  // Overrides explicit system.engine value regardless of what was specified.
   const hasParallelGroup = parsedSteps.some(s => s.type === 'parallel_group')
   const hasDependsOn = parsedSteps.some(s => s.depends_on && s.depends_on.length > 0)
   if (hasParallelGroup || hasDependsOn) {
     if (!systemConfig) systemConfig = {}
-    if (!systemConfig.engine) {
-      systemConfig.engine = 'dag'
-      if (systemConfig.session_pool === undefined) {
-        systemConfig.session_pool = true
-      }
+    systemConfig.engine = 'dag'
+    systemConfig.autoDetectedEngine = true
+    if (systemConfig.session_pool === undefined) {
+      systemConfig.session_pool = true
     }
   }
 
   // ── REQ-05: session_pool:false + engine:dag is invalid ────────────────────
   if (systemConfig?.session_pool === false && systemConfig?.engine === 'dag') {
-    errors.push('system.session_pool cannot be false when engine is "dag"')
+    errors.push('session_pool: false is incompatible with engine: dag')
   }
 
   // ── Build result ────────────────────────────────────────────────────────
@@ -591,6 +592,14 @@ function validateTypeSpecificFields(
         }
       }
 
+      // max_parallel — optional, positive integer
+      if ('max_parallel' in step && step.max_parallel !== undefined && step.max_parallel !== null) {
+        const mp = Number(step.max_parallel)
+        if (!Number.isInteger(mp) || mp < 1) {
+          errors.push(`${prefix}.max_parallel must be a positive integer (got ${JSON.stringify(step.max_parallel)})`)
+        }
+      }
+
       // Validate each child
       const childNames = new Set<string>()
       const childList: { name: string; depends_on?: string[] }[] = []
@@ -626,7 +635,9 @@ function validateTypeSpecificFields(
           errors.push(`${cPrefix}.type is required`)
         } else {
           const cType = child.type as string
-          if (!VALID_STEP_TYPES.has(cType)) {
+          if (cType === 'amendment_check') {
+            errors.push(`${cPrefix}.type "amendment_check" cannot be a parallel_group child`)
+          } else if (!VALID_STEP_TYPES.has(cType)) {
             errors.push(`${cPrefix}.type "${cType}" is invalid (must be one of: ${[...VALID_STEP_TYPES].join(', ')})`)
           } else if (cType === 'parallel_group') {
             errors.push(`${cPrefix}.type "parallel_group" cannot be nested inside another parallel_group`)
@@ -667,7 +678,7 @@ function validateTypeSpecificFields(
         const child = childList[ci]
         for (const dep of child.depends_on ?? []) {
           if (!childNames.has(dep)) {
-            errors.push(`${prefix}.children[${ci}].depends_on references unknown sibling "${dep}"`)
+            errors.push(`depends_on target '${dep}' is not a sibling within this parallel_group`)
           }
         }
       }
@@ -676,7 +687,7 @@ function validateTypeSpecificFields(
       if (childList.length > 0) {
         const cycleNodes = detectCycle(childList)
         if (cycleNodes) {
-          errors.push(`${prefix}.children contain a dependency cycle: ${cycleNodes.join(' -> ')} -> ${cycleNodes[0]}`)
+          errors.push(`Circular dependency detected: ${cycleNodes.join(' -> ')} -> ${cycleNodes[0]}`)
         }
       }
       break
@@ -910,6 +921,12 @@ function buildWorkflowStep(
     const of = step.on_failure as string
     if (of === 'fail_fast' || of === 'cancel_all' || of === 'continue_others') {
       result.on_failure = of
+    }
+  }
+  if ('max_parallel' in step && step.max_parallel !== undefined && step.max_parallel !== null) {
+    const mp = Number(step.max_parallel)
+    if (Number.isInteger(mp) && mp >= 1) {
+      result.max_parallel = mp
     }
   }
   if (Array.isArray(step.children)) {

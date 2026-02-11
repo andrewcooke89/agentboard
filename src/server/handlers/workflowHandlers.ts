@@ -265,7 +265,7 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         const poolStatus = pool.getStatus()
         if (poolStatus.queue.length >= maxDepth) {
           return c.json({
-            error: `Pool queue full (${poolStatus.queue.length} pending). Try again later.`,
+            error: `Pool queue full (${poolStatus.queue.length} pending). Wait for current runs to complete or increase pool size.`,
             code: 'POOL_QUEUE_FULL',
             queueDepth: poolStatus.queue.length,
             maxDepth,

@@ -34,7 +34,7 @@ const POOL_BYPASS_TYPES = new Set([
   'gemini_offload', 'spec_validate', 'aggregator', 'amendment_check',
 ])
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped', 'cancelled'])
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped', 'cancelled', 'partial'])
 
 const MAX_NATIVE_STDOUT = 1024 * 1024 // 1 MB
 
@@ -187,6 +187,17 @@ export function createDAGEngine(
   }
 
   /**
+   * Get the output directory for a child step within a parallel_group.
+   * REQ-33: Child outputs use namespaced paths: {output_dir}/{group_name}/{child_name}/
+   */
+  function getChildOutputDir(run: WorkflowRun, stepState: StepRunState): string {
+    if (stepState.parentGroup) {
+      return path.join(run.output_dir, stepState.parentGroup, stepState.name)
+    }
+    return run.output_dir
+  }
+
+  /**
    * Check if dependencies of a top-level step (non-child) are met.
    * Top-level steps have implicit sequential dependency on previous top-level step.
    */
@@ -206,6 +217,8 @@ export function createDAGEngine(
     if (prevTopLevelIndex < 0) return true // First step, no dependencies
 
     const prevState = run.steps_state[prevTopLevelIndex]
+    // REQ-08: Failed/cancelled groups block subsequent steps
+    if (prevState.status === 'failed' || prevState.status === 'cancelled') return false
     return TERMINAL_STATUSES.has(prevState.status)
   }
 
@@ -257,14 +270,40 @@ export function createDAGEngine(
 
     // Initialize termination if not started
     if (!childState.terminationPhase) {
-      try {
-        // Step 1: Write cancel signal file (for cancel_all; fail_fast skips this)
-        if (policy === 'cancel_all') {
-          const signalPath = path.join(run.output_dir, `${childState.name}_cancel_requested.yaml`)
-          fs.writeFileSync(signalPath, `cancelled_at: ${new Date().toISOString()}\nreason: sibling_failure\n`)
+      if (policy === 'fail_fast') {
+        // REQ-22: Skip signal file, cancel API, and first grace period
+        // Jump directly to SIGTERM
+        if (task && (task as any).tmuxWindow) {
+          try {
+            const pidResult = Bun.spawnSync(
+              ['tmux', 'display-message', '-t', (task as any).tmuxWindow, '-p', '#{pane_pid}'],
+              { stdout: 'pipe', stderr: 'pipe' },
+            )
+            const pid = pidResult.stdout?.toString().trim()
+            if (pid) {
+              process.kill(parseInt(pid, 10), 'SIGTERM')
+            }
+          } catch (err) {
+            ctx.logger.warn('fail_fast_sigterm_error', {
+              runId: run.id,
+              step: childState.name,
+              error: String(err),
+            })
+          }
         }
+        childState.terminationPhase = 'sigterm_sent'
+        childState.terminationStartedAt = new Date().toISOString()
+        return false
+      }
 
-        // Step 2: Cancel task via store
+      // cancel_all: write signal file + cancel API
+      try {
+        const outputDir = childState.parentGroup
+          ? path.join(run.output_dir, childState.parentGroup, childState.name)
+          : run.output_dir
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true })
+        const signalPath = path.join(outputDir, `${childState.name}_cancel_requested.yaml`)
+        fs.writeFileSync(signalPath, `cancelled_at: ${new Date().toISOString()}\nreason: sibling_failure\n`)
         if (task && task.status === 'running') {
           taskStore.updateTask(childState.taskId, { status: 'cancelled' })
         }
@@ -275,10 +314,9 @@ export function createDAGEngine(
           error: String(err),
         })
       }
-
       childState.terminationPhase = 'signal_sent'
       childState.terminationStartedAt = new Date().toISOString()
-      return false // Not yet complete
+      return false
     }
 
     const elapsed = now - new Date(childState.terminationStartedAt!).getTime()
@@ -292,12 +330,19 @@ export function createDAGEngine(
       }
 
       case 'waiting_grace1': {
-        // Step 4: Send SIGTERM via tmux
+        // Step 4: Send SIGTERM to Claude Code process via tmux (REQ-39)
         if (task && (task as any).tmuxWindow) {
           try {
-            Bun.spawnSync(['tmux', 'send-keys', '-t', (task as any).tmuxWindow, 'C-c', ''], {
-              stdout: 'pipe', stderr: 'pipe',
-            })
+            const pidResult = Bun.spawnSync(
+              ['tmux', 'display-message', '-t', (task as any).tmuxWindow, '-p', '#{pane_pid}'],
+              { stdout: 'pipe', stderr: 'pipe' },
+            )
+            if (pidResult.exitCode === 0) {
+              const pid = parseInt(Buffer.from(pidResult.stdout).toString().trim(), 10)
+              if (pid > 0) {
+                try { process.kill(pid, 'SIGTERM') } catch { /* process may be gone */ }
+              }
+            }
           } catch { /* best effort */ }
         }
         childState.terminationPhase = 'sigterm_sent'
@@ -316,13 +361,25 @@ export function createDAGEngine(
       case 'waiting_grace2': {
         // Step 6: SIGKILL if still alive
         if (task && (task as any).tmuxWindow) {
-          // Check if tmux session still exists before killing
+          try {
+            const pidResult = Bun.spawnSync(
+              ['tmux', 'display-message', '-t', (task as any).tmuxWindow, '-p', '#{pane_pid}'],
+              { stdout: 'pipe', stderr: 'pipe' },
+            )
+            if (pidResult.exitCode === 0) {
+              const pid = parseInt(Buffer.from(pidResult.stdout).toString().trim(), 10)
+              if (pid > 0) {
+                try { process.kill(pid, 'SIGKILL') } catch { /* process may be gone */ }
+              }
+            }
+          } catch { /* best effort */ }
+
+          // Step 7: Kill tmux session
           try {
             const check = Bun.spawnSync(['tmux', 'has-session', '-t', (task as any).tmuxWindow], {
               stdout: 'pipe', stderr: 'pipe',
             })
             if (check.exitCode === 0) {
-              // Step 7: Kill tmux session
               Bun.spawnSync(['tmux', 'kill-session', '-t', (task as any).tmuxWindow], {
                 stdout: 'pipe', stderr: 'pipe',
               })
@@ -353,7 +410,7 @@ export function createDAGEngine(
       const promoted = pool.releaseSlot(stepState.poolSlotId)
       if (promoted) {
         ctx.broadcast({
-          type: 'pool-slot-granted',
+          type: 'pool_slot_granted',
           runId: run.id,
           stepName: promoted.stepName,
           slotId: promoted.id,
@@ -361,7 +418,7 @@ export function createDAGEngine(
       }
       const status = pool.getStatus()
       ctx.broadcast({
-        type: 'pool-status-update',
+        type: 'pool_status_update',
         active: status.active.length,
         queued: status.queue.length,
         max: status.config.maxSlots,
@@ -396,8 +453,14 @@ export function createDAGEngine(
           }
         }
 
-        const prompt = run.output_dir
-          ? `Working directory: ${run.output_dir}\n\n${stepDef.prompt ?? ''}`
+        const outputDir = getChildOutputDir(run, stepState)
+        if (outputDir !== run.output_dir) {
+          try {
+            if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true })
+          } catch { /* best effort */ }
+        }
+        const prompt = outputDir
+          ? `Working directory: ${outputDir}\n\n${stepDef.prompt ?? ''}`
           : (stepDef.prompt ?? '')
 
         const task = taskStore.createTask({
@@ -487,7 +550,8 @@ export function createDAGEngine(
         // M-01 / REQ-38: Signal file authority -- check signal files BEFORE task status.
         // Signal files are authoritative over tmux/task state.
         try {
-          const completedSignalPath = path.join(run.output_dir, `${stepState.name}_completed.yaml`)
+          const outputDir = getChildOutputDir(run, stepState)
+          const completedSignalPath = path.join(outputDir, `${stepState.name}_completed.yaml`)
           if (fs.existsSync(completedSignalPath)) {
             const content = fs.readFileSync(completedSignalPath, 'utf-8')
             if (content.includes('verified_completion: true')) {
@@ -504,7 +568,7 @@ export function createDAGEngine(
             }
           }
 
-          const failedSignalPath = path.join(run.output_dir, `${stepState.name}_failed.yaml`)
+          const failedSignalPath = path.join(outputDir, `${stepState.name}_failed.yaml`)
           if (fs.existsSync(failedSignalPath)) {
             const content = fs.readFileSync(failedSignalPath, 'utf-8')
             if (content.includes('verified_completion: true')) {
@@ -690,8 +754,8 @@ export function createDAGEngine(
           }
         }
 
-        // Determine cwd
-        const cwd = stepDef.working_dir || run.output_dir
+        // Determine cwd (REQ-02 parity: project_path fallback)
+        const cwd = stepDef.working_dir || run.variables?.project_path || run.output_dir
         try {
           if (!fs.existsSync(cwd)) {
             fs.mkdirSync(cwd, { recursive: true })
@@ -863,15 +927,15 @@ export function createDAGEngine(
           childState.status = 'queued'
           saveAndBroadcast(run)
           ctx.broadcast({
-            type: 'step-queued',
+            type: 'step_queued',
             runId: run.id,
             stepName: childDef.name,
-            position: pool.getStatus().queue.length,
+            queuePosition: pool.getStatus().queue.length,
           })
           return
         }
         ctx.broadcast({
-          type: 'pool-slot-granted',
+          type: 'pool_slot_granted',
           runId: run.id,
           stepName: childDef.name,
           slotId: slot.id,
@@ -898,7 +962,7 @@ export function createDAGEngine(
       const slot = pool?.getSlot(childState.poolSlotId)
       if (slot && slot.status === 'active') {
         ctx.broadcast({
-          type: 'pool-slot-granted',
+          type: 'pool_slot_granted',
           runId: run.id,
           stepName: childDef.name,
           slotId: slot.id,
@@ -1072,7 +1136,7 @@ export function createDAGEngine(
       return
     }
 
-    const onFailure = groupDef.on_failure ?? 'fail_fast'
+    const onFailure = groupDef.on_failure ?? 'cancel_all'
 
     // Check if any child has failed and handle on_failure policy
     const failedChildren = childStates.filter(c => c.state.status === 'failed')
@@ -1110,17 +1174,46 @@ export function createDAGEngine(
       }
 
       groupState.status = 'failed'
-      groupState.errorMessage = `Child step "${failedChildren[0].state.name}" failed (on_failure: ${onFailure})`
+      const failedNames = failedChildren.map(c => c.state.name)
+      groupState.errorMessage = `parallel_group '${groupDef.name}': ${failedNames.length} of ${childStates.length} children failed. Failed: [${failedNames.join(', ')}].`
       groupState.completedAt = new Date().toISOString()
       saveAndBroadcast(run)
       return
+    }
+
+    // REQ-15: continue_others -- skip dependent steps whose dependency failed
+    if (failedChildren.length > 0 && onFailure === 'continue_others') {
+      for (const child of childStates) {
+        if (child.state.status !== 'pending') continue
+        if (!child.def.depends_on || child.def.depends_on.length === 0) continue
+        for (const depName of child.def.depends_on) {
+          const depIdx = stateIndexMap.get(depName)
+          if (depIdx === undefined) continue
+          const depState = run.steps_state[depIdx]
+          if (depState.status === 'failed') {
+            child.state.status = 'skipped'
+            child.state.skippedReason = `dependency '${depName}' failed`
+            child.state.completedAt = new Date().toISOString()
+            releasePoolSlotIfHeld(child.state, run)
+            break
+          }
+        }
+      }
+      saveAndBroadcast(run)
     }
 
     // Check if all children are terminal
     const allTerminal = childStates.every(c => TERMINAL_STATUSES.has(c.state.status))
     if (allTerminal) {
       const anyFailed = childStates.some(c => c.state.status === 'failed')
-      if (anyFailed) {
+      if (anyFailed && onFailure === 'continue_others') {
+        // REQ-15: partial status when some failed under continue_others
+        groupState.status = 'partial'
+        const failedInGroup = childStates.filter(c => c.state.status === 'failed')
+        const failedGroupNames = failedInGroup.map(c => c.state.name)
+        groupState.errorMessage = `parallel_group '${groupDef.name}': ${failedGroupNames.length} of ${childStates.length} children failed. Failed: [${failedGroupNames.join(', ')}].`
+        groupState.completedAt = new Date().toISOString()
+      } else if (anyFailed) {
         groupState.status = 'failed'
         groupState.errorMessage = 'One or more child steps failed'
         groupState.completedAt = new Date().toISOString()
@@ -1139,7 +1232,51 @@ export function createDAGEngine(
       saveAndBroadcast(run)
     }
 
+    // Group timeout check (REQ-31/32)
+    if (groupState.status === 'running' && groupState.startedAt) {
+      let effectiveTimeout = groupDef.timeoutSeconds
+      if (effectiveTimeout === undefined) {
+        // REQ-32: default = sum of child timeouts
+        const childTimeouts = (groupDef.children ?? [])
+          .map(c => c.timeoutSeconds).filter((t): t is number => t !== undefined)
+        if (childTimeouts.length > 0) {
+          effectiveTimeout = childTimeouts.reduce((sum, t) => sum + t, 0)
+        }
+      }
+      if (effectiveTimeout !== undefined) {
+        const elapsed = (Date.now() - new Date(groupState.startedAt).getTime()) / 1000
+        if (elapsed > effectiveTimeout) {
+          // Timeout: cancel pending, terminate running, fail group
+          for (const child of childStates) {
+            if (child.state.status === 'pending' || child.state.status === 'queued') {
+              child.state.status = 'cancelled'
+              child.state.completedAt = new Date().toISOString()
+              releasePoolSlotIfHeld(child.state, run)
+            } else if (child.state.status === 'running' && child.def.type === 'spawn_session') {
+              terminateRunningChild(child.state, run, 'fail_fast')
+              child.state.status = 'cancelled'
+              child.state.completedAt = new Date().toISOString()
+              releasePoolSlotIfHeld(child.state, run)
+            } else if (child.state.status === 'running') {
+              child.state.status = 'cancelled'
+              child.state.completedAt = new Date().toISOString()
+            }
+          }
+          groupState.status = 'failed'
+          groupState.errorMessage = `parallel_group '${groupDef.name}' exceeded timeout (${effectiveTimeout}s)`
+          groupState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
+      }
+    }
+
     // Process each non-terminal child
+    const maxParallel = groupDef.max_parallel ?? Infinity
+    let runningSessionCount = childStates.filter(
+      c => (c.state.status === 'running' || c.state.status === 'queued') && !POOL_BYPASS_TYPES.has(c.def.type)
+    ).length
+
     for (const child of childStates) {
       if (TERMINAL_STATUSES.has(child.state.status)) continue
 
@@ -1203,6 +1340,9 @@ export function createDAGEngine(
 
         // Pool slot for spawn_session within a group
         if (child.def.type === 'spawn_session' && pool && parsed.system?.session_pool) {
+          // REQ-25/26/27: max_parallel enforcement
+          if (runningSessionCount >= maxParallel) continue
+
           const slot = pool.requestSlot({
             runId: run.id,
             stepName: child.def.name,
@@ -1211,17 +1351,19 @@ export function createDAGEngine(
           child.state.poolSlotId = slot.id
           if (slot.status === 'queued') {
             child.state.status = 'queued'
+            runningSessionCount++
             saveAndBroadcast(run)
             ctx.broadcast({
-              type: 'step-queued',
+              type: 'step_queued',
               runId: run.id,
               stepName: child.def.name,
-              position: pool.getStatus().queue.length,
+              queuePosition: pool.getStatus().queue.length,
             })
             continue
           }
+          runningSessionCount++
           ctx.broadcast({
-            type: 'pool-slot-granted',
+            type: 'pool_slot_granted',
             runId: run.id,
             stepName: child.def.name,
             slotId: slot.id,
@@ -1238,7 +1380,7 @@ export function createDAGEngine(
         const slot = pool?.getSlot(child.state.poolSlotId)
         if (slot && slot.status === 'active') {
           ctx.broadcast({
-            type: 'pool-slot-granted',
+            type: 'pool_slot_granted',
             runId: run.id,
             stepName: child.def.name,
             slotId: slot.id,
@@ -1271,7 +1413,8 @@ export function createDAGEngine(
     // Check for completion: all top-level steps + children in terminal state
     const allTerminal = run.steps_state.every(s => TERMINAL_STATUSES.has(s.status))
     if (allTerminal) {
-      const anyFailed = run.steps_state.some(s => s.status === 'failed')
+      // REQ-08: Only check top-level steps for workflow failure
+      const anyFailed = run.steps_state.some(s => !s.parentGroup && s.status === 'failed')
       if (anyFailed) {
         failWorkflow(run, 'One or more steps failed')
       } else {
@@ -1339,15 +1482,15 @@ export function createDAGEngine(
               stepState.status = 'queued'
               saveAndBroadcast(run)
               ctx.broadcast({
-                type: 'step-queued',
+                type: 'step_queued',
                 runId: run.id,
                 stepName: stepDef.name,
-                position: pool.getStatus().queue.length,
+                queuePosition: pool.getStatus().queue.length,
               })
               continue
             }
             ctx.broadcast({
-              type: 'pool-slot-granted',
+              type: 'pool_slot_granted',
               runId: run.id,
               stepName: stepDef.name,
               slotId: slot.id,
@@ -1364,7 +1507,7 @@ export function createDAGEngine(
         const slot = pool?.getSlot(stepState.poolSlotId)
         if (slot && slot.status === 'active') {
           ctx.broadcast({
-            type: 'pool-slot-granted',
+            type: 'pool_slot_granted',
             runId: run.id,
             stepName: stepDef.name,
             slotId: slot.id,

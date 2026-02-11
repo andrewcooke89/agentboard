@@ -12,7 +12,7 @@ export interface PoolSlotRequest {
   runId: string
   stepName: string
   tier: number
-  status: 'queued' | 'active' | 'released'
+  status: 'queued' | 'active' | 'released' | 'cancelled'
   requestedAt: string
   grantedAt: string | null
   releasedAt: string | null

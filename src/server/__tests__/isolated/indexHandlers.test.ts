@@ -324,6 +324,24 @@ mock.module('../../db', () => ({
       Array.from(dbState.records.values()).filter(
         (record) => record.isPinned && record.currentWindow === null
       ),
+    deleteInactiveSession: (sessionId: string) => {
+      const record = dbState.records.get(sessionId)
+      if (!record || record.currentWindow !== null) return false
+      dbState.records.delete(sessionId)
+      return true
+    },
+    deleteOldInactiveSessions: (retentionDays: number) => {
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
+      const toDelete = Array.from(dbState.records.values()).filter(
+        (record) =>
+          record.currentWindow === null &&
+          new Date(record.lastActivityAt).getTime() < cutoff
+      )
+      for (const record of toDelete) {
+        dbState.records.delete(record.sessionId)
+      }
+      return toDelete.length
+    },
     close: () => {},
   }),
 }))

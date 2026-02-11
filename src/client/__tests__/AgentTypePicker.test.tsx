@@ -2,17 +2,15 @@ import { describe, expect, mock, test } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 
 const mockPresets = [
-  { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' },
-  { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' },
+  { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' as const },
+  { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' as const },
   { id: 'custom-1', label: 'Custom', baseCommand: 'custom', modifiers: '', isBuiltIn: false },
 ]
 
-mock.module('../stores/settingsStore', () => ({
-  useSettingsStore: (selector?: Function) => {
-    const state = { commandPresets: mockPresets }
-    return typeof selector === 'function' ? selector(state) : state
-  },
-}))
+const realSettingsStore = await import('../stores/settingsStore')
+realSettingsStore.useSettingsStore.setState({ commandPresets: mockPresets })
+
+mock.module('../stores/settingsStore', () => realSettingsStore)
 
 import { AgentTypePicker } from '../components/AgentTypePicker'
 

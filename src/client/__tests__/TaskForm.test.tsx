@@ -1,18 +1,16 @@
 import { describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 
-mock.module('../stores/settingsStore', () => ({
-  useSettingsStore: (selector?: Function) => {
-    const state = {
-      projectPathPresets: ['/projects/a'],
-      commandPresets: [
-        { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' },
-        { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' },
-      ],
-    }
-    return typeof selector === 'function' ? selector(state) : state
-  },
-}))
+const realSettingsStore = await import('../stores/settingsStore')
+realSettingsStore.useSettingsStore.setState({
+  projectPathPresets: ['/projects/a'],
+  commandPresets: [
+    { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' },
+    { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' },
+  ],
+})
+
+mock.module('../stores/settingsStore', () => realSettingsStore)
 
 const { default: TaskForm } = await import('../components/TaskForm')
 

@@ -61,17 +61,15 @@ mock.module('../stores/workflowStore', () => ({
 }))
 
 // Mock settingsStore for AgentTypePicker
-mock.module('../stores/settingsStore', () => ({
-  useSettingsStore: (selector?: Function) => {
-    const state = {
-      commandPresets: [
-        { name: 'claude', command: 'claude', agentType: 'claude' },
-        { name: 'codex', command: 'codex', agentType: 'codex' },
-      ],
-    }
-    return typeof selector === 'function' ? selector(state) : state
-  },
-}))
+const realSettingsStore = await import('../stores/settingsStore')
+realSettingsStore.useSettingsStore.setState({
+  commandPresets: [
+    { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' as const },
+    { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' as const },
+  ],
+})
+
+mock.module('../stores/settingsStore', () => realSettingsStore)
 
 const { default: WorkflowEditor } = await import('../components/WorkflowEditor')
 

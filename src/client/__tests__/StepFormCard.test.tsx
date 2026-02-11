@@ -4,18 +4,16 @@ import type { WorkflowStep } from '@shared/types'
 
 // ─── Mock stores ─────────────────────────────────────────────────────────────
 
-mock.module('../stores/settingsStore', () => ({
-  useSettingsStore: (selector?: Function) => {
-    const state = {
-      projectPathPresets: [],
-      commandPresets: [
-        { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' },
-        { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' },
-      ],
-    }
-    return typeof selector === 'function' ? selector(state) : state
-  },
-}))
+const realSettingsStore = await import('../stores/settingsStore')
+realSettingsStore.useSettingsStore.setState({
+  projectPathPresets: [],
+  commandPresets: [
+    { id: 'claude', label: 'Claude', baseCommand: 'claude', modifiers: '', isBuiltIn: true, agentType: 'claude' },
+    { id: 'codex', label: 'Codex', baseCommand: 'codex', modifiers: '', isBuiltIn: true, agentType: 'codex' },
+  ],
+})
+
+mock.module('../stores/settingsStore', () => realSettingsStore)
 
 const { StepFormCard } = await import('../components/StepFormCard')
 

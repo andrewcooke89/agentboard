@@ -21,6 +21,8 @@ import { sanitizeForLog } from './validators'
 export interface WorkflowFileWatcher {
   start: () => void
   stop: () => void
+  /** Check tracked workflows for deleted source files and remove them. */
+  reconcile: () => void
 }
 
 const DEBOUNCE_MS = 500
@@ -145,6 +147,18 @@ export function createWorkflowFileWatcher(
     }
   }
 
+  function reconcileDeletedFiles(): void {
+    const allWorkflows = workflowStore.listWorkflows()
+    for (const workflow of allWorkflows) {
+      if (!workflow.file_path) continue
+      try {
+        fs.accessSync(workflow.file_path, fs.constants.R_OK)
+      } catch {
+        handleFileDelete(workflow.file_path)
+      }
+    }
+  }
+
   function onWatchEvent(eventType: string, filename: string | null): void {
     if (!filename) return
     if (!isYamlFile(filename)) return
@@ -188,10 +202,17 @@ export function createWorkflowFileWatcher(
       // Start watching
       try {
         watcher = fs.watch(dir, onWatchEvent)
+        watcher.on('error', (err) => {
+          ctx.logger.warn('workflow_file_watcher_error', { dir, error: String(err) })
+        })
         ctx.logger.info('workflow_file_watcher_started', { dir })
       } catch (err) {
         ctx.logger.error('workflow_file_watcher_start_error', { dir, error: String(err) })
       }
+    },
+
+    reconcile() {
+      reconcileDeletedFiles()
     },
 
     stop() {

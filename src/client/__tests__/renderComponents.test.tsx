@@ -48,13 +48,21 @@ const createMatchMedia = () => ({
   removeListener: () => {},
 })
 
+const pendingRafTimers = new Set<ReturnType<typeof setTimeout>>()
+
 function setupDom() {
   class NodeMock {}
   class ElementMock extends NodeMock {}
   class HTMLElementMock extends ElementMock {}
-  const raf = (callback: FrameRequestCallback) =>
-    (setTimeout(() => callback(Date.now()), 0) as unknown as number)
-  const caf = (handle: number) => clearTimeout(handle)
+  const raf = (callback: FrameRequestCallback) => {
+    const id = setTimeout(() => { pendingRafTimers.delete(id); callback(Date.now()) }, 0)
+    pendingRafTimers.add(id)
+    return id as unknown as number
+  }
+  const caf = (handle: number) => {
+    pendingRafTimers.delete(handle as unknown as ReturnType<typeof setTimeout>)
+    clearTimeout(handle)
+  }
 
   const createStyle = () => ({
     setProperty: () => {},
@@ -82,6 +90,8 @@ function setupDom() {
       style: createStyle(),
       setAttribute: () => {},
       removeAttribute: () => {},
+      scrollLeft: 0,
+      scrollTop: 0,
     }),
   } as unknown as Document
 
@@ -468,6 +478,12 @@ describe('component rendering', () => {
 })
 
 afterAll(() => {
+  // Cancel pending rAF-based timers before restoring globals to undefined.
+  // framer-motion queues frame.read() callbacks via our mocked requestAnimationFrame
+  // (which delegates to setTimeout). Without cancellation these fire after window is
+  // restored to undefined, causing "window.innerWidth" unhandled errors.
+  pendingRafTimers.forEach((id) => clearTimeout(id))
+  pendingRafTimers.clear()
   globalAny.window = originalWindow
   globalAny.document = originalDocument
   globalAny.navigator = originalNavigator

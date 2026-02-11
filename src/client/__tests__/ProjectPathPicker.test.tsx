@@ -1,12 +1,10 @@
 import { describe, expect, mock, test } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 
-mock.module('../stores/settingsStore', () => ({
-  useSettingsStore: (selector?: Function) => {
-    const state = { projectPathPresets: ['/path/a', '/path/b'] }
-    return typeof selector === 'function' ? selector(state) : state
-  },
-}))
+const realSettingsStore = await import('../stores/settingsStore')
+realSettingsStore.useSettingsStore.setState({ projectPathPresets: ['/path/a', '/path/b'] })
+
+mock.module('../stores/settingsStore', () => realSettingsStore)
 
 mock.module('../components/DirectoryBrowser', () => ({
   DirectoryBrowser: (props: { onSelect: (p: string) => void; onCancel: () => void; initialPath?: string }) => (

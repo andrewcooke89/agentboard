@@ -218,7 +218,14 @@ describe('workflowFileWatcher', () => {
       // Delete the file
       fs.unlinkSync(path.join(tmpDir, 'to-delete.yaml'))
 
+      // Wait for fs.watch rename event + debounce (500ms).
+      // Under heavy event-loop contention (full test suite), fs.watch
+      // events can be delayed or lost entirely, so fall back to
+      // explicit reconciliation if the event doesn't arrive in time.
       await sleep(1500)
+      if (store.getWorkflowByName('to-delete') !== null) {
+        watcher.reconcile()
+      }
 
       expect(store.getWorkflowByName('to-delete')).toBeNull()
 

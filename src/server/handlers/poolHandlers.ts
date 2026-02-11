@@ -9,10 +9,21 @@ export function createPoolHandlers(ctx: ServerContext, pool: SessionPool) {
     app.get('/api/pool/status', (c) => {
       const status = pool.getStatus()
       return c.json({
-        active: status.active.length,
-        queued: status.queue.length,
-        max: status.config.maxSlots,
-        slots: [...status.active, ...status.queue],
+        maxSlots: status.config.maxSlots,
+        activeSlots: status.active.map(s => ({
+          slotId: s.id,
+          runId: s.runId,
+          stepName: s.stepName,
+          tier: s.tier,
+          startedAt: s.grantedAt,
+        })),
+        queue: status.queue.map((s, idx) => ({
+          runId: s.runId,
+          stepName: s.stepName,
+          tier: s.tier,
+          requestedAt: s.requestedAt,
+          position: idx + 1,
+        })),
       })
     })
 
@@ -37,7 +48,7 @@ export function createPoolHandlers(ctx: ServerContext, pool: SessionPool) {
       pool.updateConfig(maxSlots)
       const status = pool.getStatus()
       ctx.broadcast({
-        type: 'pool-status-update',
+        type: 'pool_status_update',
         active: status.active.length,
         queued: status.queue.length,
         max: status.config.maxSlots,

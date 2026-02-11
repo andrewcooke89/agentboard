@@ -81,10 +81,22 @@ describe('poolHandlers', () => {
       expect(res.status).toBe(200)
 
       const body = await res.json() as any
-      expect(body.active).toBe(2)
-      expect(body.queued).toBe(1)
-      expect(body.max).toBe(2)
-      expect(body.slots).toHaveLength(3)
+      expect(body.maxSlots).toBe(2)
+      expect(body.activeSlots).toHaveLength(2)
+      expect(body.queue).toHaveLength(1)
+      // Verify activeSlots shape
+      expect(body.activeSlots[0]).toHaveProperty('slotId')
+      expect(body.activeSlots[0]).toHaveProperty('runId')
+      expect(body.activeSlots[0]).toHaveProperty('stepName')
+      expect(body.activeSlots[0]).toHaveProperty('tier')
+      expect(body.activeSlots[0]).toHaveProperty('startedAt')
+      // Verify queue shape
+      expect(body.queue[0]).toHaveProperty('runId')
+      expect(body.queue[0]).toHaveProperty('stepName')
+      expect(body.queue[0]).toHaveProperty('tier')
+      expect(body.queue[0]).toHaveProperty('requestedAt')
+      expect(body.queue[0]).toHaveProperty('position')
+      expect(body.queue[0].position).toBe(1)
     })
 
     test('returns empty pool status when no slots requested', async () => {
@@ -92,13 +104,12 @@ describe('poolHandlers', () => {
       expect(res.status).toBe(200)
 
       const body = await res.json() as any
-      expect(body.active).toBe(0)
-      expect(body.queued).toBe(0)
-      expect(body.max).toBe(2) // default
-      expect(body.slots).toHaveLength(0)
+      expect(body.maxSlots).toBe(2) // default
+      expect(body.activeSlots).toHaveLength(0)
+      expect(body.queue).toHaveLength(0)
     })
 
-    test('slots array contains both active and queued', async () => {
+    test('activeSlots and queue contain correct entries', async () => {
       pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
       pool.requestSlot({ runId: 'r3', stepName: 'queued-one', tier: 1 })
@@ -106,10 +117,11 @@ describe('poolHandlers', () => {
       const res = await app.request('/api/pool/status')
       const body = await res.json() as any
 
-      const slotNames = body.slots.map((s: any) => s.stepName)
-      expect(slotNames).toContain('s1')
-      expect(slotNames).toContain('s2')
-      expect(slotNames).toContain('queued-one')
+      const activeNames = body.activeSlots.map((s: any) => s.stepName)
+      expect(activeNames).toContain('s1')
+      expect(activeNames).toContain('s2')
+      expect(body.queue).toHaveLength(1)
+      expect(body.queue[0].stepName).toBe('queued-one')
     })
   })
 
@@ -133,7 +145,7 @@ describe('poolHandlers', () => {
       expect(status.config.maxSlots).toBe(5)
     })
 
-    test('broadcasts pool-status-update on config change', async () => {
+    test('broadcasts pool_status_update on config change', async () => {
       await app.request('/api/pool/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -141,7 +153,7 @@ describe('poolHandlers', () => {
       })
 
       const statusMsgs = broadcasts.filter(
-        (m) => m.type === 'pool-status-update',
+        (m) => m.type === 'pool_status_update',
       )
       expect(statusMsgs.length).toBe(1)
       const msg = statusMsgs[0] as any

@@ -10,6 +10,7 @@ const STATUS_CLASSES: Record<StepRunStatus, string> = {
   skipped: 'bg-yellow-500 text-gray-900 border-yellow-400',
   queued: 'bg-indigo-600 text-white border-indigo-400 animate-pulse',
   cancelled: 'bg-gray-500 text-white border-gray-400',
+  partial: 'bg-orange-500 text-white border-orange-400',
 }
 
 /** Human-readable status labels */
@@ -21,6 +22,7 @@ const STATUS_LABELS: Record<StepRunStatus, string> = {
   skipped: 'Skipped',
   queued: 'Queued',
   cancelled: 'Cancelled',
+  partial: 'Partial',
 }
 
 /** SVG icons per status (16x16 viewBox) */

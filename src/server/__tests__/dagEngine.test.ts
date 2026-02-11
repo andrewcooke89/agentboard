@@ -514,11 +514,11 @@ describe('dagEngine', () => {
       // will-continue should have completed (not cancelled)
       expect(freshRun.steps_state[2].status).toBe('completed')
 
-      // One more tick: group fails since a child failed
+      // One more tick: group gets partial status since a child failed under continue_others
       dagEngine.tick(freshRun, parsed)
       const finalRun = workflowStore.getRun(run.id)!
-      expect(finalRun.steps_state[0].status).toBe('failed')
-      expect(finalRun.steps_state[0].errorMessage).toContain('child steps failed')
+      expect(finalRun.steps_state[0].status).toBe('partial')
+      expect(finalRun.steps_state[0].errorMessage).toContain('children failed')
     })
   })
 
@@ -1059,8 +1059,8 @@ describe('dagEngine', () => {
       expect(freshRun.steps_state[2].terminationPhase).toBe('signal_sent')
       expect(freshRun.steps_state[2].terminationStartedAt).toBeTruthy()
 
-      // REQ-38: Signal file should have been written
-      const signalPath = nodePath.join(outputDir, 'will-terminate_cancel_requested.yaml')
+      // REQ-38: Signal file should have been written (REQ-33: namespaced path)
+      const signalPath = nodePath.join(outputDir, 'term-group', 'will-terminate', 'will-terminate_cancel_requested.yaml')
       expect(fs.existsSync(signalPath)).toBe(true)
       const content = fs.readFileSync(signalPath, 'utf-8')
       expect(content).toContain('cancelled_at:')
@@ -1886,6 +1886,1187 @@ describe('dagEngine', () => {
       freshRun = workflowStore.getRun(run.id)!
 
       expect(freshRun.steps_state[2].status).toBe('running')
+    })
+  })
+
+  // ── Phase 6: parallel_group completion ──────────────────────────────────
+
+  describe('Phase 6: parallel_group completion', () => {
+    test('P6-TEST-01: basic parallel execution with 3 native_step children', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-01-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-basic-parallel',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: basic-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: child-1',
+        '        type: native_step',
+        '        command: "echo child-1"',
+        '      - name: child-2',
+        '        type: native_step',
+        '        command: "echo child-2"',
+        '      - name: child-3',
+        '        type: native_step',
+        '        command: "echo child-3"',
+        '  - name: after-group',
+        '    type: native_step',
+        '    command: "echo after"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-basic-parallel')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'basic-group', type: 'parallel_group' }),
+        makeStepState({ name: 'child-1', type: 'native_step', parentGroup: 'basic-group' }),
+        makeStepState({ name: 'child-2', type: 'native_step', parentGroup: 'basic-group' }),
+        makeStepState({ name: 'child-3', type: 'native_step', parentGroup: 'basic-group' }),
+        makeStepState({ name: 'after-group', type: 'native_step' }),
+      ], { output_dir: outputDir })
+
+      // Tick 1: group -> running, children start (running)
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].status).toBe('running') // group
+      expect(freshRun.steps_state[1].status).toBe('running') // child-1
+      expect(freshRun.steps_state[2].status).toBe('running') // child-2
+      expect(freshRun.steps_state[3].status).toBe('running') // child-3
+
+      // Tick until group completes (native_steps complete on monitor tick)
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[0].status === 'completed',
+      )
+      expect(freshRun.steps_state[0].status).toBe('completed')
+      expect(freshRun.steps_state[1].status).toBe('completed')
+      expect(freshRun.steps_state[2].status).toBe('completed')
+      expect(freshRun.steps_state[3].status).toBe('completed')
+
+      // Sequential step after group should proceed
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.status === 'completed' || r.status === 'failed',
+      )
+      expect(freshRun.status).toBe('completed')
+      expect(freshRun.steps_state[4].status).toBe('completed')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-02: fork with tier_min filtering skips high-tier children', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-02-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-tier-filter',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: tier-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: tier-child-1',
+        '        type: native_step',
+        '        command: "echo child-1"',
+        '      - name: tier-child-2',
+        '        type: native_step',
+        '        command: "echo child-2"',
+        '      - name: tier-child-3',
+        '        type: native_step',
+        '        command: "echo child-3"',
+        '        tier_min: 3',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-tier-filter')
+      const parsed = getParsed(yaml)
+      // Run at tier 2 (variables.tier = '2')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'tier-group', type: 'parallel_group' }),
+        makeStepState({ name: 'tier-child-1', type: 'native_step', parentGroup: 'tier-group' }),
+        makeStepState({ name: 'tier-child-2', type: 'native_step', parentGroup: 'tier-group' }),
+        makeStepState({ name: 'tier-child-3', type: 'native_step', parentGroup: 'tier-group' }),
+      ], { output_dir: outputDir, variables: { tier: '2' } })
+
+      // Tick: group starts, child-3 should be skipped by tier_min: 3
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[3].status).toBe('skipped')
+      expect(freshRun.steps_state[1].status).toBe('running')
+      expect(freshRun.steps_state[2].status).toBe('running')
+
+      // Tick until group completes
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[0].status === 'completed',
+      )
+      // Group is completed (not partial) since no child failed
+      expect(freshRun.steps_state[0].status).toBe('completed')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-03: all children skipped by tier completes group', async () => {
+      const yaml = [
+        'name: p6-all-skip',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: skip-all-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: skip-a',
+        '        type: native_step',
+        '        command: "echo a"',
+        '        tier_min: 3',
+        '      - name: skip-b',
+        '        type: native_step',
+        '        command: "echo b"',
+        '        tier_min: 3',
+        '      - name: skip-c',
+        '        type: native_step',
+        '        command: "echo c"',
+        '        tier_min: 3',
+        '  - name: after-skip-group',
+        '    type: native_step',
+        '    command: "echo after"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-all-skip')
+      const parsed = getParsed(yaml)
+      // Run at tier 1 (default)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'skip-all-group', type: 'parallel_group' }),
+        makeStepState({ name: 'skip-a', type: 'native_step', parentGroup: 'skip-all-group' }),
+        makeStepState({ name: 'skip-b', type: 'native_step', parentGroup: 'skip-all-group' }),
+        makeStepState({ name: 'skip-c', type: 'native_step', parentGroup: 'skip-all-group' }),
+        makeStepState({ name: 'after-skip-group', type: 'native_step' }),
+      ])
+
+      // Tick 1: group starts, all children skipped -> allTerminal -> group completed
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('skipped')
+      expect(freshRun.steps_state[2].status).toBe('skipped')
+      expect(freshRun.steps_state[3].status).toBe('skipped')
+
+      // Group may need one more tick to finalize
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].status).toBe('completed')
+
+      // Sequential step after group should proceed
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.status === 'completed' || r.status === 'failed',
+      )
+      expect(freshRun.status).toBe('completed')
+      expect(freshRun.steps_state[4].status).toBe('completed')
+    })
+
+    test('P6-TEST-04: session children serialize through pool with 1 slot', () => {
+      pool.updateConfig(1)
+
+      const yaml = [
+        'name: p6-pool-serial',
+        'system:',
+        '  engine: dag',
+        '  session_pool: true',
+        'steps:',
+        '  - name: pool-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: session-1',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "first"',
+        '      - name: session-2',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "second"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-pool-serial')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'pool-group', type: 'parallel_group' }),
+        makeStepState({ name: 'session-1', type: 'spawn_session', parentGroup: 'pool-group' }),
+        makeStepState({ name: 'session-2', type: 'spawn_session', parentGroup: 'pool-group' }),
+      ])
+
+      // Tick: first gets slot, second queued
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('running')
+      expect(freshRun.steps_state[2].status).toBe('queued')
+
+      // Complete first child's task
+      const firstTaskId = freshRun.steps_state[1].taskId!
+      taskStore.updateTask(firstTaskId, { status: 'completed', completedAt: new Date().toISOString() })
+
+      // Tick: first completes, releases slot, second promoted
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('completed')
+
+      // Second may need another tick to transition from queued to running
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[2].status).toBe('running')
+    })
+
+    test('P6-TEST-05: parallel_group as first pipeline step', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-05-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-first-step-group',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: first-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: fg-child-1',
+        '        type: native_step',
+        '        command: "echo first"',
+        '      - name: fg-child-2',
+        '        type: native_step',
+        '        command: "echo second"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-first-step-group')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'first-group', type: 'parallel_group' }),
+        makeStepState({ name: 'fg-child-1', type: 'native_step', parentGroup: 'first-group' }),
+        makeStepState({ name: 'fg-child-2', type: 'native_step', parentGroup: 'first-group' }),
+      ], { output_dir: outputDir })
+
+      // Tick: no preceding step, group should start immediately
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].status).toBe('running')
+      expect(freshRun.steps_state[1].status).toBe('running')
+      expect(freshRun.steps_state[2].status).toBe('running')
+
+      // Tick until completed
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.status === 'completed' || r.status === 'failed',
+      )
+      expect(freshRun.status).toBe('completed')
+      expect(freshRun.steps_state[0].status).toBe('completed')
+      expect(freshRun.steps_state[1].status).toBe('completed')
+      expect(freshRun.steps_state[2].status).toBe('completed')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-06: serial dependency chain A->B->C within group', async () => {
+      const yaml = [
+        'name: p6-serial-deps',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: serial-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: chain-A',
+        '        type: delay',
+        '        seconds: 0.01',
+        '      - name: chain-B',
+        '        type: delay',
+        '        seconds: 0.01',
+        '        depends_on:',
+        '          - chain-A',
+        '      - name: chain-C',
+        '        type: delay',
+        '        seconds: 0.01',
+        '        depends_on:',
+        '          - chain-B',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-serial-deps')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'serial-group', type: 'parallel_group' }),
+        makeStepState({ name: 'chain-A', type: 'delay', parentGroup: 'serial-group' }),
+        makeStepState({ name: 'chain-B', type: 'delay', parentGroup: 'serial-group' }),
+        makeStepState({ name: 'chain-C', type: 'delay', parentGroup: 'serial-group' }),
+      ])
+
+      // Tick 1: A starts, B and C stay pending
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('running') // A
+      expect(freshRun.steps_state[2].status).toBe('pending') // B
+      expect(freshRun.steps_state[3].status).toBe('pending') // C
+
+      // Wait for A to complete, then tick -> B starts
+      await Bun.sleep(20)
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[2].status === 'running',
+        10,
+      )
+      expect(freshRun.steps_state[1].status).toBe('completed') // A done
+      expect(freshRun.steps_state[2].status).toBe('running')   // B running
+      expect(freshRun.steps_state[3].status).toBe('pending')   // C still pending
+
+      // Wait for B to complete, then tick -> C starts
+      await Bun.sleep(20)
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[3].status === 'running',
+        10,
+      )
+      expect(freshRun.steps_state[2].status).toBe('completed') // B done
+      expect(freshRun.steps_state[3].status).toBe('running')   // C running
+
+      // Tick until group completes
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.status === 'completed' || r.status === 'failed',
+      )
+      expect(freshRun.status).toBe('completed')
+      expect(freshRun.steps_state[0].status).toBe('completed')
+    })
+
+    test('P6-TEST-14: cancel_all terminates siblings and fails group', () => {
+      const yaml = [
+        'name: p6-cancel-all',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: ca-group',
+        '    type: parallel_group',
+        '    on_failure: cancel_all',
+        '    children:',
+        '      - name: ca-fail',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail"',
+        '      - name: ca-sibling-1',
+        '        type: delay',
+        '        seconds: 100',
+        '      - name: ca-sibling-2',
+        '        type: delay',
+        '        seconds: 100',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-cancel-all')
+      const parsed = getParsed(yaml)
+
+      const failedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failedTask.id, { status: 'failed', errorMessage: 'child failure' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'ca-group', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'ca-fail',
+          type: 'spawn_session',
+          parentGroup: 'ca-group',
+          status: 'running',
+          taskId: failedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'ca-sibling-1',
+          type: 'delay',
+          parentGroup: 'ca-group',
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'ca-sibling-2',
+          type: 'delay',
+          parentGroup: 'ca-group',
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        }),
+      ])
+
+      // Tick 1: detect failure
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('failed')
+
+      // Tick 2: cancel_all cancels siblings
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[2].status).toBe('cancelled')
+      expect(freshRun.steps_state[3].status).toBe('cancelled')
+      expect(freshRun.steps_state[0].status).toBe('failed')
+    })
+
+    test('P6-TEST-15: continue_others with partial status allows next step', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-15-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-continue-others',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: co-group',
+        '    type: parallel_group',
+        '    on_failure: continue_others',
+        '    children:',
+        '      - name: co-fail',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail"',
+        '      - name: co-ok-1',
+        '        type: native_step',
+        '        command: "echo ok1"',
+        '      - name: co-ok-2',
+        '        type: native_step',
+        '        command: "echo ok2"',
+        '  - name: co-next',
+        '    type: native_step',
+        '    command: "echo next"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-continue-others')
+      const parsed = getParsed(yaml)
+
+      const failedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failedTask.id, { status: 'failed', errorMessage: 'test failure' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'co-group', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'co-fail',
+          type: 'spawn_session',
+          parentGroup: 'co-group',
+          status: 'running',
+          taskId: failedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({ name: 'co-ok-1', type: 'native_step', parentGroup: 'co-group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({ name: 'co-ok-2', type: 'native_step', parentGroup: 'co-group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({ name: 'co-next', type: 'native_step' }),
+      ], { output_dir: outputDir })
+
+      // Tick 1: detect failure on co-fail, monitor native_step children
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('failed')
+      // Native steps should complete (not cancelled -- continue_others)
+      expect(freshRun.steps_state[2].status).toBe('completed')
+      expect(freshRun.steps_state[3].status).toBe('completed')
+
+      // Tick 2: all children terminal -> group becomes partial
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].status).toBe('partial')
+      expect(freshRun.steps_state[0].errorMessage).toContain('children failed')
+
+      // REQ-17: partial is non-failed, next step SHOULD proceed
+      // areTopLevelDependenciesMet blocks on 'failed' and 'cancelled', not 'partial'
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[4].status === 'completed' || r.status === 'completed' || r.status === 'failed',
+        10,
+      )
+      expect(freshRun.steps_state[4].status).toBe('completed')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-16: fail_fast skips signal file and goes directly to sigterm_sent', () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-16-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-fail-fast',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: ff-group',
+        '    type: parallel_group',
+        '    on_failure: fail_fast',
+        '    children:',
+        '      - name: ff-fail',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail"',
+        '      - name: ff-running',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "run"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-fail-fast')
+      const parsed = getParsed(yaml)
+
+      const failedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failedTask.id, { status: 'failed', errorMessage: 'fast failure' })
+
+      const runningTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'run',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(runningTask.id, { status: 'running' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'ff-group', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'ff-fail',
+          type: 'spawn_session',
+          parentGroup: 'ff-group',
+          status: 'running',
+          taskId: failedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'ff-running',
+          type: 'spawn_session',
+          parentGroup: 'ff-group',
+          status: 'running',
+          taskId: runningTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+      ], { output_dir: outputDir })
+
+      // Tick 1: detect failure
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('failed')
+
+      // Tick 2: fail_fast initiates termination -- skips signal_sent, goes to sigterm_sent
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[2].terminationPhase).toBe('sigterm_sent')
+
+      // Verify no cancel signal file was written (fail_fast skips signal file)
+      const nodePath = require('node:path')
+      const cancelSignalPath = nodePath.join(outputDir, 'ff-group', 'ff-running', 'ff-running_cancel_requested.yaml')
+      expect(fs.existsSync(cancelSignalPath)).toBe(false)
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-17: default on_failure is cancel_all', () => {
+      const yaml = [
+        'name: p6-default-onfailure',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: default-group',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: df-fail',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail"',
+        '      - name: df-sib-1',
+        '        type: delay',
+        '        seconds: 100',
+        '      - name: df-sib-2',
+        '        type: delay',
+        '        seconds: 100',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-default-onfailure')
+      const parsed = getParsed(yaml)
+
+      const failedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failedTask.id, { status: 'failed', errorMessage: 'test failure' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'default-group', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'df-fail',
+          type: 'spawn_session',
+          parentGroup: 'default-group',
+          status: 'running',
+          taskId: failedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'df-sib-1',
+          type: 'delay',
+          parentGroup: 'default-group',
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'df-sib-2',
+          type: 'delay',
+          parentGroup: 'default-group',
+          status: 'running',
+          startedAt: new Date().toISOString(),
+        }),
+      ])
+
+      // Tick 1: detect failure
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[1].status).toBe('failed')
+
+      // Tick 2: default on_failure = cancel_all -> siblings cancelled
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[2].status).toBe('cancelled')
+      expect(freshRun.steps_state[3].status).toBe('cancelled')
+      expect(freshRun.steps_state[0].status).toBe('failed')
+    })
+
+    test('P6-TEST-20: max_parallel limits concurrency for session children', () => {
+      pool.updateConfig(5) // Pool has plenty of slots
+
+      const yaml = [
+        'name: p6-max-parallel',
+        'system:',
+        '  engine: dag',
+        '  session_pool: true',
+        'steps:',
+        '  - name: mp-group',
+        '    type: parallel_group',
+        '    max_parallel: 2',
+        '    children:',
+        '      - name: mp-s1',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "s1"',
+        '      - name: mp-s2',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "s2"',
+        '      - name: mp-s3',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "s3"',
+        '      - name: mp-s4',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "s4"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-max-parallel')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'mp-group', type: 'parallel_group' }),
+        makeStepState({ name: 'mp-s1', type: 'spawn_session', parentGroup: 'mp-group' }),
+        makeStepState({ name: 'mp-s2', type: 'spawn_session', parentGroup: 'mp-group' }),
+        makeStepState({ name: 'mp-s3', type: 'spawn_session', parentGroup: 'mp-group' }),
+        makeStepState({ name: 'mp-s4', type: 'spawn_session', parentGroup: 'mp-group' }),
+      ])
+
+      // Tick: max_parallel=2, so at most 2 session children should be running/queued
+      dagEngine.tick(run, parsed)
+      const freshRun = workflowStore.getRun(run.id)!
+
+      const activeCount = freshRun.steps_state.filter(
+        s => s.parentGroup === 'mp-group' && (s.status === 'running' || s.status === 'queued'),
+      ).length
+      const pendingCount = freshRun.steps_state.filter(
+        s => s.parentGroup === 'mp-group' && s.status === 'pending',
+      ).length
+
+      // max_parallel=2 should limit to at most 2 running/queued
+      expect(activeCount).toBe(2)
+      expect(pendingCount).toBe(2)
+    })
+
+    test('P6-TEST-21: non-session steps bypass max_parallel', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-21-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      pool.updateConfig(5)
+
+      const yaml = [
+        'name: p6-bypass-maxp',
+        'system:',
+        '  engine: dag',
+        '  session_pool: true',
+        'steps:',
+        '  - name: bmp-group',
+        '    type: parallel_group',
+        '    max_parallel: 1',
+        '    children:',
+        '      - name: bmp-session',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "session"',
+        '      - name: bmp-native-1',
+        '        type: native_step',
+        '        command: "echo native1"',
+        '      - name: bmp-native-2',
+        '        type: native_step',
+        '        command: "echo native2"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-bypass-maxp')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'bmp-group', type: 'parallel_group' }),
+        makeStepState({ name: 'bmp-session', type: 'spawn_session', parentGroup: 'bmp-group' }),
+        makeStepState({ name: 'bmp-native-1', type: 'native_step', parentGroup: 'bmp-group' }),
+        makeStepState({ name: 'bmp-native-2', type: 'native_step', parentGroup: 'bmp-group' }),
+      ], { output_dir: outputDir })
+
+      // Tick: native_steps bypass max_parallel and start immediately
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+
+      // Both native_steps should start (they bypass max_parallel)
+      expect(freshRun.steps_state[2].status).toBe('running') // bmp-native-1
+      expect(freshRun.steps_state[3].status).toBe('running') // bmp-native-2
+      // spawn_session should also get its slot (max_parallel=1 counts only session types)
+      expect(freshRun.steps_state[1].status).toBe('running') // bmp-session
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-26: group timeout terminates all children', () => {
+      const yaml = [
+        'name: p6-group-timeout',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: timeout-group',
+        '    type: parallel_group',
+        '    timeoutSeconds: 1',
+        '    children:',
+        '      - name: to-child-1',
+        '        type: delay',
+        '        seconds: 100',
+        '      - name: to-child-2',
+        '        type: delay',
+        '        seconds: 100',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-group-timeout')
+      const parsed = getParsed(yaml)
+
+      // Set group as already running with startedAt 10 seconds ago (well past 1s timeout)
+      const pastStart = new Date(Date.now() - 10000).toISOString()
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'timeout-group', type: 'parallel_group', status: 'running', startedAt: pastStart }),
+        makeStepState({
+          name: 'to-child-1',
+          type: 'delay',
+          parentGroup: 'timeout-group',
+          status: 'running',
+          startedAt: pastStart,
+        }),
+        makeStepState({
+          name: 'to-child-2',
+          type: 'delay',
+          parentGroup: 'timeout-group',
+          status: 'running',
+          startedAt: pastStart,
+        }),
+      ])
+
+      // Tick: timeout exceeded, all children should be cancelled, group fails
+      dagEngine.tick(run, parsed)
+      const freshRun = workflowStore.getRun(run.id)!
+
+      expect(freshRun.steps_state[1].status).toBe('cancelled')
+      expect(freshRun.steps_state[2].status).toBe('cancelled')
+      expect(freshRun.steps_state[0].status).toBe('failed')
+      expect(freshRun.steps_state[0].errorMessage).toContain('exceeded timeout')
+    })
+
+    test('P6-TEST-28: namespaced output paths for group children', () => {
+      const fs = require('node:fs')
+      const nodePath = require('node:path')
+      const outputDir = '/tmp/test-outputs/p6-test-28-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-namespaced-output',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: generation',
+        '    type: parallel_group',
+        '    on_failure: cancel_all',
+        '    children:',
+        '      - name: scaffold',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "scaffold"',
+        '      - name: tests',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "tests"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-namespaced-output')
+      const parsed = getParsed(yaml)
+
+      const failedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'scaffold',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failedTask.id, { status: 'failed', errorMessage: 'scaffold failed' })
+
+      const runningTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'tests',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(runningTask.id, { status: 'running' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'generation', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'scaffold',
+          type: 'spawn_session',
+          parentGroup: 'generation',
+          status: 'running',
+          taskId: failedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'tests',
+          type: 'spawn_session',
+          parentGroup: 'generation',
+          status: 'running',
+          taskId: runningTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+      ], { output_dir: outputDir })
+
+      // Tick 1: detect scaffold failure
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+
+      // Tick 2: cancel_all -> write cancel signal for tests at namespaced path
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // REQ-33: Signal file should be at {output_dir}/generation/tests/tests_cancel_requested.yaml
+      const expectedSignalPath = nodePath.join(outputDir, 'generation', 'tests', 'tests_cancel_requested.yaml')
+      expect(fs.existsSync(expectedSignalPath)).toBe(true)
+      const content = fs.readFileSync(expectedSignalPath, 'utf-8')
+      expect(content).toContain('reason: sibling_failure')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-29: error message lists failed children by name', () => {
+      const yaml = [
+        'name: p6-error-msg',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: errmsg-group',
+        '    type: parallel_group',
+        '    on_failure: continue_others',
+        '    children:',
+        '      - name: em-fail-1',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail1"',
+        '      - name: em-ok-1',
+        '        type: delay',
+        '        seconds: 0.01',
+        '      - name: em-fail-2',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "fail2"',
+        '      - name: em-ok-2',
+        '        type: delay',
+        '        seconds: 0.01',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-error-msg')
+      const parsed = getParsed(yaml)
+
+      const failTask1 = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail1',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failTask1.id, { status: 'failed', errorMessage: 'error 1' })
+
+      const failTask2 = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'fail2',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(failTask2.id, { status: 'failed', errorMessage: 'error 2' })
+
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'errmsg-group', type: 'parallel_group', status: 'running', startedAt: new Date().toISOString() }),
+        makeStepState({
+          name: 'em-fail-1',
+          type: 'spawn_session',
+          parentGroup: 'errmsg-group',
+          status: 'failed',
+          taskId: failTask1.id,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          errorMessage: 'error 1',
+        }),
+        makeStepState({
+          name: 'em-ok-1',
+          type: 'delay',
+          parentGroup: 'errmsg-group',
+          status: 'completed',
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'em-fail-2',
+          type: 'spawn_session',
+          parentGroup: 'errmsg-group',
+          status: 'failed',
+          taskId: failTask2.id,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          errorMessage: 'error 2',
+        }),
+        makeStepState({
+          name: 'em-ok-2',
+          type: 'delay',
+          parentGroup: 'errmsg-group',
+          status: 'completed',
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        }),
+      ])
+
+      // All children already terminal. Tick: group should see all terminal -> partial
+      dagEngine.tick(run, parsed)
+      const freshRun = workflowStore.getRun(run.id)!
+
+      expect(freshRun.steps_state[0].status).toBe('partial')
+      expect(freshRun.steps_state[0].errorMessage).toContain('2 of 4 children failed')
+      expect(freshRun.steps_state[0].errorMessage).toContain('em-fail-1')
+      expect(freshRun.steps_state[0].errorMessage).toContain('em-fail-2')
+    })
+
+    test('P6-TEST-30: full pipeline integration seq A -> group B -> seq C', async () => {
+      const fs = require('node:fs')
+      const outputDir = '/tmp/test-outputs/p6-test-30-' + Date.now()
+      fs.mkdirSync(outputDir, { recursive: true })
+
+      const yaml = [
+        'name: p6-full-pipeline',
+        'system:',
+        '  engine: dag',
+        'steps:',
+        '  - name: step-A',
+        '    type: native_step',
+        '    command: "echo step-A"',
+        '  - name: step-B',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: b-child-1',
+        '        type: native_step',
+        '        command: "echo b1"',
+        '      - name: b-child-2',
+        '        type: native_step',
+        '        command: "echo b2"',
+        '        depends_on:',
+        '          - b-child-1',
+        '      - name: b-child-3',
+        '        type: native_step',
+        '        command: "echo b3"',
+        '  - name: step-C',
+        '    type: native_step',
+        '    command: "echo step-C"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'p6-full-pipeline')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'step-A', type: 'native_step' }),
+        makeStepState({ name: 'step-B', type: 'parallel_group' }),
+        makeStepState({ name: 'b-child-1', type: 'native_step', parentGroup: 'step-B' }),
+        makeStepState({ name: 'b-child-2', type: 'native_step', parentGroup: 'step-B' }),
+        makeStepState({ name: 'b-child-3', type: 'native_step', parentGroup: 'step-B' }),
+        makeStepState({ name: 'step-C', type: 'native_step' }),
+      ], { output_dir: outputDir })
+
+      // Tick 1: top-level native_step A starts AND completes in one tick
+      // (startStep sets running, then monitorStep executes command in same tick)
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].status).toBe('completed')
+
+      // Tick through: group B starts, children fork with deps respected, then C runs
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[1].status === 'running',
+      )
+      expect(freshRun.steps_state[1].status).toBe('running') // group running
+
+      // Tick until group B completes (b-child-2 depends on b-child-1, so serialized)
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.steps_state[1].status === 'completed',
+      )
+      expect(freshRun.steps_state[1].status).toBe('completed')
+      expect(freshRun.steps_state[2].status).toBe('completed') // b-child-1
+      expect(freshRun.steps_state[3].status).toBe('completed') // b-child-2
+      expect(freshRun.steps_state[4].status).toBe('completed') // b-child-3
+
+      // Verify b-child-2 started after b-child-1 (dependency enforced)
+      expect(freshRun.steps_state[3].startedAt).not.toBeNull()
+      expect(freshRun.steps_state[2].completedAt).not.toBeNull()
+
+      // step-C should now start and complete
+      freshRun = await tickUntil(
+        dagEngine, freshRun, parsed, workflowStore,
+        (r) => r.status === 'completed' || r.status === 'failed',
+      )
+      expect(freshRun.status).toBe('completed')
+      expect(freshRun.steps_state[5].status).toBe('completed')
+
+      try { fs.rmSync(outputDir, { recursive: true }) } catch { /* ok */ }
+    })
+
+    test('P6-TEST-35: paused (running) child does not block siblings', () => {
+      // REQ-35: A child in a "paused" state (still status: 'running') does not block siblings.
+      // Paused children are a sub-state of 'running' (no distinct status), so the group
+      // continues processing other children while the paused one stays 'running'.
+      // Use spawn_session for the paused child so monitorStep checks task status (stays running).
+      const yaml = [
+        'name: paused-child-test',
+        'system:',
+        '  engine: dag',
+        '  session_pool: true',
+        'steps:',
+        '  - name: pg',
+        '    type: parallel_group',
+        '    children:',
+        '      - name: paused-review',
+        '        type: spawn_session',
+        '        projectPath: /tmp/test',
+        '        prompt: "paused"',
+        '      - name: sibling-work',
+        '        type: native_step',
+        '        command: "echo sibling"',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'paused-child-test')
+      const parsed = getParsed(yaml)
+
+      // Create a task that stays 'running' (simulates paused amendment)
+      const pausedTask = taskStore.createTask({
+        projectPath: '/tmp/test',
+        prompt: 'paused',
+        templateId: null,
+        priority: 5,
+        status: 'queued',
+        maxRetries: 0,
+        timeoutSeconds: 1800,
+      })
+      taskStore.updateTask(pausedTask.id, { status: 'running' })
+
+      // Simulate: paused-review is 'running' with its task, sibling-work is 'pending'
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'pg', type: 'parallel_group' }),
+        makeStepState({
+          name: 'paused-review',
+          type: 'spawn_session' as any,
+          parentGroup: 'pg',
+          status: 'running',
+          taskId: pausedTask.id,
+          startedAt: new Date().toISOString(),
+        }),
+        makeStepState({
+          name: 'sibling-work',
+          type: 'native_step' as any,
+          parentGroup: 'pg',
+          status: 'pending',
+        }),
+      ])
+
+      // Tick 1: group goes running, sibling-work starts (-> running)
+      dagEngine.tick(run, parsed)
+      let freshRun = workflowStore.getRun(run.id)!
+
+      // Group should be running (not blocked)
+      expect(freshRun.steps_state[0].status).toBe('running')
+
+      // Sibling should have started
+      expect(['running', 'completed']).toContain(freshRun.steps_state[2].status)
+
+      // Tick 2: monitorStep runs sibling native_step -> completed
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Sibling completed
+      expect(freshRun.steps_state[2].status).toBe('completed')
+
+      // Paused child should still be running (task is still 'running')
+      expect(freshRun.steps_state[1].status).toBe('running')
+
+      // Group should NOT be complete yet (paused-review is non-terminal)
+      expect(freshRun.steps_state[0].status).toBe('running')
     })
   })
 })

@@ -1635,7 +1635,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('dependency cycle'))
+    expect(result.errors).toContainEqual(expect.stringContaining('Circular dependency detected'))
   })
 
   test('TEST-05: detects self-dependency', () => {
@@ -1671,7 +1671,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('only valid within parallel_group'))
+    expect(result.errors).toContainEqual(expect.stringContaining('depends_on is only supported within parallel_group'))
   })
 
   test('TEST-07: depends_on targeting step outside parallel_group produces error', () => {
@@ -1689,7 +1689,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('unknown sibling'))
+    expect(result.errors).toContainEqual(expect.stringContaining('is not a sibling within this parallel_group'))
   })
 
   test('three-node cycle is detected', () => {
@@ -1717,7 +1717,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('dependency cycle'))
+    expect(result.errors).toContainEqual(expect.stringContaining('Circular dependency detected'))
   })
 
   test('valid DAG (no cycle) passes', () => {
@@ -1745,6 +1745,94 @@ steps:
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(true)
   })
+
+  test('max_parallel parses correctly as positive integer', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    max_parallel: 3
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+      - name: b
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toEqual([])
+    const step = result.workflow!.steps[0]
+    expect(step.max_parallel).toBe(3)
+  })
+
+  test('max_parallel rejects zero', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    max_parallel: 0
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('max_parallel must be a positive integer'))
+  })
+
+  test('max_parallel rejects negative', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    max_parallel: -1
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('max_parallel must be a positive integer'))
+  })
+
+  test('max_parallel rejects non-integer', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    max_parallel: 1.5
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('max_parallel must be a positive integer'))
+  })
+
+  test('amendment_check cannot be a parallel_group child', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: ac
+        type: amendment_check
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('"amendment_check" cannot be a parallel_group child'))
+  })
 })
 
 describe('parseWorkflowYAML — Phase 5 system config & auto-detection', () => {
@@ -1770,7 +1858,7 @@ steps:
     const yaml = `
 name: test
 system:
-  engine: sequential
+  engine: legacy
 steps:
   - name: s1
     type: delay
@@ -1779,7 +1867,7 @@ steps:
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(true)
     expect(result.workflow!.system).toBeDefined()
-    expect(result.workflow!.system!.engine).toBe('sequential')
+    expect(result.workflow!.system!.engine).toBe('legacy')
   })
 
   test('explicit system.engine dag with session_pool true is valid', () => {
@@ -1818,7 +1906,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('session_pool cannot be false when engine is "dag"'))
+    expect(result.errors).toContainEqual(expect.stringContaining('session_pool: false is incompatible with engine: dag'))
   })
 
   test('invalid system.engine value produces error', () => {
@@ -1833,7 +1921,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('system.engine must be "sequential" or "dag"'))
+    expect(result.errors).toContainEqual(expect.stringContaining('system.engine must be "legacy" or "dag"'))
   })
 
   test('system field is undefined when not specified and no dag features used', () => {
@@ -1849,11 +1937,11 @@ steps:
     expect(result.workflow!.system).toBeUndefined()
   })
 
-  test('auto-detection does not override explicit engine', () => {
+  test('auto-detection overrides explicit legacy engine to dag', () => {
     const yaml = `
 name: test
 system:
-  engine: sequential
+  engine: legacy
 steps:
   - name: pg
     type: parallel_group
@@ -1864,6 +1952,6 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(true)
-    expect(result.workflow!.system!.engine).toBe('sequential')
+    expect(result.workflow!.system!.engine).toBe('dag')
   })
 })

@@ -11,6 +11,28 @@ const globalAny = globalThis as typeof globalThis & {
   setInterval?: typeof setInterval
   clearInterval?: typeof clearInterval
   window?: Window & typeof globalThis
+  document?: Document
+}
+
+// Install safe stubs at module scope so that framer-motion frame callbacks leaked
+// from prior test files (e.g. renderComponents.test.tsx) don't crash when accessing
+// document.documentElement or window.innerWidth between afterAll and beforeEach.
+if (!globalAny.document) {
+  globalAny.document = {
+    documentElement: { scrollLeft: 0, scrollTop: 0, setAttribute: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    body: { scrollLeft: 0, scrollTop: 0 },
+  } as unknown as Document
+}
+if (!globalAny.window) {
+  globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
+    matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+  } as unknown as Window & typeof globalThis
 }
 
 const originalSetTimeout = globalAny.setTimeout
@@ -36,6 +58,10 @@ function makeSession(overrides: Partial<Session>): Session {
 
 beforeEach(() => {
   globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
     matchMedia: () => ({
       matches: false,
       addEventListener: () => {},
@@ -179,7 +205,12 @@ describe('SessionList component', () => {
       card.props.onTouchStart()
     })
 
-    const input = renderer.root.findByType('input')
+    // Find the rename input - it's the one with value equal to the session name
+    const inputs = renderer.root.findAllByType('input')
+    const input = inputs.find(i => i.props.value === 'alpha')
+    if (!input) {
+      throw new Error('Expected rename input with session name')
+    }
 
     act(() => {
       input.props.onChange({ target: { value: '  Beta  ' } })
@@ -226,7 +257,12 @@ describe('SessionList component', () => {
       card.props.onTouchStart()
     })
 
-    const input = renderer.root.findByType('input')
+    // Find the rename input - it's the one with value equal to the session name
+    const inputs = renderer.root.findAllByType('input')
+    const input = inputs.find(i => i.props.value === 'alpha')
+    if (!input) {
+      throw new Error('Expected rename input with session name')
+    }
 
     act(() => {
       input.props.onChange({ target: { value: '  Gamma  ' } })
@@ -237,7 +273,10 @@ describe('SessionList component', () => {
     })
 
     expect(renameCalls).toEqual([])
-    expect(() => renderer.root.findByType('input')).toThrow()
+    // After escape, the rename input should be gone (it had value 'alpha'), search input remains with empty value
+    const inputsAfter = renderer.root.findAllByType('input')
+    const renameInputAfter = inputsAfter.find(i => i.props.value === 'alpha' || i.props.value === '  Gamma  ')
+    expect(renameInputAfter).toBeUndefined()
 
     act(() => {
       renderer.unmount()

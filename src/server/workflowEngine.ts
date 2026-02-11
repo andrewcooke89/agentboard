@@ -840,6 +840,10 @@ export function createWorkflowEngine(
     // ── Phase 5: DAG engine fork ──────────────────────────────────────
     const parsed = getParsedWorkflow(run)
     if (parsed?.system?.engine === 'dag') {
+      if (parsed.system.autoDetectedEngine) {
+        console.log(`[run:${run.id}] Auto-detected DAG engine due to parallel_group/depends_on usage.`)
+        parsed.system.autoDetectedEngine = false // log once
+      }
       dagEngine.tick(run, parsed)
       return
     }

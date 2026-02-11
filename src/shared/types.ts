@@ -95,9 +95,9 @@ export type ServerMessage =
   | { type: 'workflow-run-update'; run: WorkflowRun }
   | { type: 'workflow-run-list'; runs: WorkflowRun[] }
   // Phase 5: Session pool messages
-  | { type: 'pool-status-update'; active: number; queued: number; max: number }
-  | { type: 'pool-slot-granted'; runId: string; stepName: string; slotId: string }
-  | { type: 'step-queued'; runId: string; stepName: string; position: number }
+  | { type: 'pool_status_update'; active: number; queued: number; max: number }
+  | { type: 'pool_slot_granted'; runId: string; stepName: string; slotId: string }
+  | { type: 'step_queued'; runId: string; stepName: string; queuePosition: number }
 
 export interface ResumeError {
   code: 'NOT_FOUND' | 'ALREADY_ACTIVE' | 'RESUME_FAILED'
@@ -245,6 +245,7 @@ export interface WorkflowStep {
   depends_on?: string[]
   children?: WorkflowStep[]
   on_failure?: 'fail_fast' | 'cancel_all' | 'continue_others'
+  max_parallel?: number
   // review_loop fields (REQ-40)
   producer?: WorkflowStep
   reviewer?: WorkflowStep
@@ -282,7 +283,7 @@ export interface WorkflowRun {
 }
 
 // ST-001-05: Per-step execution state (JSON within workflow_runs.steps_state)
-export type StepRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'queued' | 'cancelled'
+export type StepRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'queued' | 'cancelled' | 'partial'
 
 export interface StepRunState {
   name: string

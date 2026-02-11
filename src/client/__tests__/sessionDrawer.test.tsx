@@ -11,6 +11,26 @@ const globalAny = globalThis as typeof globalThis & {
   clearInterval?: typeof clearInterval
 }
 
+// Install safe stubs at module scope so that framer-motion frame callbacks leaked
+// from prior test files (e.g. renderComponents.test.tsx) don't crash when accessing
+// document.documentElement or window.innerWidth between afterAll and beforeEach.
+if (!globalAny.document) {
+  globalAny.document = {
+    documentElement: { scrollLeft: 0, scrollTop: 0, setAttribute: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    body: { scrollLeft: 0, scrollTop: 0 },
+  } as unknown as Document
+}
+if (!globalAny.window) {
+  globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
+  } as unknown as Window & typeof globalThis
+}
+
 const originalDocument = globalAny.document
 const originalNavigator = globalAny.navigator
 const originalWindow = globalAny.window
@@ -39,6 +59,13 @@ function setupDom() {
   vibrateCalls = []
 
   globalAny.document = {
+    documentElement: {
+      setAttribute: () => {},
+      scrollLeft: 0,
+      scrollTop: 0,
+    },
+    // framer-motion's DocumentProjectionNode reads document.body.scrollLeft/scrollTop
+    body: { scrollLeft: 0, scrollTop: 0 },
     activeElement: null,
     addEventListener: (event: string, handler: EventListener) => {
       keyHandlers.set(event, handler)
@@ -61,6 +88,10 @@ function setupDom() {
   } as unknown as Navigator
 
   globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
     matchMedia: (query: string) => ({
       matches: prefersReducedMotion && query.includes('prefers-reduced-motion'),
       addEventListener: () => {},

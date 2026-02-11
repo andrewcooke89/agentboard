@@ -507,10 +507,11 @@ export function initPoolTables(db: SQLiteDatabase): void {
       status TEXT NOT NULL DEFAULT 'queued',
       requested_at TEXT NOT NULL DEFAULT (datetime('now')),
       granted_at TEXT,
-      released_at TEXT
+      released_at TEXT,
+      FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
     );
     CREATE INDEX IF NOT EXISTS idx_pool_requests_status ON pool_slot_requests(status);
-    CREATE INDEX IF NOT EXISTS idx_pool_requests_priority ON pool_slot_requests(status, tier DESC, requested_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_pool_requests_priority ON pool_slot_requests(tier DESC, requested_at ASC);
   `)
 }
 
