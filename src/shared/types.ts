@@ -94,6 +94,10 @@ export type ServerMessage =
   | { type: 'workflow-removed'; workflowId: string }
   | { type: 'workflow-run-update'; run: WorkflowRun }
   | { type: 'workflow-run-list'; runs: WorkflowRun[] }
+  // Phase 5: Session pool messages
+  | { type: 'pool-status-update'; active: number; queued: number; max: number }
+  | { type: 'pool-slot-granted'; runId: string; stepName: string; slotId: string }
+  | { type: 'step-queued'; runId: string; stepName: string; position: number }
 
 export interface ResumeError {
   code: 'NOT_FOUND' | 'ALREADY_ACTIVE' | 'RESUME_FAILED'
@@ -185,7 +189,7 @@ export type SubscribeServerMessage = (listener: (message: ServerMessage) => void
 // ─── Workflow Engine Types (WO-001) ─────────────────────────────────────────
 
 // ST-001-01: Step type and workflow status enums
-export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output' | 'native_step'
+export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output' | 'native_step' | 'parallel_group' | 'review_loop'
 
 // Workflow variable definition (used in YAML variables section)
 export type WorkflowVariableType = 'string' | 'path'
@@ -237,6 +241,14 @@ export interface WorkflowStep {
   // tier fields (all step types)
   tier_min?: number
   tier_max?: number
+  // parallel_group fields (Phase 5)
+  depends_on?: string[]
+  children?: WorkflowStep[]
+  on_failure?: 'fail_fast' | 'cancel_all' | 'continue_others'
+  // review_loop fields (REQ-40)
+  producer?: WorkflowStep
+  reviewer?: WorkflowStep
+  max_iterations?: number
 }
 
 // ST-001-04: Workflow definition (maps to workflows SQLite table)
@@ -270,7 +282,7 @@ export interface WorkflowRun {
 }
 
 // ST-001-05: Per-step execution state (JSON within workflow_runs.steps_state)
-export type StepRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+export type StepRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'queued' | 'cancelled'
 
 export interface StepRunState {
   name: string
@@ -287,6 +299,16 @@ export interface StepRunState {
   resultContent: string | null
   tier_min?: number
   tier_max?: number
+  // Phase 5: DAG engine fields
+  poolSlotId?: string | null
+  parentGroup?: string | null
+  // Phase 5: Termination state machine (M-02)
+  terminationPhase?: 'signal_sent' | 'waiting_grace1' | 'sigterm_sent' | 'waiting_grace2' | 'killed' | null
+  terminationStartedAt?: string | null
+  // REQ-40: Review loop tracking
+  reviewIteration?: number
+  reviewSubStep?: 'producer' | 'reviewer' | null
+  reviewVerdict?: string | null
 }
 
 // Chat history types

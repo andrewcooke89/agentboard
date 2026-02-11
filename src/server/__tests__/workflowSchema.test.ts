@@ -1501,3 +1501,369 @@ describe('shellEscape', () => {
     expect(shellEscape('a b$c')).toBe("'a b$c'")
   })
 })
+
+// ─── Phase 5: DAG Engine & parallel_group ─────────────────────────────────
+
+describe('parseWorkflowYAML — Phase 5 parallel_group', () => {
+  test('valid parallel_group step parses correctly', () => {
+    const yaml = `
+name: dag-pipeline
+steps:
+  - name: parallel-work
+    type: parallel_group
+    on_failure: fail_fast
+    children:
+      - name: task-a
+        type: spawn_session
+        projectPath: /tmp/a
+        prompt: "Do A"
+      - name: task-b
+        type: spawn_session
+        projectPath: /tmp/b
+        prompt: "Do B"
+        depends_on:
+          - task-a
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.errors).toEqual([])
+    const step = result.workflow!.steps[0]
+    expect(step.type).toBe('parallel_group')
+    expect(step.on_failure).toBe('fail_fast')
+    expect(step.children).toHaveLength(2)
+    expect(step.children![0].name).toBe('task-a')
+    expect(step.children![1].name).toBe('task-b')
+    expect(step.children![1].depends_on).toEqual(['task-a'])
+  })
+
+  test('parallel_group requires children array', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('children is required'))
+  })
+
+  test('parallel_group rejects empty children', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children: []
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('at least 1 child'))
+  })
+
+  test('parallel_group validates child step types', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: child1
+        type: spawn_session
+        projectPath: /tmp
+        prompt: test
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+  })
+
+  test('parallel_group rejects nested parallel_group', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: nested
+        type: parallel_group
+        children:
+          - name: inner
+            type: delay
+            seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('cannot be nested'))
+  })
+
+  test('parallel_group validates on_failure enum', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    on_failure: invalid_value
+    children:
+      - name: c1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('on_failure must be one of'))
+  })
+})
+
+describe('parseWorkflowYAML — Phase 5 cycle detection', () => {
+  test('TEST-04: detects dependency cycle in parallel_group children', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+        depends_on:
+          - b
+      - name: b
+        type: delay
+        seconds: 1
+        depends_on:
+          - a
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('dependency cycle'))
+  })
+
+  test('TEST-05: detects self-dependency', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: self-ref
+        type: delay
+        seconds: 1
+        depends_on:
+          - self-ref
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('self-reference'))
+  })
+
+  test('TEST-06: depends_on on top-level step produces error', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    depends_on:
+      - s2
+  - name: s2
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('only valid within parallel_group'))
+  })
+
+  test('TEST-07: depends_on targeting step outside parallel_group produces error', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: child1
+        type: delay
+        seconds: 1
+        depends_on:
+          - nonexistent_sibling
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('unknown sibling'))
+  })
+
+  test('three-node cycle is detected', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+        depends_on:
+          - c
+      - name: b
+        type: delay
+        seconds: 1
+        depends_on:
+          - a
+      - name: c
+        type: delay
+        seconds: 1
+        depends_on:
+          - b
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('dependency cycle'))
+  })
+
+  test('valid DAG (no cycle) passes', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: a
+        type: delay
+        seconds: 1
+      - name: b
+        type: delay
+        seconds: 1
+        depends_on:
+          - a
+      - name: c
+        type: delay
+        seconds: 1
+        depends_on:
+          - a
+          - b
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+  })
+})
+
+describe('parseWorkflowYAML — Phase 5 system config & auto-detection', () => {
+  test('TEST-22: auto-detection sets engine to dag when parallel_group is used', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: c1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.system).toBeDefined()
+    expect(result.workflow!.system!.engine).toBe('dag')
+    expect(result.workflow!.system!.session_pool).toBe(true)
+  })
+
+  test('explicit system.engine is preserved', () => {
+    const yaml = `
+name: test
+system:
+  engine: sequential
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.system).toBeDefined()
+    expect(result.workflow!.system!.engine).toBe('sequential')
+  })
+
+  test('explicit system.engine dag with session_pool true is valid', () => {
+    const yaml = `
+name: test
+system:
+  engine: dag
+  session_pool: true
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: c1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.system!.engine).toBe('dag')
+    expect(result.workflow!.system!.session_pool).toBe(true)
+  })
+
+  test('TEST-23: session_pool false + engine dag produces validation error', () => {
+    const yaml = `
+name: test
+system:
+  engine: dag
+  session_pool: false
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: c1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('session_pool cannot be false when engine is "dag"'))
+  })
+
+  test('invalid system.engine value produces error', () => {
+    const yaml = `
+name: test
+system:
+  engine: parallel
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('system.engine must be "sequential" or "dag"'))
+  })
+
+  test('system field is undefined when not specified and no dag features used', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.system).toBeUndefined()
+  })
+
+  test('auto-detection does not override explicit engine', () => {
+    const yaml = `
+name: test
+system:
+  engine: sequential
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: c1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.system!.engine).toBe('sequential')
+  })
+})

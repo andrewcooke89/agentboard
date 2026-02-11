@@ -16,7 +16,7 @@ const MAX_YAML_SIZE = 1024 * 1024 // 1MB
 const MAX_DESCRIPTION_LENGTH = 10000
 const MAX_NAME_LENGTH = 100
 
-export function createWorkflowHandlers(ctx: ServerContext) {
+export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../sessionPool').SessionPool | null) {
   const { workflowStore, config, broadcast, logger } = ctx
 
   function registerRoutes(app: Hono): void {
@@ -259,22 +259,61 @@ export function createWorkflowHandlers(ctx: ServerContext) {
         mergedVars = merged
       }
 
-      const stepsState: StepRunState[] = parsed.workflow.steps.map(step => ({
-        name: step.name,
-        type: step.type,
-        status: 'pending' as const,
-        taskId: null,
-        startedAt: null,
-        completedAt: null,
-        errorMessage: null,
-        retryCount: 0,
-        skippedReason: null,
-        resultFile: step.result_file ?? null,
-        resultCollected: false,
-        resultContent: null,
-        ...(step.tier_min != null ? { tier_min: step.tier_min } : {}),
-        ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
-      }))
+      // Phase 5: Queue depth limit (REQ-24) — only when session_pool enabled (REQ-37)
+      if (parsed.workflow.system?.session_pool && pool) {
+        const maxDepth = Number(process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH) || 50
+        const poolStatus = pool.getStatus()
+        if (poolStatus.queue.length >= maxDepth) {
+          return c.json({
+            error: `Pool queue full (${poolStatus.queue.length} pending). Try again later.`,
+            code: 'POOL_QUEUE_FULL',
+            queueDepth: poolStatus.queue.length,
+            maxDepth,
+          }, 429)
+        }
+      }
+
+      const stepsState: StepRunState[] = []
+      for (const step of parsed.workflow.steps) {
+        stepsState.push({
+          name: step.name,
+          type: step.type,
+          status: 'pending' as const,
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: step.result_file ?? null,
+          resultCollected: false,
+          resultContent: null,
+          ...(step.tier_min != null ? { tier_min: step.tier_min } : {}),
+          ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
+        })
+        // Phase 5: Flatten parallel_group children into steps_state
+        if (step.type === 'parallel_group' && step.children) {
+          for (const child of step.children) {
+            stepsState.push({
+              name: child.name,
+              type: child.type,
+              status: 'pending' as const,
+              taskId: null,
+              startedAt: null,
+              completedAt: null,
+              errorMessage: null,
+              retryCount: 0,
+              skippedReason: null,
+              resultFile: child.result_file ?? null,
+              resultCollected: false,
+              resultContent: null,
+              parentGroup: step.name,
+              ...(child.tier_min != null ? { tier_min: child.tier_min } : {}),
+              ...(child.tier_max != null ? { tier_max: child.tier_max } : {}),
+            })
+          }
+        }
+      }
 
       // Atomic check-and-create: prevents TOCTOU race on concurrent run limit
       const run = workflowStore.createRunIfUnderLimit({

@@ -13,6 +13,9 @@ import type {
 import { parseWorkflowYAML, substituteVariables, shellEscape } from './workflowSchema'
 import type { ParsedWorkflow } from './workflowSchema'
 import { sanitizeForLog } from './validators'
+import { createDAGEngine } from './dagEngine'
+import type { DAGEngine } from './dagEngine'
+import type { SessionPool } from './sessionPool'
 
 const MAX_RESULT_FILE_SIZE = 1024 * 1024 // 1 MB
 const MAX_NATIVE_STDOUT = 1024 * 1024 // 1 MB
@@ -34,10 +37,14 @@ export function createWorkflowEngine(
   ctx: ServerContext,
   workflowStore: WorkflowStore,
   taskStore: TaskStore,
+  pool?: SessionPool | null,
 ): WorkflowEngine {
   let pollIntervalId: ReturnType<typeof setInterval> | null = null
   let currentPollInterval = ctx.config.workflowPollIntervalMs
   const MAX_IDLE_INTERVAL = 10000 // 10s when no active runs
+
+  // Phase 5: DAG engine (always created; pool is optional within it)
+  const dagEngine: DAGEngine = createDAGEngine(ctx, workflowStore, taskStore, pool ?? null)
 
   function stop(): void {
     if (pollIntervalId) {
@@ -113,10 +120,10 @@ export function createWorkflowEngine(
   /** Evaluate tier filter for a step. Returns skip reason or null (no skip). */
   function evaluateTierFilter(stepDef: WorkflowStep, runTier: number): string | null {
     if (stepDef.tier_min != null && runTier < stepDef.tier_min) {
-      return `tier ${runTier} below step minimum ${stepDef.tier_min}`
+      return `Run tier (${runTier}) below step tier_min (${stepDef.tier_min})`
     }
     if (stepDef.tier_max != null && runTier > stepDef.tier_max) {
-      return `tier ${runTier} above step maximum ${stepDef.tier_max}`
+      return `Run tier (${runTier}) above step tier_max (${stepDef.tier_max})`
     }
     return null
   }
@@ -643,7 +650,7 @@ export function createWorkflowEngine(
       }
 
       // Determine cwd - ensure it exists
-      const cwd = step.working_dir || run.output_dir
+      const cwd = step.working_dir || run.variables?.project_path || run.output_dir
       try {
         if (!fs.existsSync(cwd)) {
           fs.mkdirSync(cwd, { recursive: true })
@@ -710,23 +717,24 @@ export function createWorkflowEngine(
           stderr = await readStreamWithTimeout(proc.stderr as ReadableStream<Uint8Array>, streamTimeout)
         }
 
-        // Write stdout to output_path if specified
+        // Determine step result: read output_path file if it exists, else use stdout (REQ-06)
+        let stepResult = stdout
         if (step.output_path) {
           try {
             const outputFullPath = resolveOutputPath(run, step.output_path)
-            const dir = path.dirname(outputFullPath)
-            if (!fs.existsSync(dir)) {
-              fs.mkdirSync(dir, { recursive: true })
+            if (fs.existsSync(outputFullPath)) {
+              const fileContent = fs.readFileSync(outputFullPath, 'utf-8')
+              stepResult = fileContent.length > MAX_NATIVE_STDOUT
+                ? fileContent.slice(0, MAX_NATIVE_STDOUT)
+                : fileContent
             }
-            fs.writeFileSync(outputFullPath, stdout, 'utf-8')
           } catch (err) {
-            // output_path write failure is non-fatal: command success is determined by exit code,
-            // not by output file write success. The warning log captures the failure for debugging.
-            ctx.logger.warn('native_step_output_write_failed', {
+            ctx.logger.warn('native_step_output_read_failed', {
               runId: run.id,
               step: step.name,
               error: String(err),
             })
+            // Fall through to use stdout as result
           }
         }
 
@@ -765,6 +773,10 @@ export function createWorkflowEngine(
         if (successCodes.includes(code)) {
           freshStepState.status = 'completed'
           freshStepState.completedAt = new Date().toISOString()
+          // Store step result (REQ-06): output_path file content or stdout, plus stderr
+          freshStepState.resultContent = stepResult
+          if (stderr) freshStepState.resultContent += '\nstderr: ' + stderr
+          freshStepState.resultCollected = true
           saveAndBroadcast(freshRun)
 
           ctx.logger.info('workflow_native_step_completed', {
@@ -825,6 +837,14 @@ export function createWorkflowEngine(
   // ── Main Processing ──────────────────────────────────────────────────
 
   function processRun(run: WorkflowRun): void {
+    // ── Phase 5: DAG engine fork ──────────────────────────────────────
+    const parsed = getParsedWorkflow(run)
+    if (parsed?.system?.engine === 'dag') {
+      dagEngine.tick(run, parsed)
+      return
+    }
+    // ── Legacy sequential engine (unchanged below) ────────────────────
+
     const steps = getWorkflowSteps(run)
     if (!steps) {
       failWorkflow(run, 'Cannot parse workflow definition')

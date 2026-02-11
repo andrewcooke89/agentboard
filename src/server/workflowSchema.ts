@@ -31,6 +31,10 @@ export interface ParsedWorkflow {
   steps: WorkflowStep[]
   variables: WorkflowVariable[]
   default_tier?: number
+  system?: {
+    engine?: 'sequential' | 'dag'
+    session_pool?: boolean
+  }
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -41,6 +45,8 @@ const VALID_STEP_TYPES: ReadonlySet<string> = new Set<WorkflowStepType>([
   'delay',
   'check_output',
   'native_step',
+  'parallel_group',
+  'review_loop',
 ])
 
 const VALID_CONDITION_TYPES: ReadonlySet<string> = new Set([
@@ -223,6 +229,13 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
       validateCondition(step.condition, prefix, seenNames, errors)
     }
 
+    // depends_on on top-level steps is an error (only valid within parallel_group children)
+    if ('depends_on' in step && step.depends_on !== undefined && step.depends_on !== null) {
+      if (stepType !== 'parallel_group') {
+        errors.push(`${prefix}.depends_on is only valid within parallel_group children, not on top-level steps`)
+      }
+    }
+
     // Track seen names (after validation so references only see prior steps)
     if (stepName) {
       seenNames.add(stepName)
@@ -275,6 +288,42 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     }
   }
 
+  // ── System section parsing (Phase 5) ─────────────────────────────────────
+  let systemConfig: ParsedWorkflow['system'] = undefined
+  if ('system' in doc && doc.system && typeof doc.system === 'object' && !Array.isArray(doc.system)) {
+    const sys = doc.system as Record<string, unknown>
+    systemConfig = {}
+    if (hasStringField(sys, 'engine')) {
+      const eng = sys.engine as string
+      if (eng !== 'sequential' && eng !== 'dag') {
+        errors.push('system.engine must be "sequential" or "dag"')
+      } else {
+        systemConfig.engine = eng
+      }
+    }
+    if ('session_pool' in sys) {
+      systemConfig.session_pool = String(sys.session_pool) === 'true'
+    }
+  }
+
+  // ── Auto-detection (REQ-04): infer DAG engine when parallel_group is used ──
+  const hasParallelGroup = parsedSteps.some(s => s.type === 'parallel_group')
+  const hasDependsOn = parsedSteps.some(s => s.depends_on && s.depends_on.length > 0)
+  if (hasParallelGroup || hasDependsOn) {
+    if (!systemConfig) systemConfig = {}
+    if (!systemConfig.engine) {
+      systemConfig.engine = 'dag'
+      if (systemConfig.session_pool === undefined) {
+        systemConfig.session_pool = true
+      }
+    }
+  }
+
+  // ── REQ-05: session_pool:false + engine:dag is invalid ────────────────────
+  if (systemConfig?.session_pool === false && systemConfig?.engine === 'dag') {
+    errors.push('system.session_pool cannot be false when engine is "dag"')
+  }
+
   // ── Build result ────────────────────────────────────────────────────────
 
   if (errors.length > 0) {
@@ -287,6 +336,7 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     steps: parsedSteps,
     variables: parsedVariables,
     default_tier: defaultTier,
+    system: systemConfig,
   }
 
   return { valid: true, workflow, errors: [] }
@@ -520,6 +570,158 @@ function validateTypeSpecificFields(
       }
       break
     }
+
+    case 'parallel_group': {
+      // children — required, non-empty array
+      if (!('children' in step) || !Array.isArray(step.children)) {
+        errors.push(`${prefix}.children is required (non-empty array) for parallel_group steps`)
+        break
+      }
+      const children = step.children as unknown[]
+      if (children.length === 0) {
+        errors.push(`${prefix}.children must contain at least 1 child step`)
+        break
+      }
+
+      // on_failure — optional, must be valid enum
+      if (hasStringField(step, 'on_failure')) {
+        const onFailure = step.on_failure as string
+        if (onFailure !== 'fail_fast' && onFailure !== 'cancel_all' && onFailure !== 'continue_others') {
+          errors.push(`${prefix}.on_failure must be one of: fail_fast, cancel_all, continue_others`)
+        }
+      }
+
+      // Validate each child
+      const childNames = new Set<string>()
+      const childList: { name: string; depends_on?: string[] }[] = []
+      for (let ci = 0; ci < children.length; ci++) {
+        const childRaw = children[ci]
+        const cPrefix = `${prefix}.children[${ci}]`
+        if (childRaw === null || childRaw === undefined || typeof childRaw !== 'object' || Array.isArray(childRaw)) {
+          errors.push(`${cPrefix} must be an object`)
+          continue
+        }
+        const child = childRaw as Record<string, unknown>
+
+        // child.name — required, unique within group
+        if (!hasStringField(child, 'name')) {
+          errors.push(`${cPrefix}.name is required (non-empty string)`)
+          continue
+        }
+        const cName = (child.name as string).trim()
+        if (cName.length === 0) {
+          errors.push(`${cPrefix}.name must be a non-empty string`)
+          continue
+        }
+        if (cName.length > 128) {
+          errors.push(`${cPrefix}.name exceeds maximum length of 128 characters`)
+        }
+        if (childNames.has(cName)) {
+          errors.push(`${cPrefix}.name "${cName}" is a duplicate (child names must be unique within parallel_group)`)
+        }
+        childNames.add(cName)
+
+        // child.type — required, valid step type (but not parallel_group — no nesting)
+        if (!hasStringField(child, 'type')) {
+          errors.push(`${cPrefix}.type is required`)
+        } else {
+          const cType = child.type as string
+          if (!VALID_STEP_TYPES.has(cType)) {
+            errors.push(`${cPrefix}.type "${cType}" is invalid (must be one of: ${[...VALID_STEP_TYPES].join(', ')})`)
+          } else if (cType === 'parallel_group') {
+            errors.push(`${cPrefix}.type "parallel_group" cannot be nested inside another parallel_group`)
+          } else {
+            // Validate type-specific fields for child
+            validateTypeSpecificFields(child, cType as WorkflowStepType, cPrefix, errors)
+          }
+        }
+
+        // child.depends_on — optional, array of strings referencing sibling names
+        let childDeps: string[] | undefined
+        if ('depends_on' in child && child.depends_on !== undefined && child.depends_on !== null) {
+          if (!Array.isArray(child.depends_on)) {
+            errors.push(`${cPrefix}.depends_on must be an array of strings`)
+          } else {
+            childDeps = []
+            for (let di = 0; di < (child.depends_on as unknown[]).length; di++) {
+              const dep = (child.depends_on as unknown[])[di]
+              if (typeof dep !== 'string') {
+                errors.push(`${cPrefix}.depends_on[${di}] must be a string`)
+              } else {
+                const depName = dep.trim()
+                if (depName === cName) {
+                  errors.push(`${cPrefix}.depends_on contains self-reference "${cName}"`)
+                } else if (depName.length > 0) {
+                  childDeps.push(depName)
+                }
+              }
+            }
+          }
+        }
+
+        childList.push({ name: cName, depends_on: childDeps })
+      }
+
+      // Validate depends_on references point to sibling names
+      for (let ci = 0; ci < childList.length; ci++) {
+        const child = childList[ci]
+        for (const dep of child.depends_on ?? []) {
+          if (!childNames.has(dep)) {
+            errors.push(`${prefix}.children[${ci}].depends_on references unknown sibling "${dep}"`)
+          }
+        }
+      }
+
+      // Cycle detection using Kahn's topological sort
+      if (childList.length > 0) {
+        const cycleNodes = detectCycle(childList)
+        if (cycleNodes) {
+          errors.push(`${prefix}.children contain a dependency cycle: ${cycleNodes.join(' -> ')} -> ${cycleNodes[0]}`)
+        }
+      }
+      break
+    }
+
+    case 'review_loop': {
+      // producer — required, must be a spawn_session step object
+      if (!('producer' in step) || step.producer === null || step.producer === undefined || typeof step.producer !== 'object' || Array.isArray(step.producer)) {
+        errors.push(`${prefix}.producer is required (spawn_session step object) for review_loop steps`)
+      } else {
+        const prod = step.producer as Record<string, unknown>
+        if (!hasStringField(prod, 'name')) {
+          errors.push(`${prefix}.producer.name is required (non-empty string)`)
+        }
+        if (!hasStringField(prod, 'type') || prod.type !== 'spawn_session') {
+          errors.push(`${prefix}.producer.type must be "spawn_session"`)
+        } else {
+          validateTypeSpecificFields(prod, 'spawn_session', `${prefix}.producer`, errors)
+        }
+      }
+      // reviewer — required, must be a spawn_session step object
+      if (!('reviewer' in step) || step.reviewer === null || step.reviewer === undefined || typeof step.reviewer !== 'object' || Array.isArray(step.reviewer)) {
+        errors.push(`${prefix}.reviewer is required (spawn_session step object) for review_loop steps`)
+      } else {
+        const rev = step.reviewer as Record<string, unknown>
+        if (!hasStringField(rev, 'name')) {
+          errors.push(`${prefix}.reviewer.name is required (non-empty string)`)
+        }
+        if (!hasStringField(rev, 'type') || rev.type !== 'spawn_session') {
+          errors.push(`${prefix}.reviewer.type must be "spawn_session"`)
+        } else {
+          validateTypeSpecificFields(rev, 'spawn_session', `${prefix}.reviewer`, errors)
+        }
+      }
+      // max_iterations — optional, positive integer, defaults to 3
+      if ('max_iterations' in step && step.max_iterations !== undefined && step.max_iterations !== null) {
+        const maxIter = Number(step.max_iterations)
+        if (isNaN(maxIter) || !Number.isInteger(maxIter) || maxIter < 1) {
+          errors.push(`${prefix}.max_iterations must be a positive integer`)
+        } else if (maxIter > 20) {
+          errors.push(`${prefix}.max_iterations must not exceed 20`)
+        }
+      }
+      break
+    }
   }
 
   // Tier validation (common to all step types)
@@ -700,7 +902,85 @@ function buildWorkflowStep(
     }
   }
 
+  // parallel_group fields (Phase 5)
+  if (Array.isArray(step.depends_on)) {
+    result.depends_on = (step.depends_on as unknown[]).map(d => String(d).trim()).filter(d => d.length > 0)
+  }
+  if (hasStringField(step, 'on_failure')) {
+    const of = step.on_failure as string
+    if (of === 'fail_fast' || of === 'cancel_all' || of === 'continue_others') {
+      result.on_failure = of
+    }
+  }
+  if (Array.isArray(step.children)) {
+    result.children = (step.children as unknown[])
+      .filter(c => c !== null && c !== undefined && typeof c === 'object' && !Array.isArray(c))
+      .map(c => {
+        const child = c as Record<string, unknown>
+        const childType = hasStringField(child, 'type') && VALID_STEP_TYPES.has(child.type as string)
+          ? (child.type as WorkflowStepType)
+          : null
+        return buildWorkflowStep(child, childType)
+      })
+  }
+
+  // review_loop fields (REQ-40)
+  if (step.producer && typeof step.producer === 'object' && !Array.isArray(step.producer)) {
+    const prod = step.producer as Record<string, unknown>
+    const prodType = hasStringField(prod, 'type') && VALID_STEP_TYPES.has(prod.type as string)
+      ? (prod.type as WorkflowStepType)
+      : null
+    result.producer = buildWorkflowStep(prod, prodType)
+  }
+  if (step.reviewer && typeof step.reviewer === 'object' && !Array.isArray(step.reviewer)) {
+    const rev = step.reviewer as Record<string, unknown>
+    const revType = hasStringField(rev, 'type') && VALID_STEP_TYPES.has(rev.type as string)
+      ? (rev.type as WorkflowStepType)
+      : null
+    result.reviewer = buildWorkflowStep(rev, revType)
+  }
+  if ('max_iterations' in step && step.max_iterations !== undefined && step.max_iterations !== null) {
+    result.max_iterations = Number(step.max_iterations)
+  }
+
   return result
+}
+
+/** Kahn's algorithm for cycle detection in depends_on graph within parallel_group children. */
+function detectCycle(children: { name: string; depends_on?: string[] }[]): string[] | null {
+  const nameSet = new Set(children.map(c => c.name))
+  const adj = new Map<string, string[]>()
+  const inDegree = new Map<string, number>()
+  for (const c of children) {
+    adj.set(c.name, [])
+    inDegree.set(c.name, 0)
+  }
+  for (const c of children) {
+    for (const dep of c.depends_on ?? []) {
+      if (!nameSet.has(dep)) continue // validated separately
+      adj.get(dep)!.push(c.name)
+      inDegree.set(c.name, (inDegree.get(c.name) ?? 0) + 1)
+    }
+  }
+  const queue: string[] = []
+  for (const [name, deg] of inDegree) {
+    if (deg === 0) queue.push(name)
+  }
+  const sorted: string[] = []
+  while (queue.length > 0) {
+    const node = queue.shift()!
+    sorted.push(node)
+    for (const neighbor of adj.get(node) ?? []) {
+      const newDeg = (inDegree.get(neighbor) ?? 1) - 1
+      inDegree.set(neighbor, newDeg)
+      if (newDeg === 0) queue.push(neighbor)
+    }
+  }
+  if (sorted.length < children.length) {
+    const cycleNodes = children.filter(c => !sorted.includes(c.name)).map(c => c.name)
+    return cycleNodes
+  }
+  return null
 }
 
 function buildCondition(cond: Record<string, unknown>): StepCondition | undefined {

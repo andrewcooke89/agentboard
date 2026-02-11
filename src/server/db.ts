@@ -3,6 +3,7 @@ import path from 'node:path'
 import { Database as SQLiteDatabase } from 'bun:sqlite'
 import type { AgentType } from '../shared/types'
 import { resolveProjectPath } from './paths'
+import { createPoolStore } from './poolStore'
 
 export interface AgentSessionRecord {
   id: number
@@ -85,6 +86,13 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   ensureDataDir(dbPath)
 
   const db = new SQLiteDatabase(dbPath)
+
+  // Enable WAL mode for better concurrent read/write performance (Phase 5)
+  if (dbPath !== ':memory:') {
+    db.exec('PRAGMA journal_mode = WAL')
+    db.exec('PRAGMA synchronous = NORMAL')
+  }
+
   migrateDatabase(db)
   db.exec(CREATE_TABLE_SQL)
   db.exec(CREATE_INDEXES_SQL)
@@ -478,4 +486,120 @@ function getColumnNames(db: SQLiteDatabase, tableName: string): string[] {
     .prepare(`PRAGMA table_info(${tableName})`)
     .all() as Array<{ name?: string }>
   return rows.map((row) => String(row.name ?? '')).filter(Boolean)
+}
+
+// ─── Session Pool Tables (Phase 5) ──────────────────────────────────────────
+
+export function initPoolTables(db: SQLiteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_pool_config (
+      id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      max_slots INTEGER NOT NULL DEFAULT 2,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT OR IGNORE INTO session_pool_config (id, max_slots) VALUES (1, 2);
+
+    CREATE TABLE IF NOT EXISTS pool_slot_requests (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      step_name TEXT NOT NULL,
+      tier INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'queued',
+      requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+      granted_at TEXT,
+      released_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_pool_requests_status ON pool_slot_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_pool_requests_priority ON pool_slot_requests(status, tier DESC, requested_at ASC);
+  `)
+}
+
+export function reconcilePoolSlots(db: SQLiteDatabase): void {
+  // Check if tmux is available
+  let tmuxAvailable = false
+  try {
+    const result = Bun.spawnSync(['tmux', '-V'], { stdout: 'pipe', stderr: 'pipe' })
+    tmuxAvailable = result.exitCode === 0
+  } catch {
+    tmuxAvailable = false
+  }
+
+  // If tmux not available, release all active and queued slots (safe fallback)
+  if (!tmuxAvailable) {
+    db.exec(`
+      UPDATE pool_slot_requests
+      SET status = 'released', released_at = datetime('now')
+      WHERE status IN ('active', 'queued')
+    `)
+    return
+  }
+
+  // Check if required tables exist (handles test environment and partial initialization)
+  let tablesExist = false
+  try {
+    const result = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('tasks', 'workflow_runs')"
+    ).all() as Array<{ name: string }>
+    tablesExist = result.length === 2
+  } catch {
+    tablesExist = false
+  }
+
+  // If tables don't exist, release all active and queued slots (safe fallback)
+  if (!tablesExist) {
+    db.exec(`
+      UPDATE pool_slot_requests
+      SET status = 'released', released_at = datetime('now')
+      WHERE status IN ('active', 'queued')
+    `)
+    return
+  }
+
+  // Check each active slot against tmux session state
+  const poolStore = createPoolStore(db)
+  const activeSlots = poolStore.listActiveSlots()
+
+  // Query directly to avoid circular dependencies
+  const getTaskStmt = db.prepare('SELECT * FROM tasks WHERE id = $id')
+  const getRunStmt = db.prepare('SELECT * FROM workflow_runs WHERE id = $id')
+
+  for (const slot of activeSlots) {
+    let shouldRelease = true
+
+    try {
+      // Find the workflow run
+      const runRow = getRunStmt.get({ $id: slot.runId }) as Record<string, unknown> | undefined
+      if (runRow) {
+        // Parse steps_state JSON to find the step
+        const stepsStateStr = String(runRow.steps_state ?? '[]')
+        const stepsState = JSON.parse(stepsStateStr) as Array<{ name: string; taskId: string | null }>
+
+        const step = stepsState.find((s) => s.name === slot.stepName)
+        if (step && step.taskId) {
+          // Get the task
+          const taskRow = getTaskStmt.get({ $id: step.taskId }) as Record<string, unknown> | undefined
+          if (taskRow && taskRow.tmux_window) {
+            const tmuxWindow = String(taskRow.tmux_window)
+            // Check if tmux session exists
+            const result = Bun.spawnSync(['tmux', 'has-session', '-t', tmuxWindow], {
+              stdout: 'pipe',
+              stderr: 'pipe',
+            })
+            if (result.exitCode === 0) {
+              shouldRelease = false // Session is alive, keep slot active
+            }
+          }
+        }
+      }
+    } catch {
+      // On any error, release the slot (safe fallback)
+      shouldRelease = true
+    }
+
+    if (shouldRelease) {
+      poolStore.updateSlotStatus(slot.id, 'released', { releasedAt: new Date().toISOString() })
+    }
+  }
+
+  // Queued slots are kept as queued - they'll be processed normally when engine restarts
 }

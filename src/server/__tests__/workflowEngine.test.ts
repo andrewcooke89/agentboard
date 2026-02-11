@@ -1157,19 +1157,18 @@ describe('workflowEngine', () => {
       expect(updatedRun!.steps_state[0].errorMessage).toContain('timed out')
     }, 15000)
 
-    test('native_step captures stdout to output_path', async () => {
+    test('native_step reads output_path file as step result (REQ-06)', async () => {
       const fsSync = await import('node:fs')
       const tmpDir = `/tmp/wf-native-out-${Date.now()}`
       fsSync.mkdirSync(tmpDir, { recursive: true })
 
-      // Use a multi-step workflow so the native_step completes but workflow stays running
-      // (the second step gives us time to check the output file before cleanup)
+      // Command writes to result.txt; engine should read that file as step result (REQ-06)
       const yaml = [
         'name: native-output',
         'steps:',
-        '  - name: echo-step',
+        '  - name: write-step',
         '    type: native_step',
-        '    command: "echo captured-output"',
+        `    command: "echo file-content > ${tmpDir}/result.txt"`,
         '    output_path: result.txt',
         '  - name: wait-step',
         '    type: delay',
@@ -1177,13 +1176,13 @@ describe('workflowEngine', () => {
       ].join('\n')
       const wf = createWorkflowDef(workflowStore, yaml, 'native-output')
       const run = createTestRun(workflowStore, wf.id, [
-        makeStepState({ name: 'echo-step', type: 'native_step' }),
+        makeStepState({ name: 'write-step', type: 'native_step' }),
         makeStepState({ name: 'wait-step', type: 'delay' }),
       ], { output_dir: tmpDir })
 
       engine.start()
 
-      // Poll until the first step completes (workflow stays running on second step)
+      // Poll until the first step completes
       const deadline = Date.now() + 8000
       let updatedRun = workflowStore.getRun(run.id)
       while (Date.now() < deadline) {
@@ -1194,10 +1193,9 @@ describe('workflowEngine', () => {
       engine.stop()
 
       expect(updatedRun!.steps_state[0].status).toBe('completed')
-      // Check the output file was written (not yet cleaned up because workflow is still running)
-      expect(fsSync.existsSync(`${tmpDir}/result.txt`)).toBe(true)
-      const outputContent = fsSync.readFileSync(`${tmpDir}/result.txt`, 'utf-8')
-      expect(outputContent.trim()).toBe('captured-output')
+      // Step result should be the file content, not stdout
+      expect(updatedRun!.steps_state[0].resultContent).toContain('file-content')
+      expect(updatedRun!.steps_state[0].resultCollected).toBe(true)
       try { fsSync.rmSync(tmpDir, { recursive: true }) } catch { /* ok */ }
     }, 10000)
 

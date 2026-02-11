@@ -11,6 +11,8 @@ import type {
   DirectoryErrorResponse,
 } from '../shared/types'
 import { createWorkflowHandlers } from './handlers/workflowHandlers'
+import { createPoolHandlers } from './handlers/poolHandlers'
+import type { SessionPool } from './sessionPool'
 import { toAgentSession } from './agentSessions'
 
 const MAX_DIRECTORY_ENTRIES = 200
@@ -38,7 +40,7 @@ function containsSensitiveSegment(resolved: string): boolean {
   return SENSITIVE_PATH_SEGMENTS.some((segment) => resolved.includes(segment))
 }
 
-export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: boolean, historyService?: import('./HistoryService').HistoryService): void {
+export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: boolean, historyService?: import('./HistoryService').HistoryService, pool?: SessionPool | null): void {
   const authToken = ctx.config.authToken
 
   // Auth middleware for /api/* routes
@@ -616,8 +618,13 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
 
   // --- Workflow REST endpoints (conditionally enabled) ---
   if (ctx.config.workflowEngineEnabled) {
-    const workflowHandlers = createWorkflowHandlers(ctx)
+    const workflowHandlers = createWorkflowHandlers(ctx, pool)
     workflowHandlers.registerRoutes(app)
+    // Phase 5: Pool API (only when pool is available)
+    if (pool) {
+      const poolHandlers = createPoolHandlers(ctx, pool)
+      poolHandlers.registerRoutes(app)
+    }
   }
 
   app.post('/api/history/resume', async (c) => {
