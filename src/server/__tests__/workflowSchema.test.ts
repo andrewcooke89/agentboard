@@ -1512,7 +1512,7 @@ steps:
   - name: parallel-work
     type: parallel_group
     on_failure: fail_fast
-    children:
+    steps:
       - name: task-a
         type: spawn_session
         projectPath: /tmp/a
@@ -1530,10 +1530,10 @@ steps:
     const step = result.workflow!.steps[0]
     expect(step.type).toBe('parallel_group')
     expect(step.on_failure).toBe('fail_fast')
-    expect(step.children).toHaveLength(2)
-    expect(step.children![0].name).toBe('task-a')
-    expect(step.children![1].name).toBe('task-b')
-    expect(step.children![1].depends_on).toEqual(['task-a'])
+    expect(step.steps).toHaveLength(2)
+    expect(step.steps![0].name).toBe('task-a')
+    expect(step.steps![1].name).toBe('task-b')
+    expect(step.steps![1].depends_on).toEqual(['task-a'])
   })
 
   test('parallel_group requires children array', () => {
@@ -1545,7 +1545,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('children is required'))
+    expect(result.errors).toContainEqual(expect.stringContaining('must have at least one child step'))
   })
 
   test('parallel_group rejects empty children', () => {
@@ -1554,11 +1554,11 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children: []
+    steps: []
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('at least 1 child'))
+    expect(result.errors).toContainEqual(expect.stringContaining('must have at least one child step'))
   })
 
   test('parallel_group validates child step types', () => {
@@ -1567,7 +1567,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: child1
         type: spawn_session
         projectPath: /tmp
@@ -1583,10 +1583,10 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: nested
         type: parallel_group
-        children:
+        steps:
           - name: inner
             type: delay
             seconds: 1
@@ -1603,7 +1603,7 @@ steps:
   - name: pg
     type: parallel_group
     on_failure: invalid_value
-    children:
+    steps:
       - name: c1
         type: delay
         seconds: 1
@@ -1621,7 +1621,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1644,7 +1644,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: self-ref
         type: delay
         seconds: 1
@@ -1653,7 +1653,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('self-reference'))
+    expect(result.errors).toContainEqual(expect.stringContaining('Self-dependency detected'))
   })
 
   test('TEST-06: depends_on on top-level step produces error', () => {
@@ -1680,7 +1680,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: child1
         type: delay
         seconds: 1
@@ -1698,7 +1698,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1726,7 +1726,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1753,7 +1753,7 @@ steps:
   - name: pg
     type: parallel_group
     max_parallel: 3
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1775,7 +1775,7 @@ steps:
   - name: pg
     type: parallel_group
     max_parallel: 0
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1792,7 +1792,7 @@ steps:
   - name: pg
     type: parallel_group
     max_parallel: -1
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1809,7 +1809,7 @@ steps:
   - name: pg
     type: parallel_group
     max_parallel: 1.5
-    children:
+    steps:
       - name: a
         type: delay
         seconds: 1
@@ -1825,7 +1825,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: ac
         type: amendment_check
 `
@@ -1842,7 +1842,7 @@ name: test
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: c1
         type: delay
         seconds: 1
@@ -1879,7 +1879,7 @@ system:
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: c1
         type: delay
         seconds: 1
@@ -1899,7 +1899,7 @@ system:
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: c1
         type: delay
         seconds: 1
@@ -1945,7 +1945,7 @@ system:
 steps:
   - name: pg
     type: parallel_group
-    children:
+    steps:
       - name: c1
         type: delay
         seconds: 1

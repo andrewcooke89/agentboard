@@ -573,14 +573,15 @@ function validateTypeSpecificFields(
     }
 
     case 'parallel_group': {
-      // children — required, non-empty array
-      if (!('children' in step) || !Array.isArray(step.children)) {
-        errors.push(`${prefix}.children is required (non-empty array) for parallel_group steps`)
+      const pgName = (typeof step.name === 'string' ? step.name.trim() : '') || prefix
+      // steps — required, non-empty array
+      if (!('steps' in step) || !Array.isArray(step.steps)) {
+        errors.push(`parallel_group '${pgName}' must have at least one child step`)
         break
       }
-      const children = step.children as unknown[]
+      const children = step.steps as unknown[]
       if (children.length === 0) {
-        errors.push(`${prefix}.children must contain at least 1 child step`)
+        errors.push(`parallel_group '${pgName}' must have at least one child step`)
         break
       }
 
@@ -605,7 +606,7 @@ function validateTypeSpecificFields(
       const childList: { name: string; depends_on?: string[] }[] = []
       for (let ci = 0; ci < children.length; ci++) {
         const childRaw = children[ci]
-        const cPrefix = `${prefix}.children[${ci}]`
+        const cPrefix = `${prefix}.steps[${ci}]`
         if (childRaw === null || childRaw === undefined || typeof childRaw !== 'object' || Array.isArray(childRaw)) {
           errors.push(`${cPrefix} must be an object`)
           continue
@@ -640,7 +641,7 @@ function validateTypeSpecificFields(
           } else if (!VALID_STEP_TYPES.has(cType)) {
             errors.push(`${cPrefix}.type "${cType}" is invalid (must be one of: ${[...VALID_STEP_TYPES].join(', ')})`)
           } else if (cType === 'parallel_group') {
-            errors.push(`${cPrefix}.type "parallel_group" cannot be nested inside another parallel_group`)
+            errors.push(`parallel_group cannot be nested: '${cName}' inside '${pgName}'`)
           } else {
             // Validate type-specific fields for child
             validateTypeSpecificFields(child, cType as WorkflowStepType, cPrefix, errors)
@@ -661,7 +662,7 @@ function validateTypeSpecificFields(
               } else {
                 const depName = dep.trim()
                 if (depName === cName) {
-                  errors.push(`${cPrefix}.depends_on contains self-reference "${cName}"`)
+                  errors.push(`Self-dependency detected: step '${cName}' depends on itself`)
                 } else if (depName.length > 0) {
                   childDeps.push(depName)
                 }
@@ -687,7 +688,7 @@ function validateTypeSpecificFields(
       if (childList.length > 0) {
         const cycleNodes = detectCycle(childList)
         if (cycleNodes) {
-          errors.push(`Circular dependency detected: ${cycleNodes.join(' -> ')} -> ${cycleNodes[0]}`)
+          errors.push(`Circular dependency detected in parallel_group '${pgName}': ${cycleNodes.join(' -> ')} -> ${cycleNodes[0]}`)
         }
       }
       break
@@ -929,8 +930,8 @@ function buildWorkflowStep(
       result.max_parallel = mp
     }
   }
-  if (Array.isArray(step.children)) {
-    result.children = (step.children as unknown[])
+  if (Array.isArray(step.steps)) {
+    result.steps = (step.steps as unknown[])
       .filter(c => c !== null && c !== undefined && typeof c === 'object' && !Array.isArray(c))
       .map(c => {
         const child = c as Record<string, unknown>

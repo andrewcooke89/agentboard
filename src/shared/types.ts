@@ -243,7 +243,7 @@ export interface WorkflowStep {
   tier_max?: number
   // parallel_group fields (Phase 5)
   depends_on?: string[]
-  children?: WorkflowStep[]
+  steps?: WorkflowStep[]
   on_failure?: 'fail_fast' | 'cancel_all' | 'continue_others'
   max_parallel?: number
   // review_loop fields (REQ-40)

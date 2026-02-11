@@ -166,8 +166,8 @@ export function createDAGEngine(
     const map = new Map<string, WorkflowStep>()
     for (const step of steps) {
       map.set(step.name, step)
-      if (step.type === 'parallel_group' && step.children) {
-        for (const child of step.children) {
+      if (step.type === 'parallel_group' && step.steps) {
+        for (const child of step.steps) {
           map.set(child.name, child)
         }
       }
@@ -1217,6 +1217,10 @@ export function createDAGEngine(
         groupState.status = 'failed'
         groupState.errorMessage = 'One or more child steps failed'
         groupState.completedAt = new Date().toISOString()
+      } else if (childStates.every(c => c.state.status === 'skipped')) {
+        groupState.status = 'skipped'
+        groupState.skippedReason = 'All children were skipped'
+        groupState.completedAt = new Date().toISOString()
       } else {
         groupState.status = 'completed'
         groupState.completedAt = new Date().toISOString()
@@ -1237,7 +1241,7 @@ export function createDAGEngine(
       let effectiveTimeout = groupDef.timeoutSeconds
       if (effectiveTimeout === undefined) {
         // REQ-32: default = sum of child timeouts
-        const childTimeouts = (groupDef.children ?? [])
+        const childTimeouts = (groupDef.steps ?? [])
           .map(c => c.timeoutSeconds).filter((t): t is number => t !== undefined)
         if (childTimeouts.length > 0) {
           effectiveTimeout = childTimeouts.reduce((sum, t) => sum + t, 0)

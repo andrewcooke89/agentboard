@@ -292,8 +292,8 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
           ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
         })
         // Phase 5: Flatten parallel_group children into steps_state
-        if (step.type === 'parallel_group' && step.children) {
-          for (const child of step.children) {
+        if (step.type === 'parallel_group' && step.steps) {
+          for (const child of step.steps) {
             stepsState.push({
               name: child.name,
               type: child.type,
