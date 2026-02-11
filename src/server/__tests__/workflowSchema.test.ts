@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { parseWorkflowYAML, substituteVariables } from '../workflowSchema'
+import { parseWorkflowYAML, substituteVariables, shellEscape } from '../workflowSchema'
 import type { WorkflowStep } from '../../shared/types'
 
 // ─── Test Fixtures ──────────────────────────────────────────────────────────
@@ -1106,5 +1106,398 @@ describe('substituteVariables — result_file', () => {
       result_file: '{{ name }}/result.json',
     }]
     expect(() => substituteVariables(steps, { name: '..' })).toThrow('..')
+  })
+})
+
+// ─── native_step Parsing (Phase 4) ─────────────────────────────────────────
+
+describe('parseWorkflowYAML — native_step', () => {
+  test('parses native_step with command field', () => {
+    const yaml = `
+name: test
+steps:
+  - name: build
+    type: native_step
+    command: "make build"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('native_step')
+    expect(result.workflow!.steps[0].command).toBe('make build')
+  })
+
+  test('parses native_step with action field', () => {
+    const yaml = `
+name: test
+steps:
+  - name: rebase
+    type: native_step
+    action: git_rebase_from_main
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].action).toBe('git_rebase_from_main')
+  })
+
+  test('rejects native_step with both command and action', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad
+    type: native_step
+    command: "echo hi"
+    action: run_tests
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('either command or action, not both'))
+  })
+
+  test('rejects native_step with neither command nor action', () => {
+    const yaml = `
+name: test
+steps:
+  - name: empty
+    type: native_step
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('requires either command or action'))
+  })
+
+  test('parses native_step with all optional fields', () => {
+    const yaml = `
+name: test
+steps:
+  - name: full
+    type: native_step
+    command: "echo hello"
+    args:
+      - "--flag"
+      - "value"
+    working_dir: /tmp/work
+    env:
+      FOO: bar
+      BAZ: qux
+    success_codes:
+      - 0
+      - 1
+    capture_stderr: true
+    timeoutSeconds: 60
+    maxRetries: 2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const step = result.workflow!.steps[0]
+    expect(step.command).toBe('echo hello')
+    expect(step.args).toEqual(['--flag', 'value'])
+    expect(step.working_dir).toBe('/tmp/work')
+    expect(step.env).toEqual({ FOO: 'bar', BAZ: 'qux' })
+    expect(step.success_codes).toEqual([0, 1])
+    expect(step.capture_stderr).toBe(true)
+    expect(step.timeoutSeconds).toBe(60)
+    expect(step.maxRetries).toBe(2)
+  })
+
+  test('rejects native_step with non-array args', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad-args
+    type: native_step
+    command: "echo"
+    args: "not-an-array"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('args must be an array'))
+  })
+
+  test('rejects native_step with non-object env', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad-env
+    type: native_step
+    command: "echo"
+    env: "not-an-object"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('env must be an object'))
+  })
+
+  test('rejects native_step with non-integer success_codes', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad-codes
+    type: native_step
+    command: "echo"
+    success_codes:
+      - abc
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('success_codes[0] must be an integer'))
+  })
+
+  test('rejects native_step with .. in working_dir', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad-path
+    type: native_step
+    command: "echo"
+    working_dir: /tmp/../etc
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining("working_dir must not contain '..' path segments"))
+  })
+})
+
+// ─── Tier Parsing and Validation (Phase 4) ──────────────────────────────────
+
+describe('parseWorkflowYAML — tier fields', () => {
+  test('tier_min and tier_max parse on spawn_session', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+    tier_min: 1
+    tier_max: 3
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].tier_min).toBe(1)
+    expect(result.workflow!.steps[0].tier_max).toBe(3)
+  })
+
+  test('tier_min and tier_max parse on delay', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 5
+    tier_min: 0
+    tier_max: 2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].tier_min).toBe(0)
+    expect(result.workflow!.steps[0].tier_max).toBe(2)
+  })
+
+  test('tier_min and tier_max parse on native_step', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: native_step
+    command: "echo hi"
+    tier_min: 2
+    tier_max: 5
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].tier_min).toBe(2)
+    expect(result.workflow!.steps[0].tier_max).toBe(5)
+  })
+
+  test('rejects negative tier_min', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    tier_min: -1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('tier_min must be a non-negative integer'))
+  })
+
+  test('rejects non-integer tier_max', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    tier_max: 2.5
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('tier_max must be a non-negative integer'))
+  })
+
+  test('rejects tier_min > tier_max', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    tier_min: 5
+    tier_max: 2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('tier_min (5) must be <= tier_max (2)'))
+  })
+
+  test('tier_min == tier_max is valid', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    tier_min: 3
+    tier_max: 3
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+  })
+
+  test('default_tier parses from YAML', () => {
+    const yaml = `
+name: test
+default_tier: 2
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.default_tier).toBe(2)
+  })
+
+  test('default_tier rejects non-integer', () => {
+    const yaml = `
+name: test
+default_tier: abc
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('default_tier must be a non-negative integer'))
+  })
+
+  test('default_tier rejects negative', () => {
+    const yaml = `
+name: test
+default_tier: -1
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContainEqual(expect.stringContaining('default_tier must be a non-negative integer'))
+  })
+
+  test('absent tier fields are undefined', () => {
+    const yaml = `
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].tier_min).toBeUndefined()
+    expect(result.workflow!.steps[0].tier_max).toBeUndefined()
+    expect(result.workflow!.default_tier).toBeUndefined()
+  })
+})
+
+// ─── Variable Substitution for native_step (Phase 4) ────────────────────────
+
+describe('substituteVariables — native_step fields', () => {
+  test('substitutes variables in command with shell escaping', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'native_step',
+      command: 'echo {{ msg }}',
+    }]
+    const result = substituteVariables(steps, { msg: 'hello world' })
+    // shell-escaped: single-quoted
+    expect(result[0].command).toBe("echo 'hello world'")
+  })
+
+  test('substitutes variables in args with shell escaping', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'native_step',
+      command: 'run',
+      args: ['--name', '{{ val }}'],
+    }]
+    const result = substituteVariables(steps, { val: "it's here" })
+    expect(result[0].args![1]).toBe("'it'\\''s here'")
+  })
+
+  test('substitutes variables in working_dir with path safety', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'native_step',
+      command: 'ls',
+      working_dir: '/base/{{ dir }}',
+    }]
+    const result = substituteVariables(steps, { dir: 'subdir' })
+    expect(result[0].working_dir).toBe('/base/subdir')
+  })
+
+  test('rejects working_dir with .. after substitution', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'native_step',
+      command: 'ls',
+      working_dir: '/base/{{ dir }}',
+    }]
+    expect(() => substituteVariables(steps, { dir: '..' })).toThrow('..')
+  })
+
+  test('substitutes variables in env values', () => {
+    const steps: WorkflowStep[] = [{
+      name: 'test',
+      type: 'native_step',
+      command: 'run',
+      env: { API_KEY: '{{ key }}' },
+    }]
+    const result = substituteVariables(steps, { key: 'secret123' })
+    expect(result[0].env!.API_KEY).toBe('secret123')
+  })
+})
+
+// ─── Shell Escape (Phase 4) ────────────────────────────────────────────────
+
+describe('shellEscape', () => {
+  test('wraps simple string in single quotes', () => {
+    expect(shellEscape('hello')).toBe("'hello'")
+  })
+
+  test('escapes single quotes within string', () => {
+    expect(shellEscape("it's")).toBe("'it'\\''s'")
+  })
+
+  test('handles empty string', () => {
+    expect(shellEscape('')).toBe("''")
+  })
+
+  test('handles string with spaces and special chars', () => {
+    expect(shellEscape('a b$c')).toBe("'a b$c'")
   })
 })

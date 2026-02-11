@@ -10,10 +10,18 @@ import type {
   StepRunState,
   WorkflowStatus,
 } from '../shared/types'
-import { parseWorkflowYAML, substituteVariables } from './workflowSchema'
+import { parseWorkflowYAML, substituteVariables, shellEscape } from './workflowSchema'
+import type { ParsedWorkflow } from './workflowSchema'
 import { sanitizeForLog } from './validators'
 
 const MAX_RESULT_FILE_SIZE = 1024 * 1024 // 1 MB
+const MAX_NATIVE_STDOUT = 1024 * 1024 // 1 MB
+
+// ── Predefined Action Registry (REQ-16: closed, code-defined) ────────────
+const PREDEFINED_ACTIONS: Record<string, string> = {
+  git_rebase_from_main: 'git fetch origin main && git rebase origin/main',
+  run_tests: 'bun test',
+}
 
 export interface WorkflowEngine {
   start: () => void
@@ -55,21 +63,62 @@ export function createWorkflowEngine(
     return resolved
   }
 
-  /** Get parsed workflow steps from the workflow definition YAML */
-  function getWorkflowSteps(run: WorkflowRun): WorkflowStep[] | null {
+  /** Get the full parsed workflow from the workflow definition YAML */
+  function getParsedWorkflow(run: WorkflowRun): ParsedWorkflow | null {
     const workflow = workflowStore.getWorkflow(run.workflow_id)
     if (!workflow) return null
     const result = parseWorkflowYAML(workflow.yaml_content)
     if (!result.valid || !result.workflow) return null
+    return result.workflow
+  }
+
+  /** Get parsed workflow steps from the workflow definition YAML */
+  function getWorkflowSteps(run: WorkflowRun): WorkflowStep[] | null {
+    const parsed = getParsedWorkflow(run)
+    if (!parsed) return null
     // Apply variable substitution if the run has variables
     if (run.variables && Object.keys(run.variables).length > 0) {
       try {
-        return substituteVariables(result.workflow.steps, run.variables)
+        return substituteVariables(parsed.steps, run.variables)
       } catch {
         return null // Substitution failed (e.g., path traversal) — treated as unparseable
       }
     }
-    return result.workflow.steps
+    return parsed.steps
+  }
+
+  /** Determine the effective tier for a run (REQ-11) */
+  function getRunTier(run: WorkflowRun): number {
+    // 1. Check run.variables?.tier
+    if (run.variables && 'tier' in run.variables) {
+      const parsed = parseInt(run.variables.tier, 10)
+      if (!isNaN(parsed)) return parsed
+      if (isNaN(parsed)) {
+        ctx.logger.warn('workflow_tier_parse_failed', {
+          runId: run.id,
+          tierValue: run.variables.tier,
+          message: 'tier variable is not numeric, falling back to default',
+        })
+      }
+    }
+    // 2. Check pipeline's default_tier from parsed YAML
+    const parsedWorkflow = getParsedWorkflow(run)
+    if (parsedWorkflow?.default_tier !== undefined) {
+      return parsedWorkflow.default_tier
+    }
+    // 3. Fallback to 1
+    return 1
+  }
+
+  /** Evaluate tier filter for a step. Returns skip reason or null (no skip). */
+  function evaluateTierFilter(stepDef: WorkflowStep, runTier: number): string | null {
+    if (stepDef.tier_min != null && runTier < stepDef.tier_min) {
+      return `tier ${runTier} below step minimum ${stepDef.tier_min}`
+    }
+    if (stepDef.tier_max != null && runTier > stepDef.tier_max) {
+      return `tier ${runTier} above step maximum ${stepDef.tier_max}`
+    }
+    return null
   }
 
   /** Persist updated run state to the DB and broadcast */
@@ -538,6 +587,241 @@ export function createWorkflowEngine(
     }
   }
 
+  // ── native_step Processing (REQ-05) ─────────────────────────────────
+
+  function processNativeStep(
+    run: WorkflowRun,
+    step: WorkflowStep,
+    stepState: StepRunState,
+    steps: WorkflowStep[],
+  ): void {
+    if (stepState.status === 'pending') {
+      // Resolve command: from action registry or command field
+      let cmd: string
+      if (step.action) {
+        const resolved = PREDEFINED_ACTIONS[step.action]
+        if (!resolved) {
+          stepState.status = 'failed'
+          stepState.errorMessage = `unknown predefined action: "${step.action}"`
+          stepState.completedAt = new Date().toISOString()
+          failWorkflow(run, `Step "${sanitizeForLog(step.name)}": ${stepState.errorMessage}`)
+          return
+        }
+        cmd = resolved
+      } else if (step.command) {
+        cmd = step.command
+      } else {
+        stepState.status = 'failed'
+        stepState.errorMessage = 'native_step requires command or action'
+        stepState.completedAt = new Date().toISOString()
+        failWorkflow(run, `Step "${sanitizeForLog(step.name)}": ${stepState.errorMessage}`)
+        return
+      }
+
+      // Append shell-escaped args
+      if (step.args && step.args.length > 0) {
+        cmd = cmd + ' ' + step.args.map(a => shellEscape(a)).join(' ')
+      }
+
+      // Mark as running immediately (REQ-05: pending -> running directly, no queued state)
+      stepState.status = 'running'
+      stepState.startedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+
+      ctx.logger.info('workflow_native_step_started', {
+        runId: run.id,
+        step: sanitizeForLog(step.name),
+        command: sanitizeForLog(cmd),
+      })
+
+      // Build env
+      const spawnEnv: Record<string, string> = { ...process.env as Record<string, string> }
+      if (step.env) {
+        for (const [k, v] of Object.entries(step.env)) {
+          spawnEnv[k] = v
+        }
+      }
+
+      // Determine cwd - ensure it exists
+      const cwd = step.working_dir || run.output_dir
+      try {
+        if (!fs.existsSync(cwd)) {
+          fs.mkdirSync(cwd, { recursive: true })
+        }
+      } catch {
+        // Best-effort directory creation
+      }
+
+      // Determine capture_stderr (default true per REQ-06)
+      const captureStderr = step.capture_stderr !== false
+
+      // Determine timeout
+      const timeoutMs = (step.timeoutSeconds ?? 300) * 1000
+
+      // Determine success codes
+      const successCodes = step.success_codes ?? [0]
+
+      // Spawn async
+      const proc = Bun.spawn(['sh', '-c', cmd], {
+        cwd,
+        env: spawnEnv,
+        stdout: 'pipe',
+        stderr: captureStderr ? 'pipe' : 'ignore',
+      })
+
+      // Set up timeout
+      let timedOut = false
+      const timeoutHandle = setTimeout(async () => {
+        timedOut = true
+        proc.kill('SIGTERM')
+        // Give 5s for graceful shutdown, then SIGKILL
+        setTimeout(() => {
+          try { proc.kill('SIGKILL') } catch { /* already dead */ }
+        }, 5000)
+      }, timeoutMs)
+
+      /** Read a stream with a timeout to prevent hanging on killed processes */
+      async function readStreamWithTimeout(stream: ReadableStream<Uint8Array> | null, timeoutMs: number): Promise<string> {
+        if (!stream) return ''
+        try {
+          const result = await Promise.race([
+            new Response(stream).text(),
+            new Promise<string>((_, reject) => setTimeout(() => reject(new Error('stream read timeout')), timeoutMs)),
+          ])
+          return result.length > MAX_NATIVE_STDOUT ? result.slice(0, MAX_NATIVE_STDOUT) : result
+        } catch {
+          return ''
+        }
+      }
+
+      // Handle completion asynchronously
+      proc.exited.then(async (exitCode) => {
+        clearTimeout(timeoutHandle)
+
+        // Use shorter timeout for killed/timed-out processes, longer for normal completion
+        const streamTimeout = timedOut ? 2000 : 5000
+
+        // Capture stdout (truncated to MAX_NATIVE_STDOUT) with timeout
+        const stdout = await readStreamWithTimeout(proc.stdout as ReadableStream<Uint8Array>, streamTimeout)
+
+        // Capture stderr if requested
+        let stderr = ''
+        if (captureStderr) {
+          stderr = await readStreamWithTimeout(proc.stderr as ReadableStream<Uint8Array>, streamTimeout)
+        }
+
+        // Write stdout to output_path if specified
+        if (step.output_path) {
+          try {
+            const outputFullPath = resolveOutputPath(run, step.output_path)
+            const dir = path.dirname(outputFullPath)
+            if (!fs.existsSync(dir)) {
+              fs.mkdirSync(dir, { recursive: true })
+            }
+            fs.writeFileSync(outputFullPath, stdout, 'utf-8')
+          } catch (err) {
+            // output_path write failure is non-fatal: command success is determined by exit code,
+            // not by output file write success. The warning log captures the failure for debugging.
+            ctx.logger.warn('native_step_output_write_failed', {
+              runId: run.id,
+              step: step.name,
+              error: String(err),
+            })
+          }
+        }
+
+        // Refresh run state from DB (may have been updated by other polls)
+        const freshRun = workflowStore.getRun(run.id)
+        if (!freshRun || freshRun.status !== 'running') return // cancelled or already handled
+
+        const freshStepState = freshRun.steps_state[freshRun.current_step_index]
+        if (!freshStepState || freshStepState.name !== step.name) return
+
+        if (timedOut) {
+          freshStepState.status = 'failed'
+          freshStepState.errorMessage = `command timed out after ${step.timeoutSeconds ?? 300}s`
+          if (stderr) freshStepState.errorMessage += `\nstderr: ${stderr.slice(0, 500)}`
+          freshStepState.completedAt = new Date().toISOString()
+
+          // Check retry
+          const maxRetries = step.maxRetries ?? 0
+          if (freshStepState.retryCount < maxRetries) {
+            freshStepState.retryCount += 1
+            freshStepState.status = 'pending'
+            freshStepState.errorMessage = null
+            saveAndBroadcast(freshRun)
+            ctx.logger.info('workflow_native_step_retry', {
+              runId: freshRun.id,
+              step: sanitizeForLog(step.name),
+              retryCount: freshStepState.retryCount,
+            })
+          } else {
+            failWorkflow(freshRun, `Step "${sanitizeForLog(step.name)}": ${sanitizeForLog(freshStepState.errorMessage)}`)
+          }
+          return
+        }
+
+        const code = exitCode ?? -1
+        if (successCodes.includes(code)) {
+          freshStepState.status = 'completed'
+          freshStepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(freshRun)
+
+          ctx.logger.info('workflow_native_step_completed', {
+            runId: freshRun.id,
+            step: sanitizeForLog(step.name),
+            exitCode: code,
+          })
+
+          advanceWorkflow(freshRun, steps)
+        } else {
+          freshStepState.status = 'failed'
+          freshStepState.errorMessage = `exit code ${code} not in success_codes [${successCodes.join(',')}]`
+          if (stderr) freshStepState.errorMessage += `\nstderr: ${stderr.slice(0, 500)}`
+          freshStepState.completedAt = new Date().toISOString()
+
+          // Check retry
+          const maxRetries = step.maxRetries ?? 0
+          if (freshStepState.retryCount < maxRetries) {
+            freshStepState.retryCount += 1
+            freshStepState.status = 'pending'
+            freshStepState.errorMessage = null
+            saveAndBroadcast(freshRun)
+            ctx.logger.info('workflow_native_step_retry', {
+              runId: freshRun.id,
+              step: sanitizeForLog(step.name),
+              retryCount: freshStepState.retryCount,
+            })
+          } else {
+            failWorkflow(freshRun, `Step "${sanitizeForLog(step.name)}": ${sanitizeForLog(freshStepState.errorMessage)}`)
+          }
+        }
+      }).catch((err) => {
+        clearTimeout(timeoutHandle)
+        ctx.logger.error('workflow_native_step_error', {
+          runId: run.id,
+          step: sanitizeForLog(step.name),
+          error: String(err),
+        })
+
+        const freshRun = workflowStore.getRun(run.id)
+        if (!freshRun || freshRun.status !== 'running') return
+
+        const freshStepState = freshRun.steps_state[freshRun.current_step_index]
+        if (!freshStepState || freshStepState.name !== step.name) return
+
+        freshStepState.status = 'failed'
+        freshStepState.errorMessage = `spawn error: ${String(err)}`
+        freshStepState.completedAt = new Date().toISOString()
+        failWorkflow(freshRun, `Step "${sanitizeForLog(step.name)}": ${sanitizeForLog(freshStepState.errorMessage)}`)
+      })
+      return
+    }
+
+    // If status is 'running', the async handler above will update it.
+    // Nothing to do here — just wait for next poll.
+  }
+
   // ── Main Processing ──────────────────────────────────────────────────
 
   function processRun(run: WorkflowRun): void {
@@ -557,6 +841,20 @@ export function createWorkflowEngine(
     if (!stepDef || !stepState) {
       failWorkflow(run, `Missing step definition or state at index ${run.current_step_index}`)
       return
+    }
+
+    // Tier filtering BEFORE condition evaluation (REQ-11)
+    if (stepState.status === 'pending') {
+      const runTier = getRunTier(run)
+      const tierSkip = evaluateTierFilter(stepDef, runTier)
+      if (tierSkip) {
+        stepState.status = 'skipped'
+        stepState.skippedReason = tierSkip
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        advanceWorkflow(run, steps)
+        return
+      }
     }
 
     // Evaluate condition before processing
@@ -585,6 +883,9 @@ export function createWorkflowEngine(
         break
       case 'check_output':
         processCheckOutput(run, stepDef, stepState, steps)
+        break
+      case 'native_step':
+        processNativeStep(run, stepDef, stepState, steps)
         break
       default:
         failWorkflow(run, `Unknown step type: ${stepDef.type}`)

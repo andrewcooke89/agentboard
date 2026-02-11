@@ -185,7 +185,7 @@ export type SubscribeServerMessage = (listener: (message: ServerMessage) => void
 // ─── Workflow Engine Types (WO-001) ─────────────────────────────────────────
 
 // ST-001-01: Step type and workflow status enums
-export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output'
+export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output' | 'native_step'
 
 // Workflow variable definition (used in YAML variables section)
 export type WorkflowVariableType = 'string' | 'path'
@@ -226,6 +226,17 @@ export interface WorkflowStep {
   // check_output fields
   step?: string
   contains?: string
+  // native_step fields
+  command?: string
+  action?: string
+  args?: string[]
+  working_dir?: string
+  env?: Record<string, string>
+  success_codes?: number[]
+  capture_stderr?: boolean
+  // tier fields (all step types)
+  tier_min?: number
+  tier_max?: number
 }
 
 // ST-001-04: Workflow definition (maps to workflows SQLite table)
@@ -274,6 +285,8 @@ export interface StepRunState {
   resultFile: string | null
   resultCollected: boolean
   resultContent: string | null
+  tier_min?: number
+  tier_max?: number
 }
 
 // Chat history types

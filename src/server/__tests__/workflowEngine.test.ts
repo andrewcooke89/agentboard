@@ -971,4 +971,502 @@ describe('workflowEngine', () => {
       expect(updatedRun!.error_message).toContain('Cannot parse')
     })
   })
+
+  // ── native_step (Phase 4) ──────────────────────────────────────────
+
+  describe('native_step', () => {
+    function nativeStepYaml(cmd: string, extras = ''): string {
+      return [
+        'name: native-test',
+        'steps:',
+        '  - name: run-cmd',
+        '    type: native_step',
+        `    command: "${cmd}"`,
+        extras,
+      ].filter(Boolean).join('\n')
+    }
+
+    test('native_step with echo command completes', async () => {
+      const yaml = nativeStepYaml('echo hello')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-echo')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'run-cmd', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('completed')
+      expect(updatedRun!.steps_state[0].status).toBe('completed')
+    }, 10000)
+
+    test('native_step with failing command fails', async () => {
+      const yaml = nativeStepYaml('exit 1')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-fail')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'run-cmd', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('failed')
+      expect(updatedRun!.steps_state[0].status).toBe('failed')
+      expect(updatedRun!.steps_state[0].errorMessage).toContain('exit code')
+    }, 10000)
+
+    test('native_step with custom success_codes accepts non-zero exit', async () => {
+      const yaml = [
+        'name: native-codes',
+        'steps:',
+        '  - name: run-cmd',
+        '    type: native_step',
+        '    command: "exit 42"',
+        '    success_codes:',
+        '      - 0',
+        '      - 42',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-codes')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'run-cmd', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('completed')
+      expect(updatedRun!.steps_state[0].status).toBe('completed')
+    }, 10000)
+
+    test('native_step with predefined action resolves correctly', async () => {
+      // Use run_tests which resolves to 'bun test'. It will fail (no test files in cwd)
+      // but proves the action was looked up and executed.
+      const yaml = [
+        'name: native-action',
+        'steps:',
+        '  - name: run-tests',
+        '    type: native_step',
+        '    action: run_tests',
+        '    success_codes:',
+        '      - 0',
+        '      - 1',
+        '      - 2',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-action')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'run-tests', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 12000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      // The step should have started (action was resolved to 'bun test')
+      const stepState = updatedRun!.steps_state[0]
+      expect(stepState.startedAt).not.toBeNull()
+      // It either completed or failed depending on test runner, but it executed
+      expect(['completed', 'failed']).toContain(stepState.status)
+    }, 15000)
+
+    test('native_step with unknown action errors', async () => {
+      const yaml = [
+        'name: native-bad-action',
+        'steps:',
+        '  - name: bad',
+        '    type: native_step',
+        '    action: nonexistent_action',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-bad-action')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'bad', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 3000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(100)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('failed')
+      expect(updatedRun!.steps_state[0].errorMessage).toContain('unknown predefined action')
+    })
+
+    test('native_step with timeout triggers SIGTERM', async () => {
+      const yaml = [
+        'name: native-timeout',
+        'steps:',
+        '  - name: slow',
+        '    type: native_step',
+        '    command: "sleep 60"',
+        '    timeoutSeconds: 1',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-timeout')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'slow', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      // Poll until step completes or 12s elapses
+      const deadline = Date.now() + 12000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('failed')
+      expect(updatedRun!.steps_state[0].errorMessage).toContain('timed out')
+    }, 15000)
+
+    test('native_step captures stdout to output_path', async () => {
+      const fsSync = await import('node:fs')
+      const tmpDir = `/tmp/wf-native-out-${Date.now()}`
+      fsSync.mkdirSync(tmpDir, { recursive: true })
+
+      // Use a multi-step workflow so the native_step completes but workflow stays running
+      // (the second step gives us time to check the output file before cleanup)
+      const yaml = [
+        'name: native-output',
+        'steps:',
+        '  - name: echo-step',
+        '    type: native_step',
+        '    command: "echo captured-output"',
+        '    output_path: result.txt',
+        '  - name: wait-step',
+        '    type: delay',
+        '    seconds: 30',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-output')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'echo-step', type: 'native_step' }),
+        makeStepState({ name: 'wait-step', type: 'delay' }),
+      ], { output_dir: tmpDir })
+
+      engine.start()
+
+      // Poll until the first step completes (workflow stays running on second step)
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.steps_state[0].status === 'completed') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.steps_state[0].status).toBe('completed')
+      // Check the output file was written (not yet cleaned up because workflow is still running)
+      expect(fsSync.existsSync(`${tmpDir}/result.txt`)).toBe(true)
+      const outputContent = fsSync.readFileSync(`${tmpDir}/result.txt`, 'utf-8')
+      expect(outputContent.trim()).toBe('captured-output')
+      try { fsSync.rmSync(tmpDir, { recursive: true }) } catch { /* ok */ }
+    }, 10000)
+
+    test('native_step with env sets environment variables', async () => {
+      const yaml = [
+        'name: native-env',
+        'steps:',
+        '  - name: env-step',
+        '    type: native_step',
+        '    command: "echo $MY_VAR"',
+        '    env:',
+        '      MY_VAR: test-value',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-env')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'env-step', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      expect(updatedRun!.status).toBe('completed')
+    }, 10000)
+
+    test('native_step retry behavior on failure', async () => {
+      const yaml = [
+        'name: native-retry',
+        'steps:',
+        '  - name: retry-cmd',
+        '    type: native_step',
+        '    command: "exit 1"',
+        '    maxRetries: 1',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'native-retry')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'retry-cmd', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      // Wait for initial attempt + retry + second failure
+      const deadline = Date.now() + 8000
+      let updatedRun = workflowStore.getRun(run.id)
+      while (Date.now() < deadline) {
+        updatedRun = workflowStore.getRun(run.id)
+        if (updatedRun && updatedRun.status !== 'running') break
+        await Bun.sleep(200)
+      }
+      engine.stop()
+
+      // After retrying, still fails (exit 1 every time)
+      expect(updatedRun!.status).toBe('failed')
+      expect(updatedRun!.steps_state[0].retryCount).toBeGreaterThanOrEqual(1)
+    }, 10000)
+  })
+
+  // ── Tier Filtering (Phase 4) ───────────────────────────────────────
+
+  describe('tier filtering', () => {
+    test('skips step below tier_min', () => {
+      const yaml = [
+        'name: tier-test',
+        'steps:',
+        '  - name: high-tier-only',
+        '    type: delay',
+        '    seconds: 1',
+        '    tier_min: 3',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-min-test')
+      // Run at tier 1 (default)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'high-tier-only', type: 'delay' }),
+      ])
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          expect(updatedRun!.status).toBe('completed')
+          expect(updatedRun!.steps_state[0].status).toBe('skipped')
+          expect(updatedRun!.steps_state[0].skippedReason).toContain('below')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('skips step above tier_max', () => {
+      const yaml = [
+        'name: tier-max-test',
+        'steps:',
+        '  - name: low-tier-only',
+        '    type: delay',
+        '    seconds: 1',
+        '    tier_max: 0',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-max-test')
+      // Run at tier 1 (default)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'low-tier-only', type: 'delay' }),
+      ])
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          expect(updatedRun!.status).toBe('completed')
+          expect(updatedRun!.steps_state[0].status).toBe('skipped')
+          expect(updatedRun!.steps_state[0].skippedReason).toContain('above')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('executes step within tier range', () => {
+      const yaml = [
+        'name: tier-range-test',
+        'steps:',
+        '  - name: in-range',
+        '    type: delay',
+        '    seconds: 0.1',
+        '    tier_min: 0',
+        '    tier_max: 5',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-range-test')
+      // Run at tier 1 (default) - within range [0, 5]
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'in-range', type: 'delay' }),
+      ])
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          // Should not be skipped - tier 1 is within [0, 5]
+          expect(updatedRun!.steps_state[0].status).not.toBe('skipped')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('step without tier fields runs at all tiers', () => {
+      const yaml = [
+        'name: tier-absent-test',
+        'steps:',
+        '  - name: always-run',
+        '    type: delay',
+        '    seconds: 0.1',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-absent-test')
+      // Run at tier 99 via variables
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'always-run', type: 'delay' }),
+      ], { variables: { tier: '99' } })
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          // Should not be skipped - no tier constraints
+          expect(updatedRun!.steps_state[0].status).not.toBe('skipped')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('tier filtering happens before condition check', () => {
+      // Step has tier_min: 10 AND a condition. Even if condition would pass,
+      // tier filter should skip first (tier < tier_min).
+      const yaml = [
+        'name: tier-before-condition',
+        'steps:',
+        '  - name: tiered-conditional',
+        '    type: delay',
+        '    seconds: 1',
+        '    tier_min: 10',
+        '    condition:',
+        '      type: file_exists',
+        '      path: nonexistent.txt',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-before-cond')
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'tiered-conditional', type: 'delay' }),
+      ])
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          expect(updatedRun!.steps_state[0].status).toBe('skipped')
+          // Should be tier-based skip, not condition-based
+          expect(updatedRun!.steps_state[0].skippedReason).toContain('tier')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('tier on native_step specifically', () => {
+      const yaml = [
+        'name: tier-native',
+        'steps:',
+        '  - name: gated-cmd',
+        '    type: native_step',
+        '    command: "echo should-not-run"',
+        '    tier_min: 5',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-native')
+      // Default tier is 1
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'gated-cmd', type: 'native_step' }),
+      ])
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          expect(updatedRun!.steps_state[0].status).toBe('skipped')
+          expect(updatedRun!.steps_state[0].skippedReason).toContain('below')
+          resolve()
+        }, 500)
+      })
+    })
+
+    test('tier from run variables overrides default', () => {
+      const yaml = [
+        'name: tier-var-test',
+        'default_tier: 1',
+        'steps:',
+        '  - name: high-gate',
+        '    type: delay',
+        '    seconds: 0.1',
+        '    tier_min: 5',
+      ].join('\n')
+      const wf = createWorkflowDef(workflowStore, yaml, 'tier-var-test')
+      // Set tier=5 via variables, overriding default_tier of 1
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'high-gate', type: 'delay' }),
+      ], { variables: { tier: '5' } })
+
+      engine.start()
+
+      return new Promise<void>((resolve) => {
+        setTimeout(() => {
+          engine.stop()
+          const updatedRun = workflowStore.getRun(run.id)
+          // tier=5, tier_min=5, so should NOT be skipped
+          expect(updatedRun!.steps_state[0].status).not.toBe('skipped')
+          resolve()
+        }, 500)
+      })
+    })
+  })
 })

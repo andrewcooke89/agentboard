@@ -921,4 +921,113 @@ describe('Workflow Integration Tests (WO-015)', () => {
       expect(run.steps_state[0].name).toBe('step-1')
     })
   })
+
+  // ── Scenario 9: native_step workflow via REST API (Phase 4) ────────
+
+  describe('Workflow with native_step via REST API', () => {
+    const NATIVE_STEP_YAML = `name: native-integration
+description: Integration test with native_step
+steps:
+  - name: greet
+    type: native_step
+    command: "echo hello"
+  - name: wait
+    type: delay
+    seconds: 1
+`
+
+    it('creates valid workflow with native_step', async () => {
+      const createRes = await req(app, 'POST', '/api/workflows', {
+        name: 'native-int-test',
+        yaml_content: NATIVE_STEP_YAML,
+      })
+      expect(createRes.status).toBe(201)
+      const created = await createRes.json() as WorkflowDefinition
+      expect(created.is_valid).toBe(true)
+      expect(created.step_count).toBe(2)
+    })
+
+    it('creates run with native_step and steps_state initialized', async () => {
+      const createRes = await req(app, 'POST', '/api/workflows', {
+        name: 'native-run-test',
+        yaml_content: NATIVE_STEP_YAML,
+      })
+      const workflow = await createRes.json() as WorkflowDefinition
+
+      const runRes = await req(app, 'POST', `/api/workflows/${workflow.id}/run`)
+      expect(runRes.status).toBe(201)
+      const run = await runRes.json() as WorkflowRun
+
+      expect(run.steps_state.length).toBe(2)
+      expect(run.steps_state[0].name).toBe('greet')
+      expect(run.steps_state[0].type).toBe('native_step')
+      expect(run.steps_state[0].status).toBe('pending')
+    })
+  })
+
+  // ── Scenario 10: Workflow with tier filtering via REST API (Phase 4)
+
+  describe('Workflow with tier filtering via REST API', () => {
+    const TIERED_YAML = `name: tiered-workflow
+description: Workflow with tier-gated steps
+default_tier: 1
+steps:
+  - name: always-run
+    type: delay
+    seconds: 1
+  - name: high-tier-only
+    type: delay
+    seconds: 1
+    tier_min: 5
+`
+
+    it('creates run with tier fields in steps_state', async () => {
+      const createRes = await req(app, 'POST', '/api/workflows', {
+        name: 'tiered-int-test',
+        yaml_content: TIERED_YAML,
+      })
+      expect(createRes.status).toBe(201)
+      const workflow = await createRes.json() as WorkflowDefinition
+      expect(workflow.is_valid).toBe(true)
+
+      const runRes = await req(app, 'POST', `/api/workflows/${workflow.id}/run`)
+      expect(runRes.status).toBe(201)
+      const run = await runRes.json() as WorkflowRun
+
+      expect(run.steps_state.length).toBe(2)
+      // First step has no tier fields
+      expect(run.steps_state[0].tier_min).toBeUndefined()
+      expect(run.steps_state[0].tier_max).toBeUndefined()
+      // Second step has tier_min: 5
+      expect(run.steps_state[1].tier_min).toBe(5)
+      expect(run.steps_state[1].tier_max).toBeUndefined()
+    })
+  })
+
+  // ── Scenario 11: Backward compatibility (Phase 4) ──────────────────
+
+  describe('Backward compatibility', () => {
+    it('existing workflows without native_step or tier fields still work', async () => {
+      // Use the original VALID_YAML (no native_step, no tier)
+      const createRes = await req(app, 'POST', '/api/workflows', {
+        name: 'backward-compat',
+        yaml_content: VALID_YAML,
+      })
+      expect(createRes.status).toBe(201)
+      const workflow = await createRes.json() as WorkflowDefinition
+      expect(workflow.is_valid).toBe(true)
+      expect(workflow.step_count).toBe(2)
+
+      const runRes = await req(app, 'POST', `/api/workflows/${workflow.id}/run`)
+      expect(runRes.status).toBe(201)
+      const run = await runRes.json() as WorkflowRun
+
+      // All steps should be pending with no tier fields
+      for (const step of run.steps_state) {
+        expect(step.status).toBe('pending')
+        expect(step.tier_min).toBeUndefined()
+        expect(step.tier_max).toBeUndefined()
+      }
+    })
+  })
 })

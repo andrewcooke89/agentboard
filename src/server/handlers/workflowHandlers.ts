@@ -272,6 +272,8 @@ export function createWorkflowHandlers(ctx: ServerContext) {
         resultFile: step.result_file ?? null,
         resultCollected: false,
         resultContent: null,
+        ...(step.tier_min != null ? { tier_min: step.tier_min } : {}),
+        ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
       }))
 
       // Atomic check-and-create: prevents TOCTOU race on concurrent run limit

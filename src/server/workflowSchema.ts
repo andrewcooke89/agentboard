@@ -30,6 +30,7 @@ export interface ParsedWorkflow {
   description: string | null
   steps: WorkflowStep[]
   variables: WorkflowVariable[]
+  default_tier?: number
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ const VALID_STEP_TYPES: ReadonlySet<string> = new Set<WorkflowStepType>([
   'check_file',
   'delay',
   'check_output',
+  'native_step',
 ])
 
 const VALID_CONDITION_TYPES: ReadonlySet<string> = new Set([
@@ -102,6 +104,17 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
   // If we can't proceed with steps validation, return early
   if (!Array.isArray(doc.steps) || doc.steps.length === 0) {
     return { valid: false, errors }
+  }
+
+  // ── default_tier (optional) ─────────────────────────────────────────
+  let defaultTier: number | undefined
+  if ('default_tier' in doc && doc.default_tier !== undefined && doc.default_tier !== null) {
+    const tierVal = Number(doc.default_tier)
+    if (isNaN(tierVal) || !Number.isInteger(tierVal) || tierVal < 0) {
+      errors.push('default_tier must be a non-negative integer')
+    } else {
+      defaultTier = tierVal
+    }
   }
 
   // ── Variables section (optional) ─────────────────────────────────────
@@ -234,7 +247,21 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
         ['result_file', step.result_file],
         ['step', step.step],
         ['contains', step.contains],
+        ['command', step.command],
+        ['working_dir', step.working_dir],
       ]
+      // Also check args array entries
+      if (step.args) {
+        for (let ai = 0; ai < step.args.length; ai++) {
+          fieldsToCheck.push([`args[${ai}]`, step.args[ai]])
+        }
+      }
+      // Also check env values
+      if (step.env) {
+        for (const [envKey, envVal] of Object.entries(step.env)) {
+          fieldsToCheck.push([`env.${envKey}`, envVal])
+        }
+      }
       for (const [fieldName, fieldValue] of fieldsToCheck) {
         if (!fieldValue || errors.length >= MAX_VALIDATION_ERRORS) continue
         let match: RegExpExecArray | null
@@ -259,6 +286,7 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     description: hasStringField(doc, 'description') ? (doc.description as string).trim() : null,
     steps: parsedSteps,
     variables: parsedVariables,
+    default_tier: defaultTier,
   }
 
   return { valid: true, workflow, errors: [] }
@@ -432,6 +460,89 @@ function validateTypeSpecificFields(
         }
       }
       break
+
+    case 'native_step': {
+      const hasCommand = hasStringField(step, 'command')
+      const hasAction = hasStringField(step, 'action')
+      if (hasCommand && hasAction) {
+        errors.push(`${prefix} must specify either command or action, not both`)
+      } else if (!hasCommand && !hasAction) {
+        errors.push(`${prefix} requires either command or action`)
+      }
+      // Validate optional field types
+      if ('args' in step && step.args !== undefined && step.args !== null) {
+        if (!Array.isArray(step.args)) {
+          errors.push(`${prefix}.args must be an array of strings`)
+        } else {
+          for (let j = 0; j < (step.args as unknown[]).length; j++) {
+            if (typeof (step.args as unknown[])[j] !== 'string') {
+              errors.push(`${prefix}.args[${j}] must be a string`)
+            }
+          }
+        }
+      }
+      if ('working_dir' in step && step.working_dir !== undefined && step.working_dir !== null) {
+        if (typeof step.working_dir !== 'string') {
+          errors.push(`${prefix}.working_dir must be a string`)
+        } else if (step.working_dir.includes('..')) {
+          errors.push(`${prefix}.working_dir must not contain '..' path segments`)
+        }
+      }
+      if ('env' in step && step.env !== undefined && step.env !== null) {
+        if (typeof step.env !== 'object' || Array.isArray(step.env)) {
+          errors.push(`${prefix}.env must be an object (Record<string, string>)`)
+        } else {
+          const envObj = step.env as Record<string, unknown>
+          for (const [k, v] of Object.entries(envObj)) {
+            if (typeof v !== 'string') {
+              errors.push(`${prefix}.env.${k} must be a string`)
+            }
+          }
+        }
+      }
+      if ('success_codes' in step && step.success_codes !== undefined && step.success_codes !== null) {
+        if (!Array.isArray(step.success_codes)) {
+          errors.push(`${prefix}.success_codes must be an array of integers`)
+        } else {
+          for (let j = 0; j < (step.success_codes as unknown[]).length; j++) {
+            const code = Number((step.success_codes as unknown[])[j])
+            if (isNaN(code) || !Number.isInteger(code)) {
+              errors.push(`${prefix}.success_codes[${j}] must be an integer`)
+            }
+          }
+        }
+      }
+      if ('capture_stderr' in step && step.capture_stderr !== undefined && step.capture_stderr !== null) {
+        const val = String(step.capture_stderr)
+        if (val !== 'true' && val !== 'false') {
+          errors.push(`${prefix}.capture_stderr must be a boolean`)
+        }
+      }
+      break
+    }
+  }
+
+  // Tier validation (common to all step types)
+  if ('tier_min' in step && step.tier_min !== undefined && step.tier_min !== null) {
+    const tierMin = Number(step.tier_min)
+    if (isNaN(tierMin) || !Number.isInteger(tierMin) || tierMin < 0) {
+      errors.push(`${prefix}.tier_min must be a non-negative integer`)
+    }
+  }
+  if ('tier_max' in step && step.tier_max !== undefined && step.tier_max !== null) {
+    const tierMax = Number(step.tier_max)
+    if (isNaN(tierMax) || !Number.isInteger(tierMax) || tierMax < 0) {
+      errors.push(`${prefix}.tier_max must be a non-negative integer`)
+    }
+  }
+  if ('tier_min' in step && 'tier_max' in step &&
+      step.tier_min !== undefined && step.tier_min !== null &&
+      step.tier_max !== undefined && step.tier_max !== null) {
+    const tierMin = Number(step.tier_min)
+    const tierMax = Number(step.tier_max)
+    if (!isNaN(tierMin) && !isNaN(tierMax) && tierMin > tierMax) {
+      errors.push(`${prefix}.tier_min (${tierMin}) must be <= tier_max (${tierMax})`)
+    }
   }
 }
 
@@ -554,6 +665,33 @@ function buildWorkflowStep(
   if (hasStringField(step, 'step')) result.step = step.step as string
   if (hasStringField(step, 'contains')) result.contains = step.contains as string
 
+  // native_step fields
+  if (hasStringField(step, 'command')) result.command = step.command as string
+  if (hasStringField(step, 'action')) result.action = step.action as string
+  if (Array.isArray(step.args)) result.args = (step.args as unknown[]).map(a => String(a))
+  if (hasStringField(step, 'working_dir')) result.working_dir = step.working_dir as string
+  if ('env' in step && step.env && typeof step.env === 'object' && !Array.isArray(step.env)) {
+    const envObj: Record<string, string> = {}
+    for (const [k, v] of Object.entries(step.env as Record<string, unknown>)) {
+      envObj[k] = String(v)
+    }
+    result.env = envObj
+  }
+  if (Array.isArray(step.success_codes)) {
+    result.success_codes = (step.success_codes as unknown[]).map(c => Number(c))
+  }
+  if ('capture_stderr' in step && step.capture_stderr !== undefined && step.capture_stderr !== null) {
+    result.capture_stderr = String(step.capture_stderr) === 'true'
+  }
+
+  // Tier fields (common to all step types)
+  if ('tier_min' in step && step.tier_min !== undefined && step.tier_min !== null) {
+    result.tier_min = Number(step.tier_min)
+  }
+  if ('tier_max' in step && step.tier_max !== undefined && step.tier_max !== null) {
+    result.tier_max = Number(step.tier_max)
+  }
+
   // Condition
   if (step.condition && typeof step.condition === 'object' && !Array.isArray(step.condition)) {
     const cond = step.condition as Record<string, unknown>
@@ -612,6 +750,12 @@ export function substituteVariables(
     })
   }
 
+  function subShellSafe(value: string): string {
+    return value.replace(regex, (full, name) => {
+      return name in variables ? shellEscape(variables[name]) : full
+    })
+  }
+
   function subPath(value: string): string {
     const result = sub(value)
     // Validate path safety after substitution
@@ -633,6 +777,17 @@ export function substituteVariables(
     if (result.result_file) result.result_file = subPath(result.result_file)
     if (result.step) result.step = sub(result.step)
     if (result.contains) result.contains = sub(result.contains)
+    // native_step fields: shell-safe substitution for command and args
+    if (result.command) result.command = subShellSafe(result.command)
+    if (result.args) result.args = result.args.map(a => subShellSafe(a))
+    if (result.working_dir) result.working_dir = subPath(result.working_dir)
+    if (result.env) {
+      const newEnv: Record<string, string> = {}
+      for (const [k, v] of Object.entries(result.env)) {
+        newEnv[k] = sub(v)
+      }
+      result.env = newEnv
+    }
     // Substitute inside condition fields too
     if (result.condition) {
       if (result.condition.type === 'file_exists') {
@@ -701,6 +856,13 @@ export function validateVariables(
   }
 
   return { errors, merged }
+}
+
+// ─── Shell Safety ───────────────────────────────────────────────────────────
+
+/** Shell-escape a string by wrapping in single quotes (REQ-15). */
+export function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
 // ─── Utility ────────────────────────────────────────────────────────────────
