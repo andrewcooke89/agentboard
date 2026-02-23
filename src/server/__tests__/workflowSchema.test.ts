@@ -299,6 +299,18 @@ steps:
     expect(result.errors).toContainEqual(expect.stringContaining('"run_command" is invalid'))
     expect(result.errors[0]).toContain('spawn_session')
   })
+
+  test('TEST-21: Unknown step type rejected', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: step-a
+    type: unknown_step_type
+`)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('unknown_step_type'))).toBe(true)
+    expect(result.errors.some(e => e.includes('invalid'))).toBe(true)
+  })
 })
 
 // ─── Type-Specific Field Validation ─────────────────────────────────────────
@@ -659,17 +671,32 @@ steps:
     )
   })
 
-  test('condition is not an object', () => {
+  test('condition is not an object or string', () => {
     const result = parseWorkflowYAML(`
 name: test
 steps:
   - name: s1
     type: delay
     seconds: 1
-    condition: "not an object"
+    condition:
+      - item1
+      - item2
 `)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('condition must be an object'))
+    expect(result.errors).toContainEqual(expect.stringContaining('condition must be an object or string expression'))
+  })
+
+  test('condition string expression is accepted', () => {
+    const result = parseWorkflowYAML(`
+name: test
+steps:
+  - name: s1
+    type: delay
+    seconds: 1
+    condition: "tier >= 2"
+`)
+    expect(result.valid).toBe(true)
+    expect(result.workflow?.steps[0].condition).toEqual({ type: 'expression', expr: 'tier >= 2' })
   })
 
   test('condition missing type field', () => {
@@ -1162,7 +1189,7 @@ steps:
 `
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('requires either command or action'))
+    expect(result.errors).toContainEqual(expect.stringContaining('requires either command, action, or execution.command'))
   })
 
   test('parses native_step with all optional fields', () => {
@@ -1656,22 +1683,24 @@ steps:
     expect(result.errors).toContainEqual(expect.stringContaining('Self-dependency detected'))
   })
 
-  test('TEST-06: depends_on on top-level step produces error', () => {
+  test('TEST-06: depends_on on top-level step triggers DAG auto-detection', () => {
     const yaml = `
 name: test
 steps:
   - name: s1
     type: delay
     seconds: 1
-    depends_on:
-      - s2
   - name: s2
     type: delay
     seconds: 1
+    depends_on:
+      - s1
 `
     const result = parseWorkflowYAML(yaml)
-    expect(result.valid).toBe(false)
-    expect(result.errors).toContainEqual(expect.stringContaining('depends_on is only supported within parallel_group'))
+    expect(result.valid).toBe(true)
+    // Auto-detection should set engine to DAG
+    expect(result.workflow!.system?.engine).toBe('dag')
+    expect(result.workflow!.system?.autoDetectedEngine).toBe(true)
   })
 
   test('TEST-07: depends_on targeting step outside parallel_group produces error', () => {
@@ -1953,5 +1982,1602 @@ steps:
     const result = parseWorkflowYAML(yaml)
     expect(result.valid).toBe(true)
     expect(result.workflow!.system!.engine).toBe('dag')
+  })
+
+  // ── Phase 7: Signal Protocol Schema Tests ───────────────────────────
+
+  describe('signal protocol validation', () => {
+    test('TEST-27: valid signal protocol fields on spawn_session', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+    signal_dir: /tmp/signals
+    signal_timeout_seconds: 300
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(true)
+      const step = result.workflow!.steps[0]
+      expect(step.signal_protocol).toBe(true)
+      expect(step.signal_dir).toBe('/tmp/signals')
+      expect(step.signal_timeout_seconds).toBe(300)
+    })
+
+    test('TEST-28: signal_protocol requires signal_dir when true', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('signal_dir is required'))).toBe(true)
+    })
+
+    test('TEST-29: signal_protocol rejected on non-spawn_session types', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: wait
+    type: delay
+    seconds: 5
+    signal_protocol: true
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('only supported on spawn_session'))).toBe(true)
+    })
+
+    test('TEST-30: signal_timeout_seconds must be positive integer', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+    signal_dir: /tmp/signals
+    signal_timeout_seconds: -5
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('signal_timeout_seconds must be a positive integer'))).toBe(true)
+    })
+
+    test('signal_protocol false does not require signal_dir', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: false
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(true)
+      expect(result.workflow!.steps[0].signal_protocol).toBe(false)
+    })
+
+    test('signal_dir participates in variable substitution', () => {
+      const yaml = `
+name: signal-test
+variables:
+  - name: run_dir
+    type: path
+    description: "Run directory"
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(true)
+
+      const substituted = substituteVariables(result.workflow!.steps, { run_dir: '/tmp/my-run' })
+      expect(substituted[0].signal_dir).toBe('/tmp/my-run/signals')
+    })
+
+    test('signal_dir rejects path traversal in variable substitution', () => {
+      const yaml = `
+name: signal-test
+variables:
+  - name: run_dir
+    type: path
+    description: "Run directory"
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(true)
+
+      expect(() => {
+        substituteVariables(result.workflow!.steps, { run_dir: '/tmp/../etc' })
+      }).toThrow(/Path contains "\.\."/)
+    })
+
+    test('signal_dir with .. segments rejected in validation', () => {
+      const yaml = `
+name: signal-test
+steps:
+  - name: agent
+    type: spawn_session
+    projectPath: /tmp/test
+    prompt: "do work"
+    signal_protocol: true
+    signal_dir: "/tmp/../etc/signals"
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('must not contain'))).toBe(true)
+    })
+  })
+})
+
+// ─── Phase 8: review_loop validation ───────────────────────────────────────
+
+describe('Phase 8: review_loop validation', () => {
+  test('TEST-12: max_iterations ceiling from env var', () => {
+    // Set environment variable
+    const originalValue = process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS
+    process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS = '5'
+
+    try {
+      const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 10
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('max_iterations') && e.includes('5'))).toBe(true)
+    } finally {
+      // Clean up env
+      if (originalValue !== undefined) {
+        process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS = originalValue
+      } else {
+        delete process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS
+      }
+    }
+  })
+
+  test('TEST-31: Nested review_loop rejected', () => {
+    const yaml = `
+name: nested-test
+steps:
+  - name: outer
+    type: review_loop
+    max_iterations: 3
+    producer:
+      name: inner
+      type: review_loop
+      max_iterations: 2
+      producer:
+        name: p
+        type: spawn_session
+        projectPath: /tmp
+        prompt: test
+      reviewer:
+        name: r
+        type: spawn_session
+        projectPath: /tmp
+        prompt: test
+        verdict_field: verdict
+    reviewer:
+      name: outer-reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: test
+      verdict_field: verdict
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('review_loop') && e.includes('nested'))).toBe(true)
+  })
+
+  test('TEST-32: on_max_iterations validation - valid values accepted', () => {
+    const validValues = ['escalate', 'accept_last', 'fail'] as const
+
+    for (const value of validValues) {
+      const yaml = `
+name: test-${value}
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    on_max_iterations: ${value}
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(true)
+      expect(result.workflow!.steps[0].on_max_iterations).toBe(value)
+    }
+  })
+
+  test('TEST-32: on_max_iterations validation - invalid value rejected', () => {
+    const yaml = `
+name: test-invalid
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    on_max_iterations: retry
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('on_max_iterations') && e.includes('escalate'))).toBe(true)
+  })
+
+  test('TEST-33: verdict_field optional on reviewer sub-step (has default)', () => {
+    // Without verdict_field - should succeed (Phase 21: verdict_field has default value 'verdict')
+    const yamlWithout = `
+name: test-no-verdict-field
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+`
+    const resultWithout = parseWorkflowYAML(yamlWithout)
+    expect(resultWithout.valid).toBe(true)
+
+    // With verdict_field - should succeed
+    const yamlWith = `
+name: test-with-verdict-field
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+    const resultWith = parseWorkflowYAML(yamlWith)
+    expect(resultWith.valid).toBe(true)
+    expect(resultWith.workflow!.steps[0].reviewer!.verdict_field).toBe('verdict')
+  })
+
+  test('review_loop parses producer and reviewer sub-steps', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 5
+    producer:
+      name: code-producer
+      type: spawn_session
+      projectPath: /tmp/code
+      prompt: "write code"
+      output_path: ./code.ts
+    reviewer:
+      name: code-reviewer
+      type: spawn_session
+      projectPath: /tmp/code
+      prompt: "review code"
+      verdict_field: decision
+      feedback_field: notes
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const step = result.workflow!.steps[0]
+    expect(step.type).toBe('review_loop')
+    expect(step.max_iterations).toBe(5)
+    expect(step.producer).toBeDefined()
+    expect(step.producer!.name).toBe('code-producer')
+    expect(step.producer!.type).toBe('spawn_session')
+    expect(step.reviewer).toBeDefined()
+    expect(step.reviewer!.name).toBe('code-reviewer')
+    expect(step.reviewer!.verdict_field).toBe('decision')
+    expect(step.reviewer!.feedback_field).toBe('notes')
+  })
+
+  test('review_loop requires producer field', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('producer'))).toBe(true)
+  })
+
+  test('review_loop requires reviewer field', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 3
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('reviewer'))).toBe(true)
+  })
+
+  test('review_loop without max_iterations is valid (defaults to 3)', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    // max_iterations defaults to 3 if not specified
+  })
+
+  test('review_loop max_iterations must be positive', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review
+    type: review_loop
+    max_iterations: 0
+    producer:
+      name: producer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "produce"
+    reviewer:
+      name: reviewer
+      type: spawn_session
+      projectPath: /tmp
+      prompt: "review"
+      verdict_field: verdict
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('max_iterations') && e.includes('positive'))).toBe(true)
+  })
+})
+
+// ─── Phase 9: spec_validate validation ──────────────────────────────────────
+
+describe('spec_validate step validation', () => {
+  test('valid spec_validate step passes', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: validate
+    type: spec_validate
+    spec_path: /path/to/spec.yaml
+    schema_path: /path/to/schema.yaml
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+  })
+
+  test('spec_validate requires spec_path', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: validate
+    type: spec_validate
+    schema_path: /path/to/schema.yaml
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('spec_path') && e.includes('required'))).toBe(true)
+  })
+
+  test('spec_validate requires schema_path', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: validate
+    type: spec_validate
+    spec_path: /path/to/spec.yaml
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('schema_path') && e.includes('required'))).toBe(true)
+  })
+
+  test('spec_validate rejects path traversal in spec_path', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: validate
+    type: spec_validate
+    spec_path: /path/../../../etc/passwd
+    schema_path: /path/to/schema.yaml
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('spec_path') && e.includes('..'))).toBe(true)
+  })
+})
+
+// ─── Phase 9: Pipeline defaults ─────────────────────────────────────────────
+
+describe('pipeline defaults', () => {
+  test('TEST-10: defaults applied to step missing the field', () => {
+    const yaml = `
+name: test-pipeline
+defaults:
+  timeoutSeconds: 1800
+  maxRetries: 2
+steps:
+  - name: run-it
+    type: spawn_session
+    projectPath: /tmp
+    prompt: "hello"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.defaults).toBeDefined()
+    expect(result.workflow!.defaults!.timeoutSeconds).toBe(1800)
+    expect(result.workflow!.defaults!.maxRetries).toBe(2)
+  })
+
+  test('TEST-11: step-level override beats defaults (verified via applyDefaults)', () => {
+    // Import applyDefaults directly for unit testing
+    const { applyDefaults } = require('../workflowSchema')
+    const steps = [{
+      name: 'test-step',
+      type: 'spawn_session' as const,
+      timeoutSeconds: 600,
+    }]
+    const defaults = { timeoutSeconds: 1800, maxRetries: 3 }
+    const result = applyDefaults(steps, defaults)
+    expect(result[0].timeoutSeconds).toBe(600) // step value wins
+    expect(result[0].maxRetries).toBe(3) // default applied
+  })
+
+  test('TEST-12: env merge behavior', () => {
+    const { applyDefaults } = require('../workflowSchema')
+    const steps = [{
+      name: 'test-step',
+      type: 'native_step' as const,
+      command: 'echo hi',
+      env: { APP_KEY: 'step-value', EXTRA: 'from-step' },
+    }]
+    const defaults = { env: { APP_KEY: 'default-value', BASE: 'from-defaults' } }
+    const result = applyDefaults(steps, defaults)
+    expect(result[0].env!['APP_KEY']).toBe('step-value') // step wins on conflict
+    expect(result[0].env!['BASE']).toBe('from-defaults') // default fills gap
+    expect(result[0].env!['EXTRA']).toBe('from-step') // step-only preserved
+  })
+
+  test('TEST-13: native_step ignores signal_protocol from defaults', () => {
+    const { applyDefaults } = require('../workflowSchema')
+    const steps = [{
+      name: 'test-step',
+      type: 'native_step' as const,
+      command: 'echo hi',
+    }]
+    const defaults = { signal_protocol: true, signal_dir: '/tmp/signals' }
+    const result = applyDefaults(steps, defaults)
+    expect(result[0].signal_protocol).toBeUndefined()
+    expect(result[0].signal_dir).toBeUndefined()
+  })
+
+  test('defaults validates field types', () => {
+    const yaml = `
+name: test-pipeline
+defaults:
+  tier: not-a-number
+steps:
+  - name: step1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('defaults.tier'))).toBe(true)
+  })
+})
+
+// ─── Phase 9: Dot-notation variable interpolation ───────────────────────────
+
+describe('dot-notation variable interpolation', () => {
+  test('TEST-14: simple variable substitution', () => {
+    const steps = [{
+      name: 'test',
+      type: 'spawn_session' as const,
+      projectPath: '{{ project_path }}',
+      prompt: 'test',
+    }]
+    const result = substituteVariables(steps, { project_path: '/my/project' })
+    expect(result[0].projectPath).toBe('/my/project')
+  })
+
+  test('TEST-15: dot-notation variable works', () => {
+    const steps = [{
+      name: 'test',
+      type: 'spawn_session' as const,
+      projectPath: '/tmp',
+      prompt: 'Use {{ source.layout }} for handlers',
+    }]
+    const result = substituteVariables(steps, { 'source.layout': 'src/handlers/' })
+    expect(result[0].prompt).toBe('Use src/handlers/ for handlers')
+  })
+
+  test('TEST-16: run-time priority over profile (both resolved)', () => {
+    const steps = [{
+      name: 'test',
+      type: 'spawn_session' as const,
+      projectPath: '/tmp',
+      prompt: 'lang is {{ language }}',
+    }]
+    // This just tests that the last-provided value wins
+    const result = substituteVariables(steps, { language: 'rust' })
+    expect(result[0].prompt).toBe('lang is rust')
+  })
+
+  test('TEST-17: unresolved variable left in place (no error from substituteVariables)', () => {
+    const steps = [{
+      name: 'test',
+      type: 'spawn_session' as const,
+      projectPath: '/tmp',
+      prompt: 'use {{ undefined_var }}',
+    }]
+    const result = substituteVariables(steps, {})
+    expect(result[0].prompt).toBe('use {{ undefined_var }}')
+  })
+})
+
+// ─── Phase 9: Tier filtering ────────────────────────────────────────────────
+
+describe('tier filtering', () => {
+  test('TEST-27: tier_min filters steps at lower tiers', () => {
+    const yaml = `
+name: tier-test
+steps:
+  - name: always-run
+    type: spawn_session
+    projectPath: /tmp
+    prompt: always
+  - name: tier-2-only
+    type: spawn_session
+    projectPath: /tmp
+    prompt: tier 2+
+    tier_min: 2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const tier2Step = result.workflow!.steps.find(s => s.name === 'tier-2-only')
+    expect(tier2Step!.tier_min).toBe(2)
+  })
+})
+
+// ─── Phase 10: amendment_check validation ────────────────────────────────────
+
+describe('parseWorkflowYAML — amendment_check', () => {
+  test('accepts valid amendment_check step', () => {
+    const yaml = `
+name: test-amendment
+steps:
+  - name: check-amendments
+    type: amendment_check
+    signal_dir: /tmp/signals
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('amendment_check')
+    expect(result.workflow!.steps[0].signal_dir).toBe('/tmp/signals')
+  })
+
+  test('rejects amendment_check without signal_dir', () => {
+    const yaml = `
+name: test-amendment
+steps:
+  - name: check-amendments
+    type: amendment_check
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('signal_dir'))).toBe(true)
+  })
+
+  test('rejects amendment_check nested in parallel_group', () => {
+    const yaml = `
+name: test-amendment
+steps:
+  - name: pg
+    type: parallel_group
+    steps:
+      - name: ac
+        type: amendment_check
+        signal_dir: /tmp/signals
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('amendment_check') && e.includes('parallel_group'))).toBe(true)
+  })
+
+  test('parses can_request_amendment and amendment_config on spawn_session', () => {
+    const yaml = `
+name: test-amendment-fields
+steps:
+  - name: worker
+    type: spawn_session
+    projectPath: /tmp
+    prompt: "do work"
+    can_request_amendment: true
+    amendment_config:
+      auto_review_types:
+        - gap
+        - correction
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const step = result.workflow!.steps[0]
+    expect(step.can_request_amendment).toBe(true)
+    expect(step.amendment_config).toBeDefined()
+    expect(step.amendment_config!.auto_review_types).toEqual(['gap', 'correction'])
+  })
+
+  test('accepts amendment_check with optional signal_types array', () => {
+    const yaml = `
+name: test-amendment
+steps:
+  - name: check-amendments
+    type: amendment_check
+    signal_dir: /tmp/signals
+    signal_types:
+      - amendment_required
+      - exploration_needed
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].signal_types).toEqual(['amendment_required', 'exploration_needed'])
+  })
+
+  test('rejects amendment_check with non-array signal_types', () => {
+    const yaml = `
+name: test-amendment
+steps:
+  - name: check-amendments
+    type: amendment_check
+    signal_dir: /tmp/signals
+    signal_types: "not-an-array"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('signal_types') && e.includes('array'))).toBe(true)
+  })
+})
+
+// ─── P-8: reconcile-spec validation ──────────────────────────────────────────
+
+describe('parseWorkflowYAML — reconcile-spec', () => {
+  test('accepts valid reconcile-spec step', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+    signal_dir: /tmp/signals
+    batch_threshold: 3
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('reconcile-spec')
+    expect(result.workflow!.steps[0].signal_dir).toBe('/tmp/signals')
+    expect(result.workflow!.steps[0].batch_threshold).toBe(3)
+  })
+
+  test('accepts reconcile-spec with default batch_threshold', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+    signal_dir: /tmp/signals
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].batch_threshold).toBeUndefined()
+  })
+
+  test('rejects reconcile-spec without signal_dir', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('reconcile-spec') && e.includes('signal_dir'))).toBe(true)
+  })
+
+  test('rejects reconcile-spec with nested steps', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+    signal_dir: /tmp/signals
+    steps:
+      - name: child
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('reconcile-spec') && e.includes('nested'))).toBe(true)
+  })
+
+  test('rejects reconcile-spec nested in parallel_group', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: pg
+    type: parallel_group
+    steps:
+      - name: reconcile-batch
+        type: reconcile-spec
+        signal_dir: /tmp/signals
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('reconcile-spec') && e.includes('parallel_group'))).toBe(true)
+  })
+
+  test('rejects reconcile-spec with invalid batch_threshold', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+    signal_dir: /tmp/signals
+    batch_threshold: 0
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('batch_threshold') && e.includes('positive integer'))).toBe(true)
+  })
+
+  test('accepts reconcile-spec with signal_types', () => {
+    const yaml = `
+name: test-reconcile
+steps:
+  - name: reconcile-batch
+    type: reconcile-spec
+    signal_dir: /tmp/signals
+    signal_types:
+      - reconciliation
+      - correction
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].signal_types).toEqual(['reconciliation', 'correction'])
+  })
+})
+
+// ─── Phase 21: Schema Compatibility ─────────────────────────────────────────
+
+describe('Phase 21: Schema Compatibility', () => {
+  test('pipeline wrapper unwrap: top-level pipeline key with name and steps', () => {
+    const yaml = `
+pipeline:
+  name: test-pipeline
+  description: Pipeline YAML format
+  steps:
+    - name: step1
+      type: native_step
+      command: echo hello
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.name).toBe('test-pipeline')
+    expect(result.workflow!.description).toBe('Pipeline YAML format')
+    expect(result.workflow!.steps).toHaveLength(1)
+    expect(result.workflow!.steps[0].name).toBe('step1')
+  })
+
+  test('pipeline wrapper preserves extra top-level sections', () => {
+    const yaml = `
+pipeline:
+  name: test-pipeline
+  steps:
+    - name: step1
+      type: delay
+      seconds: 1
+telemetry:
+  enabled: true
+triggers:
+  - type: file_change
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.name).toBe('test-pipeline')
+    // Extra sections don't cause errors (forward compatibility)
+  })
+
+  test('gemini_offload step type accepted and requires prompt_template', () => {
+    const yaml = `
+name: test
+steps:
+  - name: analyze
+    type: gemini_offload
+    prompt_template: "Analyze this: {{ input }}"
+    input_files:
+      - /tmp/data.txt
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('gemini_offload')
+    expect(result.workflow!.steps[0].prompt_template).toBe('Analyze this: {{ input }}')
+  })
+
+  test('gemini_offload without prompt_template is rejected', () => {
+    const yaml = `
+name: test
+steps:
+  - name: analyze
+    type: gemini_offload
+    input_files:
+      - /tmp/data.txt
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('prompt_template') && e.includes('required'))).toBe(true)
+  })
+
+  test('gemini_offload parses optional fields', () => {
+    const yaml = `
+name: test
+steps:
+  - name: analyze
+    type: gemini_offload
+    prompt_template: "Summarize"
+    model: gemini-2.5-flash
+    max_tokens: 2048
+    temperature: 0.7
+    output_file: result.json
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const step = result.workflow!.steps[0]
+    expect(step.model).toBe('gemini-2.5-flash')
+    expect(step.max_tokens).toBe(2048)
+    expect(step.temperature).toBe(0.7)
+    expect(step.output_file).toBe('result.json')
+  })
+
+  test('aggregator step type accepted and requires input_steps', () => {
+    const yaml = `
+name: test
+steps:
+  - name: review-a
+    type: spawn_session
+    projectPath: /tmp
+    prompt: review A
+  - name: review-b
+    type: spawn_session
+    projectPath: /tmp
+    prompt: review B
+  - name: combine
+    type: aggregator
+    input_steps:
+      - review-a
+      - review-b
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const aggStep = result.workflow!.steps[2]
+    expect(aggStep.type).toBe('aggregator')
+    expect(aggStep.input_steps).toEqual(['review-a', 'review-b'])
+  })
+
+  test('aggregator without input_steps is rejected', () => {
+    const yaml = `
+name: test
+steps:
+  - name: combine
+    type: aggregator
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('input_steps') && e.includes('required'))).toBe(true)
+  })
+
+  test('aggregator with empty input_steps is rejected', () => {
+    const yaml = `
+name: test
+steps:
+  - name: combine
+    type: aggregator
+    input_steps: []
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('input_steps') && e.includes('at least 1'))).toBe(true)
+  })
+
+  test('human_gate step type accepted with no required fields', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pause
+    type: human_gate
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('human_gate')
+  })
+
+  test('expect:fail on native_step is accepted', () => {
+    const yaml = `
+name: test
+steps:
+  - name: should-fail
+    type: native_step
+    command: "exit 1"
+    expect: fail
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].expect).toBe('fail')
+  })
+
+  test('expect:pass on native_step is accepted', () => {
+    const yaml = `
+name: test
+steps:
+  - name: should-pass
+    type: native_step
+    command: "echo ok"
+    expect: pass
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].expect).toBe('pass')
+  })
+
+  test('expect on non-native_step is rejected', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad
+    type: delay
+    seconds: 1
+    expect: fail
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('expect') && e.includes('native_step'))).toBe(true)
+  })
+
+  test('string condition expression parses to expression type', () => {
+    const yaml = `
+name: test
+steps:
+  - name: conditional
+    type: delay
+    seconds: 1
+    condition: "tier >= 2"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'expression',
+      expr: 'tier >= 2'
+    })
+  })
+
+  test('string condition with dotted paths parses correctly', () => {
+    const yaml = `
+name: test
+steps:
+  - name: conditional
+    type: delay
+    seconds: 1
+    condition: "classification.type == dependency_update"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'expression',
+      expr: 'classification.type == dependency_update'
+    })
+  })
+
+  test('string condition with AND combinator parses correctly', () => {
+    const yaml = `
+name: test
+steps:
+  - name: conditional
+    type: delay
+    seconds: 1
+    condition: "tier >= 2 AND classification.type == feature"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'expression',
+      expr: 'tier >= 2 AND classification.type == feature'
+    })
+  })
+
+  test('children alias for parallel_group steps', () => {
+    const yaml = `
+name: test
+steps:
+  - name: parallel-work
+    type: parallel_group
+    children:
+      - name: task-a
+        type: delay
+        seconds: 1
+      - name: task-b
+        type: delay
+        seconds: 2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].steps).toHaveLength(2)
+    expect(result.workflow!.steps[0].steps![0].name).toBe('task-a')
+    expect(result.workflow!.steps[0].steps![1].name).toBe('task-b')
+  })
+
+  test('relaxed spawn_session: agent field without projectPath and prompt', () => {
+    const yaml = `
+name: test
+steps:
+  - name: agent-step
+    type: spawn_session
+    agent: spec-reviewer
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].agent).toBe('spec-reviewer')
+  })
+
+  test('relaxed native_step: actions array without command', () => {
+    const yaml = `
+name: test
+steps:
+  - name: multi-action
+    type: native_step
+    actions:
+      - run: echo step1
+      - run: echo step2
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    // Step should parse even without command field when actions present
+  })
+
+  test('unknown top-level sections preserved without errors', () => {
+    const yaml = `
+name: test
+telemetry:
+  log_level: debug
+  metrics_enabled: true
+triggers:
+  - type: cron
+    schedule: "0 0 * * *"
+hooks:
+  pre_run: validate.sh
+steps:
+  - name: step1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.name).toBe('test')
+    expect(result.workflow!.steps).toHaveLength(1)
+    // Unknown sections don't cause validation errors
+  })
+
+  test('condition expression with quoted string comparison', () => {
+    const yaml = `
+name: test
+steps:
+  - name: conditional
+    type: delay
+    seconds: 1
+    condition: "status == 'active'"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'expression',
+      expr: "status == 'active'"
+    })
+  })
+
+  test('rejects empty string condition expression', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad
+    type: delay
+    seconds: 1
+    condition: ""
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('condition') && e.includes('non-empty'))).toBe(true)
+  })
+
+  test('rejects condition expression exceeding 1024 characters', () => {
+    const longExpr = 'tier >= 2 AND ' + 'x == y OR '.repeat(200) + 'z == w'
+    const yaml = `
+name: test
+steps:
+  - name: bad
+    type: delay
+    seconds: 1
+    condition: "${longExpr}"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('condition') && e.includes('1024'))).toBe(true)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════
+// Phase 21: Schema Compatibility Tests
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Phase 21: Schema Compatibility', () => {
+  test('pipeline: wrapper unwraps to flat format', () => {
+    const yaml = `
+pipeline:
+  name: test-pipeline
+  steps:
+    - name: step1
+      type: native_step
+      command: echo hello
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.name).toBe('test-pipeline')
+    expect(result.workflow!.steps.length).toBe(1)
+    expect(result.workflow!.steps[0].name).toBe('step1')
+  })
+
+  test('gemini_offload step type is accepted', () => {
+    const yaml = `
+name: test
+steps:
+  - name: gemini-step
+    type: gemini_offload
+    prompt_template: "Analyze this"
+    output_file: result.txt
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('gemini_offload')
+  })
+
+  test('gemini_offload requires prompt_template', () => {
+    const yaml = `
+name: test
+steps:
+  - name: gemini-step
+    type: gemini_offload
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('prompt_template'))).toBe(true)
+  })
+
+  test('aggregator step type is accepted', () => {
+    const yaml = `
+name: test
+steps:
+  - name: agg
+    type: aggregator
+    input_steps:
+      - step1
+      - step2
+    output_file: merged.yaml
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('aggregator')
+  })
+
+  test('aggregator requires input_steps array', () => {
+    const yaml = `
+name: test
+steps:
+  - name: agg
+    type: aggregator
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('input_steps'))).toBe(true)
+  })
+
+  test('human_gate step type is accepted', () => {
+    const yaml = `
+name: test
+steps:
+  - name: gate
+    type: human_gate
+    message: "Please approve"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('human_gate')
+  })
+
+  test('expect:fail is accepted on native_step', () => {
+    const yaml = `
+name: test
+steps:
+  - name: verify-red
+    type: native_step
+    command: "cargo test"
+    expect: fail
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].expect).toBe('fail')
+  })
+
+  test('expect is rejected on non-native_step', () => {
+    const yaml = `
+name: test
+steps:
+  - name: bad
+    type: spawn_session
+    projectPath: /tmp
+    prompt: "test"
+    expect: fail
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('expect'))).toBe(true)
+  })
+
+  test('string condition expression parses correctly', () => {
+    const yaml = `
+name: test
+steps:
+  - name: step1
+    type: native_step
+    command: echo hello
+    condition: "tier >= 2"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].condition).toEqual({
+      type: 'expression',
+      expr: 'tier >= 2'
+    })
+  })
+
+  test('children alias works in parallel_group', () => {
+    const yaml = `
+name: test
+steps:
+  - name: pg
+    type: parallel_group
+    children:
+      - name: child1
+        type: delay
+        seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    const pg = result.workflow!.steps[0] as any
+    expect(pg.type).toBe('parallel_group')
+    // children alias is converted to steps during buildWorkflowStep
+    expect(pg.steps).toBeDefined()
+    expect(pg.steps.length).toBe(1)
+    expect(pg.steps[0].name).toBe('child1')
+  })
+
+  test('spawn_session with agent field but no projectPath is valid', () => {
+    const yaml = `
+name: test
+steps:
+  - name: agent-step
+    type: spawn_session
+    agent: workhorse
+    inputs: []
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].agent).toBe('workhorse')
+  })
+
+  test('native_step without command but with actions is valid', () => {
+    const yaml = `
+name: test
+steps:
+  - name: checks
+    type: native_step
+    checks:
+      - name: test1
+        command: echo test1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].type).toBe('native_step')
+  })
+
+  test('unknown top-level sections are preserved', () => {
+    const yaml = `
+name: test
+telemetry:
+  enabled: true
+triggers:
+  manual:
+    enabled: true
+steps:
+  - name: step1
+    type: delay
+    seconds: 1
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.name).toBe('test')
+  })
+})
+
+// ─── Phase 15: on_error cleanup hooks (REQ-23 through REQ-27) ─────────────
+
+describe('on_error cleanup hooks (Phase 15 REQ-23-27)', () => {
+  test('step-level on_error parses valid cleanup actions', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: risky-step
+    type: native_step
+    command: "might-fail"
+    on_error:
+      - type: native_step
+        command: "cleanup.sh"
+        working_dir: "/tmp"
+        timeoutSeconds: 30
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].on_error).toHaveLength(1)
+    expect(result.workflow!.steps[0].on_error![0].type).toBe('native_step')
+    expect(result.workflow!.steps[0].on_error![0].command).toBe('cleanup.sh')
+    expect(result.workflow!.steps[0].on_error![0].working_dir).toBe('/tmp')
+    expect(result.workflow!.steps[0].on_error![0].timeoutSeconds).toBe(30)
+  })
+
+  test('pipeline-level on_error parses valid cleanup actions', () => {
+    const yaml = `
+name: test-pipeline
+on_error:
+  - type: native_step
+    command: "pipeline-cleanup.sh"
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.on_error).toHaveLength(1)
+    expect(result.workflow!.on_error![0].command).toBe('pipeline-cleanup.sh')
+  })
+
+  test('on_error rejects non-array value', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error: "not-an-array"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('on_error') && e.includes('array'))).toBe(true)
+  })
+
+  test('on_error rejects actions without command', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error:
+      - type: native_step
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('command') && e.includes('required'))).toBe(true)
+  })
+
+  test('on_error rejects non-native_step type', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error:
+      - type: spawn_session
+        command: "cleanup"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('native_step') && e.includes('type'))).toBe(true)
+  })
+
+  test('multiple on_error actions parse correctly', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error:
+      - type: native_step
+        command: "cleanup1.sh"
+      - type: native_step
+        command: "cleanup2.sh"
+        timeoutSeconds: 60
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+    expect(result.workflow!.steps[0].on_error).toHaveLength(2)
+    expect(result.workflow!.steps[0].on_error![1].command).toBe('cleanup2.sh')
+    expect(result.workflow!.steps[0].on_error![1].timeoutSeconds).toBe(60)
+  })
+
+  test('on_error with empty array is valid', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error: []
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(true)
+  })
+
+  test('pipeline-level on_error rejects non-array', () => {
+    const yaml = `
+name: test-pipeline
+on_error:
+  type: native_step
+  command: "cleanup"
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('on_error') && e.includes('array'))).toBe(true)
+  })
+
+  test('on_error rejects working_dir with path traversal', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error:
+      - type: native_step
+        command: "cleanup"
+        working_dir: "/tmp/../etc"
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('working_dir') && e.includes('..'))).toBe(true)
+  })
+
+  test('on_error rejects non-positive timeoutSeconds', () => {
+    const yaml = `
+name: test-pipeline
+steps:
+  - name: step1
+    type: native_step
+    command: "work"
+    on_error:
+      - type: native_step
+        command: "cleanup"
+        timeoutSeconds: -5
+`
+    const result = parseWorkflowYAML(yaml)
+    expect(result.valid).toBe(false)
+    expect(result.errors.some(e => e.includes('timeoutSeconds') && e.includes('positive'))).toBe(true)
   })
 })

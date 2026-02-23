@@ -1,0 +1,39 @@
+schema_version: "feature_spec_v1.0"
+title: "Basic CRUD KV Store"
+description: |
+  Implement a simple in-memory key-value store HTTP service in Rust.
+  The service exposes REST endpoints for Create, Read, Update, and Delete
+  operations on string key-value pairs. Data is stored in memory only
+  (no persistence required). This is a tier-2 scenario with simple complexity.
+
+scope:
+  included:
+    - src/
+  excluded:
+    - node_modules/
+    - dist/
+    - target/
+
+acceptance:
+  - type: behavioral
+    description: "PUT /kv/:key with JSON body stores the value"
+  - type: behavioral
+    description: "GET /kv/:key returns the stored value with 200"
+  - type: behavioral
+    description: "GET /kv/:key returns 404 for non-existent keys"
+  - type: behavioral
+    description: "DELETE /kv/:key removes the entry and returns 204"
+  - type: behavioral
+    description: "DELETE /kv/:key returns 404 for non-existent keys"
+  - type: contract
+    description: "All responses use application/json content type"
+  - type: invariant
+    description: "Keys are non-empty strings; values are arbitrary JSON"
+
+priority: medium
+tags:
+  - crud
+  - kvstore
+  - scenario-01
+  - tier-2
+  - simple

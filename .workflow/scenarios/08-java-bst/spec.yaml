@@ -1,0 +1,53 @@
+schema_version: "feature_spec_v1.0"
+title: "Binary Search Tree Library in Java"
+description: |
+  Implement a Java library providing a generic Binary Search Tree (BST) that
+  stores Comparable elements. Provides insert, search (contains), delete, size,
+  isEmpty, min, max, and inOrder traversal (returns a List). The tree does not
+  allow duplicate keys. Delete handles all three cases (leaf, one child, two
+  children using in-order successor). No external dependencies beyond the Java
+  standard library. Compiled with javac and tested via a main method with
+  assertions in a test class.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded:
+    - build/
+
+acceptance:
+  - type: behavioral
+    description: "Inserting elements and searching returns true for present keys"
+  - type: behavioral
+    description: "Searching for an absent key returns false"
+  - type: behavioral
+    description: "inOrder traversal returns elements in sorted ascending order"
+  - type: behavioral
+    description: "min() returns the smallest element"
+  - type: behavioral
+    description: "max() returns the largest element"
+  - type: behavioral
+    description: "Deleting a leaf node removes it correctly"
+  - type: behavioral
+    description: "Deleting a node with one child promotes the child"
+  - type: behavioral
+    description: "Deleting a node with two children replaces with in-order successor"
+  - type: contract
+    description: "Inserting a duplicate key does not increase size"
+  - type: contract
+    description: "min() and max() on an empty tree throw an exception"
+  - type: contract
+    description: "Deleting a non-existent key is a no-op (no error)"
+  - type: invariant
+    description: "size() is always consistent with insert/delete operations"
+  - type: invariant
+    description: "isEmpty() returns true only when size is 0"
+
+priority: medium
+tags:
+  - data-structure
+  - bst
+  - scenario-08
+  - tier-1
+  - moderate

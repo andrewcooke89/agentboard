@@ -29,19 +29,21 @@ describe('sessionPool', () => {
 
   describe('requestSlot - capacity available', () => {
     test('TEST-11: grants slot as active when under capacity', () => {
-      const slot = pool.requestSlot({ runId: 'run-1', stepName: 'step-a', tier: 1 })
-      expect(slot.status).toBe('active')
-      expect(slot.runId).toBe('run-1')
-      expect(slot.stepName).toBe('step-a')
-      expect(slot.grantedAt).not.toBeNull()
+      const result = pool.requestSlot({ runId: 'run-1', stepName: 'step-a', tier: 1 })
+      expect(result.rejected).toBe(false)
+      expect(result.slot).not.toBeNull()
+      expect(result.slot!.status).toBe('active')
+      expect(result.slot!.runId).toBe('run-1')
+      expect(result.slot!.stepName).toBe('step-a')
+      expect(result.slot!.grantedAt).not.toBeNull()
     })
 
     test('grants multiple slots up to max capacity', () => {
       // Default maxSlots is 2
-      const slot1 = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
-      const slot2 = pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
-      expect(slot1.status).toBe('active')
-      expect(slot2.status).toBe('active')
+      const r1 = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
+      const r2 = pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
+      expect(r1.slot!.status).toBe('active')
+      expect(r2.slot!.status).toBe('active')
     })
   })
 
@@ -52,9 +54,10 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
       // Pool is now full (default maxSlots = 2)
-      const slot3 = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
-      expect(slot3.status).toBe('queued')
-      expect(slot3.grantedAt).toBeNull()
+      const r3 = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
+      expect(r3.rejected).toBe(false)
+      expect(r3.slot!.status).toBe('queued')
+      expect(r3.slot!.grantedAt).toBeNull()
     })
 
     test('queues multiple when at capacity', () => {
@@ -62,8 +65,8 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
       const q1 = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
       const q2 = pool.requestSlot({ runId: 'r4', stepName: 's4', tier: 1 })
-      expect(q1.status).toBe('queued')
-      expect(q2.status).toBe('queued')
+      expect(q1.slot!.status).toBe('queued')
+      expect(q2.slot!.status).toBe('queued')
     })
   })
 
@@ -79,7 +82,7 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r4', stepName: 'high-tier', tier: 5 })
 
       // Release a slot - should promote high-tier first
-      const promoted = pool.releaseSlot(active1.id)
+      const promoted = pool.releaseSlot(active1.slot!.id)
       expect(promoted).not.toBeNull()
       expect(promoted!.stepName).toBe('high-tier')
       expect(promoted!.status).toBe('active')
@@ -96,7 +99,7 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r3', stepName: 'first-queued', tier: 2 })
       pool.requestSlot({ runId: 'r4', stepName: 'second-queued', tier: 2 })
 
-      const promoted = pool.releaseSlot(a1.id)
+      const promoted = pool.releaseSlot(a1.slot!.id)
       expect(promoted).not.toBeNull()
       expect(promoted!.stepName).toBe('first-queued')
     })
@@ -107,13 +110,13 @@ describe('sessionPool', () => {
   describe('concurrent safety', () => {
     test('TEST-15: N requests in tight loop never exceed maxSlots active', () => {
       const N = 20
-      const slots = []
+      const results = []
       for (let i = 0; i < N; i++) {
-        slots.push(pool.requestSlot({ runId: `r-${i}`, stepName: `s-${i}`, tier: 1 }))
+        results.push(pool.requestSlot({ runId: `r-${i}`, stepName: `s-${i}`, tier: 1 }))
       }
 
-      const activeCount = slots.filter(s => s.status === 'active').length
-      const queuedCount = slots.filter(s => s.status === 'queued').length
+      const activeCount = results.filter(r => !r.rejected && r.slot?.status === 'active').length
+      const queuedCount = results.filter(r => !r.rejected && r.slot?.status === 'queued').length
 
       // Default maxSlots = 2, so only 2 should be active
       expect(activeCount).toBe(2)
@@ -127,12 +130,12 @@ describe('sessionPool', () => {
 
     test('active count matches config after many operations', () => {
       pool.updateConfig(3)
-      const slots = []
+      const results = []
       for (let i = 0; i < 10; i++) {
-        slots.push(pool.requestSlot({ runId: `r-${i}`, stepName: `s-${i}`, tier: 1 }))
+        results.push(pool.requestSlot({ runId: `r-${i}`, stepName: `s-${i}`, tier: 1 }))
       }
 
-      const activeCount = slots.filter(s => s.status === 'active').length
+      const activeCount = results.filter(r => !r.rejected && r.slot?.status === 'active').length
       expect(activeCount).toBe(3)
     })
   })
@@ -145,22 +148,22 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
       const q1 = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
 
-      expect(q1.status).toBe('queued')
+      expect(q1.slot!.status).toBe('queued')
 
-      const promoted = pool.releaseSlot(a1.id)
+      const promoted = pool.releaseSlot(a1.slot!.id)
       expect(promoted).not.toBeNull()
       expect(promoted!.status).toBe('active')
       expect(promoted!.stepName).toBe('s3')
 
       // Verify the slot is now active in the DB
-      const slotInDb = pool.getSlot(q1.id)
+      const slotInDb = pool.getSlot(q1.slot!.id)
       expect(slotInDb).not.toBeNull()
       expect(slotInDb!.status).toBe('active')
     })
 
     test('release returns null when no queue', () => {
       const a1 = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
-      const promoted = pool.releaseSlot(a1.id)
+      const promoted = pool.releaseSlot(a1.slot!.id)
       expect(promoted).toBeNull()
     })
 
@@ -169,11 +172,11 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
 
       // Pool full, release one
-      pool.releaseSlot(a1.id)
+      pool.releaseSlot(a1.slot!.id)
 
       // Next request should be active (not queued)
       const next = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
-      expect(next.status).toBe('active')
+      expect(next.slot!.status).toBe('active')
     })
   })
 
@@ -185,16 +188,16 @@ describe('sessionPool', () => {
       pool.updateConfig(1) // Only 1 slot
 
       const a1 = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
-      expect(a1.status).toBe('active')
+      expect(a1.slot!.status).toBe('active')
 
       const q1 = pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
-      expect(q1.status).toBe('queued')
+      expect(q1.slot!.status).toBe('queued')
 
       const q2 = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
-      expect(q2.status).toBe('queued')
+      expect(q2.slot!.status).toBe('queued')
 
       // Release a1 -> promotes q1
-      const promoted1 = pool.releaseSlot(a1.id)
+      const promoted1 = pool.releaseSlot(a1.slot!.id)
       expect(promoted1).not.toBeNull()
       expect(promoted1!.stepName).toBe('s2')
 
@@ -213,7 +216,7 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r4', stepName: 's4', tier: 1 })
 
       // Release and check: tier 3 should be promoted first
-      const p1 = pool.releaseSlot(a1.id)
+      const p1 = pool.releaseSlot(a1.slot!.id)
       expect(p1!.stepName).toBe('s3') // highest tier
 
       let status = pool.getStatus()
@@ -261,14 +264,14 @@ describe('sessionPool', () => {
       pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
       pool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
       const q = pool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
-      expect(q.status).toBe('queued')
+      expect(q.slot!.status).toBe('queued')
 
       // Increase config
       pool.updateConfig(5)
 
       // Next request should now be active
       const next = pool.requestSlot({ runId: 'r4', stepName: 's4', tier: 1 })
-      expect(next.status).toBe('active')
+      expect(next.slot!.status).toBe('active')
     })
   })
 
@@ -276,8 +279,8 @@ describe('sessionPool', () => {
 
   describe('getSlot', () => {
     test('returns slot by id', () => {
-      const slot = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 2 })
-      const found = pool.getSlot(slot.id)
+      const result = pool.requestSlot({ runId: 'r1', stepName: 's1', tier: 2 })
+      const found = pool.getSlot(result.slot!.id)
       expect(found).not.toBeNull()
       expect(found!.runId).toBe('r1')
       expect(found!.tier).toBe(2)
@@ -285,6 +288,87 @@ describe('sessionPool', () => {
 
     test('returns null for non-existent slot', () => {
       expect(pool.getSlot('nonexistent')).toBeNull()
+    })
+  })
+
+  // ── CF-01/REQ-24: Queue depth enforcement at requestSlot level ─────────
+
+  describe('queue depth enforcement', () => {
+    test('rejects slot request when queue is at max depth', () => {
+      // Set small queue depth
+      const origEnv = process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+      process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = '2'
+
+      try {
+        // Need fresh pool to pick up env var
+        const freshPool = createSessionPool(db)
+
+        // Fill active slots (2 default)
+        freshPool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
+        freshPool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
+
+        // Fill queue to max depth (2)
+        const q1 = freshPool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
+        expect(q1.rejected).toBe(false)
+        expect(q1.slot!.status).toBe('queued')
+
+        const q2 = freshPool.requestSlot({ runId: 'r4', stepName: 's4', tier: 1 })
+        expect(q2.rejected).toBe(false)
+        expect(q2.slot!.status).toBe('queued')
+
+        // Queue is now at max depth (2). Next request should be rejected.
+        const q3 = freshPool.requestSlot({ runId: 'r5', stepName: 's5', tier: 1 })
+        expect(q3.rejected).toBe(true)
+        expect(q3.slot).toBeNull()
+        expect(q3.queueDepth).toBe(2)
+        expect(q3.maxDepth).toBe(2)
+      } finally {
+        if (origEnv !== undefined) {
+          process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = origEnv
+        } else {
+          delete process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+        }
+      }
+    })
+
+    test('allows slot request when queue is under max depth', () => {
+      const origEnv = process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+      process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = '10'
+
+      try {
+        const freshPool = createSessionPool(db)
+
+        // Fill active slots
+        freshPool.requestSlot({ runId: 'r1', stepName: 's1', tier: 1 })
+        freshPool.requestSlot({ runId: 'r2', stepName: 's2', tier: 1 })
+
+        // Queue 3 items (under limit of 10)
+        const q1 = freshPool.requestSlot({ runId: 'r3', stepName: 's3', tier: 1 })
+        expect(q1.rejected).toBe(false)
+        expect(q1.slot!.status).toBe('queued')
+      } finally {
+        if (origEnv !== undefined) {
+          process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = origEnv
+        } else {
+          delete process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+        }
+      }
+    })
+
+    test('getMaxQueueDepth returns configured value', () => {
+      const origEnv = process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+      process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = '25'
+
+      try {
+        const freshPool = createSessionPool(db)
+        expect(freshPool.getMaxQueueDepth()).toBe(25)
+      } finally {
+        if (origEnv !== undefined) {
+          process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH = origEnv
+        } else {
+          delete process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH
+        }
+      }
     })
   })
 })

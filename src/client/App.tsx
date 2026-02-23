@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ServerMessage } from '@shared/types'
+import type { ServerMessage, PendingReviewItem, PendingReviewType } from '@shared/types'
 import Header from './components/Header'
 import SessionList from './components/SessionList'
 import Terminal from './components/Terminal'
@@ -31,6 +31,9 @@ import { showNotification, getNotificationPermission, requestNotificationPermiss
 import HistorySection from './components/HistorySection'
 import { useHistoryStore } from './stores/historyStore'
 import type { Task } from '@shared/types'
+import PoolStatusIndicator from './components/PoolStatusIndicator'
+import PendingReviewDashboard from './components/PendingReviewDashboard'
+import { usePoolStore } from './stores/poolStore'
 
 interface ServerInfo {
   port: number
@@ -43,7 +46,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
-  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor'>('sessions')
+  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews'>('sessions')
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false)
   const [dismissedPermissionBanners, setDismissedPermissionBanners] = useState<Set<string>>(new Set())
@@ -103,11 +106,16 @@ export default function App() {
   const updateTask = useTaskStore((state) => state.updateTask)
   const setTemplates = useTaskStore((state) => state.setTemplates)
 
+  const poolStatus = usePoolStore((state) => state.poolStatus)
+  const fetchPoolStatus = usePoolStore((state) => state.fetchPoolStatus)
+  const handlePoolStatusUpdate = usePoolStore((state) => state.handlePoolStatusUpdate)
+
   const handleWorkflowList = useWorkflowStore((state) => state.handleWorkflowList)
   const handleWorkflowUpdated = useWorkflowStore((state) => state.handleWorkflowUpdated)
   const handleWorkflowRemoved = useWorkflowStore((state) => state.handleWorkflowRemoved)
   const handleWorkflowRunUpdate = useWorkflowStore((state) => state.handleWorkflowRunUpdate)
   const handleWorkflowRunList = useWorkflowStore((state) => state.handleWorkflowRunList)
+  const workflowRuns = useWorkflowStore((state) => state.workflowRuns)
 
   const { sendMessage, subscribe } = useWebSocket()
 
@@ -361,6 +369,106 @@ export default function App() {
       if (message.type === 'workflow-run-list') {
         handleWorkflowRunList(message.runs)
       }
+      // Phase 15: Pool status messages (REQ-13)
+      if (message.type === 'pool_status_update') {
+        handlePoolStatusUpdate({
+          maxSlots: message.max,
+          activeSlots: [],
+          queue: [],
+        })
+      }
+      // Phase 15: Review iteration updates (REQ-08)
+      if (message.type === 'review_iteration') {
+        handleWorkflowRunUpdate(message.run)
+      }
+      // Phase 15: Pool slot granted (REQ-13)
+      if (message.type === 'pool_slot_granted' && message.poolStatus) {
+        handlePoolStatusUpdate(message.poolStatus)
+      }
+      // Phase 15: Step queued (REQ-13)
+      if (message.type === 'step_queued' && message.poolStatus) {
+        handlePoolStatusUpdate(message.poolStatus)
+      }
+      // Phase 15: Signal detected (REQ-30)
+      if (message.type === 'signal_detected') {
+        // Update workflow run state with new signal
+        const currentRuns = useWorkflowStore.getState().workflowRuns
+        const run = currentRuns.find((r) => r.id === message.runId)
+        if (run && run.steps_state) {
+          const updatedSteps = run.steps_state.map((step) => {
+            if (step.name === message.stepName) {
+              const signals = step.detectedSignals || []
+              return {
+                ...step,
+                detectedSignals: [
+                  ...signals,
+                  {
+                    id: `${message.runId}-${message.stepName}-${Date.now()}`,
+                    type: message.signalType,
+                    timestamp: new Date().toISOString(),
+                    resolutionStatus: 'pending' as const,
+                    content: JSON.stringify(message.details),
+                    checkpointData: null
+                  }
+                ]
+              }
+            }
+            return step
+          })
+          handleWorkflowRunUpdate({ ...run, steps_state: updatedSteps })
+        }
+      }
+      // Phase 15: Amendment filed (REQ-19)
+      if (message.type === 'amendment_filed') {
+        // Update workflow run state with new amendment
+        const currentRuns = useWorkflowStore.getState().workflowRuns
+        const run = currentRuns.find((r) => r.id === message.runId)
+        if (run) {
+          handleWorkflowRunUpdate({
+            ...run,
+            pendingAmendment: {
+              id: message.amendmentId,
+              specSection: 'unknown',
+              issue: 'Amendment filed',
+              proposedChange: null,
+              category: message.amendmentType,
+              autoApproved: false,
+              autoApprovedBy: null
+            }
+          })
+        }
+      }
+      // Phase 15: Amendment resolved (REQ-19)
+      if (message.type === 'amendment_resolved') {
+        // Clear pending amendment from workflow run
+        const currentRuns = useWorkflowStore.getState().workflowRuns
+        const run = currentRuns.find((r) => r.id === message.runId)
+        if (run) {
+          handleWorkflowRunUpdate({
+            ...run,
+            pendingAmendment: null
+          })
+        }
+      }
+      // Phase 15: Step paused (REQ-32)
+      if (message.type === 'step_paused') {
+        // Update step status to paused
+        const currentRuns = useWorkflowStore.getState().workflowRuns
+        const run = currentRuns.find((r) => r.id === message.runId)
+        if (run && run.steps_state) {
+          const updatedSteps = run.steps_state.map((step) => {
+            if (step.name === message.stepName) {
+              return {
+                ...step,
+                status: 'paused_human' as const,
+                errorMessage: message.reason
+              }
+            }
+            return step
+          })
+          handleWorkflowRunUpdate({ ...run, steps_state: updatedSteps })
+        }
+      }
     })
 
     return () => { unsubscribe() }
@@ -384,6 +492,8 @@ export default function App() {
     handleWorkflowRemoved,
     handleWorkflowRunUpdate,
     handleWorkflowRunList,
+    handlePoolStatusUpdate,
+    fetchPoolStatus,
   ])
 
   const selectedSession = useMemo(() => {
@@ -608,6 +718,11 @@ export default function App() {
       .catch((err) => { console.warn('Failed to fetch server info:', err) })
   }, [])
 
+  // Fetch pool status on mount
+  useEffect(() => {
+    void fetchPoolStatus()
+  }, [fetchPoolStatus])
+
   // Calculate permission sessions for banner
   const permissionSessions = useMemo(() => {
     return sessions.filter(s => s.status === 'permission' && !dismissedPermissionBanners.has(s.id))
@@ -628,6 +743,46 @@ export default function App() {
       return next
     })
   }, [sessions])
+
+  const pendingReviewItems = useMemo(() => {
+    const items: PendingReviewItem[] = []
+    for (const run of workflowRuns) {
+      if (!run.steps_state) continue
+      for (const step of run.steps_state) {
+        if (step.status === 'paused_amendment' || step.status === 'paused_human' || step.status === 'paused_escalated') {
+          const itemType: PendingReviewType =
+            step.status === 'paused_amendment' ? 'amendment_approval' :
+            step.status === 'paused_escalated' ? 'escalated_review_loop' :
+            'concern_verdict'
+
+          items.push({
+            id: `${run.id}-${step.name}`,
+            runId: run.id,
+            pipelineName: run.workflow_name,
+            itemType,
+            stepName: step.name,
+            tier: step.tier_min || run.tier || 1,
+            waitingSince: step.startedAt || run.started_at || new Date().toISOString(),
+            details: {
+              status: step.status,
+              errorMessage: step.errorMessage,
+              amendmentType: step.amendmentType,
+              reviewIteration: step.reviewIteration
+            },
+            severity: step.status === 'paused_escalated' ? 'high' :
+                     step.status === 'paused_amendment' ? 'medium' : 'low'
+          })
+        }
+      }
+    }
+    return items
+  }, [workflowRuns])
+
+  const handleResolveReview = useCallback((itemId: string, action: string) => {
+    const [runId, ...stepParts] = itemId.split('-')
+    const stepName = stepParts.join('-')
+    sendMessage({ type: 'workflow-step-action', runId, stepName, action })
+  }, [sendMessage])
 
   return (
     <ErrorBoundary>
@@ -679,6 +834,7 @@ export default function App() {
           onToggleWorkflowPanel={() => setWorkflowPanelOpen((prev) => !prev)}
           workflowPanelActive={workflowPanelOpen}
         />
+        <PoolStatusIndicator poolStatus={poolStatus} />
         <SessionList
           sessions={sessions}
           inactiveSessions={agentSessions.inactive}
@@ -757,6 +913,13 @@ export default function App() {
               onSave={() => setActiveView('workflow-list')}
               onCancel={() => setActiveView(activeWorkflowId ? 'workflow-detail' : 'workflow-list')}
             />
+          </ErrorBoundary>
+        </div>
+      )}
+      {activeView === 'pending-reviews' && (
+        <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
+          <ErrorBoundary>
+            <PendingReviewDashboard items={pendingReviewItems} onResolve={handleResolveReview} />
           </ErrorBoundary>
         </div>
       )}

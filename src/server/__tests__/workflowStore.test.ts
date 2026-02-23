@@ -780,6 +780,31 @@ describe('workflowStore', () => {
   })
 
   describe('idempotent initialization', () => {
+    test('initWorkflowStore enables WAL mode', () => {
+      // WAL mode requires a file-based database (not :memory:)
+      const tmpPath = `/tmp/test-wal-${Date.now()}.db`
+      const testDb = new SQLiteDatabase(tmpPath)
+
+      try {
+        initWorkflowStore(testDb)
+
+        // Verify WAL mode is active
+        const result = testDb.prepare('PRAGMA journal_mode').get() as { journal_mode: string }
+        expect(result.journal_mode).toBe('wal')
+      } finally {
+        testDb.close()
+        // Clean up test database
+        try {
+          const fs = require('fs')
+          fs.unlinkSync(tmpPath)
+          fs.unlinkSync(`${tmpPath}-shm`)
+          fs.unlinkSync(`${tmpPath}-wal`)
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    })
+
     test('initWorkflowStore can be called twice without error', () => {
       const testDb = new SQLiteDatabase(':memory:')
       initWorkflowStore(testDb)
@@ -822,6 +847,695 @@ describe('workflowStore', () => {
 
       // Should not throw even though columns already exist
       expect(() => initWorkflowStore(testDb)).not.toThrow()
+    })
+  })
+
+  describe('signals table', () => {
+    setup()
+
+    test('TEST-31: insertSignal and getSignalsByRun', () => {
+      // Create a workflow and run first (signals have FK to workflow_runs)
+      const workflow = store.createWorkflow({
+        name: 'signal-test',
+        description: null,
+        yaml_content: 'name: signal-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 2,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/workflow-output/signal-test',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert a signal
+      store.insertSignal({
+        id: 'signal-1',
+        run_id: run.id,
+        step_name: 'step-1',
+        signal_type: 'approval_required',
+        signal_file_path: '/tmp/signals/signal-1.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      // Retrieve signals for the run
+      const signals = store.getSignalsByRun(run.id)
+      expect(signals).toHaveLength(1)
+      expect(signals[0].id).toBe('signal-1')
+      expect(signals[0].run_id).toBe(run.id)
+      expect(signals[0].step_name).toBe('step-1')
+      expect(signals[0].signal_type).toBe('approval_required')
+      expect(signals[0].signal_file_path).toBe('/tmp/signals/signal-1.json')
+      expect(signals[0].resolution).toBeNull()
+      expect(signals[0].resolution_file_path).toBeNull()
+      expect(signals[0].detected_at).toBeTruthy()
+      expect(signals[0].resolved_at).toBeNull()
+      expect(signals[0].synthetic).toBe(0)
+    })
+
+    test('TEST-32: getUnresolvedSignals', () => {
+      const workflow = store.createWorkflow({
+        name: 'unresolved-test',
+        description: null,
+        yaml_content: 'name: unresolved-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 2,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/workflow-output/unresolved-test',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert two signals
+      store.insertSignal({
+        id: 'signal-unres-1',
+        run_id: run.id,
+        step_name: 'step-1',
+        signal_type: 'approval_required',
+        signal_file_path: '/tmp/signals/signal-1.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      store.insertSignal({
+        id: 'signal-unres-2',
+        run_id: run.id,
+        step_name: 'step-2',
+        signal_type: 'input_needed',
+        signal_file_path: '/tmp/signals/signal-2.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 1,
+      })
+
+      // Resolve one signal
+      store.resolveSignal('signal-unres-1', 'approved', '/tmp/signals/signal-1-resolution.json')
+
+      // Get unresolved signals - should only return signal-unres-2
+      const unresolvedSignals = store.getUnresolvedSignals(run.id)
+      expect(unresolvedSignals).toHaveLength(1)
+      expect(unresolvedSignals[0].id).toBe('signal-unres-2')
+      expect(unresolvedSignals[0].resolved_at).toBeNull()
+    })
+
+    test('TEST-33: resolveSignal', () => {
+      const workflow = store.createWorkflow({
+        name: 'resolve-test',
+        description: null,
+        yaml_content: 'name: resolve-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/workflow-output/resolve-test',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      store.insertSignal({
+        id: 'signal-resolve',
+        run_id: run.id,
+        step_name: 'step-1',
+        signal_type: 'approval_required',
+        signal_file_path: '/tmp/signals/signal-resolve.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      // Resolve the signal
+      store.resolveSignal('signal-resolve', 'approved', '/tmp/signals/resolution.json')
+
+      // Verify resolution was set
+      const signals = store.getSignalsByRun(run.id)
+      expect(signals).toHaveLength(1)
+      expect(signals[0].resolution).toBe('approved')
+      expect(signals[0].resolution_file_path).toBe('/tmp/signals/resolution.json')
+      expect(signals[0].resolved_at).toBeTruthy()
+    })
+
+    test('TEST-34: getSignalsByRun returns empty array for no signals', () => {
+      const workflow = store.createWorkflow({
+        name: 'no-signals-test',
+        description: null,
+        yaml_content: 'name: no-signals-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/workflow-output/no-signals',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      const signals = store.getSignalsByRun(run.id)
+      expect(signals).toEqual([])
+    })
+
+    test('TEST-35: Multiple signals ordered by detected_at', () => {
+      const workflow = store.createWorkflow({
+        name: 'order-test',
+        description: null,
+        yaml_content: 'name: order-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 3,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/workflow-output/order-test',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert signals in order (they'll get detected_at timestamps)
+      store.insertSignal({
+        id: 'signal-first',
+        run_id: run.id,
+        step_name: 'step-1',
+        signal_type: 'type-a',
+        signal_file_path: '/tmp/signals/first.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      store.insertSignal({
+        id: 'signal-second',
+        run_id: run.id,
+        step_name: 'step-2',
+        signal_type: 'type-b',
+        signal_file_path: '/tmp/signals/second.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      store.insertSignal({
+        id: 'signal-third',
+        run_id: run.id,
+        step_name: 'step-3',
+        signal_type: 'type-c',
+        signal_file_path: '/tmp/signals/third.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      // Get all signals - should be ordered by detected_at
+      const signals = store.getSignalsByRun(run.id)
+      expect(signals).toHaveLength(3)
+      expect(signals[0].id).toBe('signal-first')
+      expect(signals[1].id).toBe('signal-second')
+      expect(signals[2].id).toBe('signal-third')
+
+      // Verify detected_at is sequential (later entries should have later or equal timestamps)
+      expect(signals[0].detected_at <= signals[1].detected_at).toBe(true)
+      expect(signals[1].detected_at <= signals[2].detected_at).toBe(true)
+    })
+  })
+
+  // ─── Phase 8: review_loop_iterations ──────────────────────────────────────
+
+  describe('Phase 8: review_loop_iterations', () => {
+    setup()
+
+    test('Insert iteration and retrieve by step', () => {
+      // Create workflow and run first (foreign key constraint)
+      const workflow = store.createWorkflow({
+        name: 'iteration-test',
+        description: null,
+        yaml_content: 'name: iteration-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert iteration
+      store.insertIteration({
+        id: 'iter-1',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'task-prod-1',
+        reviewer_task_id: 'task-rev-1',
+        verdict: 'NEEDS_FIX',
+        feedback: 'Issues found',
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:05:00Z',
+      })
+
+      // Retrieve iterations
+      const iterations = store.getIterationsByStep(run.id, 'review-step')
+      expect(iterations).toHaveLength(1)
+      expect(iterations[0].id).toBe('iter-1')
+      expect(iterations[0].iteration).toBe(1)
+      expect(iterations[0].producer_task_id).toBe('task-prod-1')
+      expect(iterations[0].reviewer_task_id).toBe('task-rev-1')
+      expect(iterations[0].verdict).toBe('NEEDS_FIX')
+      expect(iterations[0].feedback).toBe('Issues found')
+      expect(iterations[0].started_at).toBe('2026-01-01T00:00:00Z')
+      expect(iterations[0].completed_at).toBe('2026-01-01T00:05:00Z')
+    })
+
+    test('Update iteration fields', () => {
+      const workflow = store.createWorkflow({
+        name: 'update-iter-test',
+        description: null,
+        yaml_content: 'name: update-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert iteration with partial data
+      store.insertIteration({
+        id: 'iter-2',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'task-prod-2',
+        reviewer_task_id: null,
+        verdict: null,
+        feedback: null,
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: null,
+      })
+
+      // Update iteration with verdict and feedback
+      store.updateIteration('iter-2', {
+        reviewer_task_id: 'task-rev-2',
+        verdict: 'PASS',
+        feedback: 'Looks good',
+        completed_at: '2026-01-01T00:10:00Z',
+      })
+
+      // Verify update
+      const iterations = store.getIterationsByStep(run.id, 'review-step')
+      expect(iterations).toHaveLength(1)
+      expect(iterations[0].reviewer_task_id).toBe('task-rev-2')
+      expect(iterations[0].verdict).toBe('PASS')
+      expect(iterations[0].feedback).toBe('Looks good')
+      expect(iterations[0].completed_at).toBe('2026-01-01T00:10:00Z')
+    })
+
+    test('getLastCompletedIteration returns correct record', () => {
+      const workflow = store.createWorkflow({
+        name: 'last-iter-test',
+        description: null,
+        yaml_content: 'name: last-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert multiple iterations
+      store.insertIteration({
+        id: 'iter-3a',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'task-p-1',
+        reviewer_task_id: 'task-r-1',
+        verdict: 'NEEDS_FIX',
+        feedback: 'First attempt',
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:05:00Z',
+      })
+
+      store.insertIteration({
+        id: 'iter-3b',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 2,
+        producer_task_id: 'task-p-2',
+        reviewer_task_id: 'task-r-2',
+        verdict: 'PASS',
+        feedback: 'Second attempt',
+        started_at: '2026-01-01T00:10:00Z',
+        completed_at: '2026-01-01T00:15:00Z',
+      })
+
+      // Insert incomplete iteration
+      store.insertIteration({
+        id: 'iter-3c',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 3,
+        producer_task_id: 'task-p-3',
+        reviewer_task_id: null,
+        verdict: null,
+        feedback: null,
+        started_at: '2026-01-01T00:20:00Z',
+        completed_at: null,
+      })
+
+      // Get last completed - should be iteration 2
+      const lastCompleted = store.getLastCompletedIteration(run.id, 'review-step')
+      expect(lastCompleted).not.toBeNull()
+      expect(lastCompleted!.iteration).toBe(2)
+      expect(lastCompleted!.verdict).toBe('PASS')
+      expect(lastCompleted!.completed_at).toBe('2026-01-01T00:15:00Z')
+    })
+
+    test('getIterationsByStep returns ordered by iteration ASC', () => {
+      const workflow = store.createWorkflow({
+        name: 'order-iter-test',
+        description: null,
+        yaml_content: 'name: order-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert iterations out of order
+      store.insertIteration({
+        id: 'iter-4c',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 3,
+        producer_task_id: 'task-p-3',
+        reviewer_task_id: 'task-r-3',
+        verdict: 'PASS',
+        feedback: null,
+        started_at: '2026-01-01T00:20:00Z',
+        completed_at: '2026-01-01T00:25:00Z',
+      })
+
+      store.insertIteration({
+        id: 'iter-4a',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'task-p-1',
+        reviewer_task_id: 'task-r-1',
+        verdict: 'NEEDS_FIX',
+        feedback: null,
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:05:00Z',
+      })
+
+      store.insertIteration({
+        id: 'iter-4b',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 2,
+        producer_task_id: 'task-p-2',
+        reviewer_task_id: 'task-r-2',
+        verdict: 'NEEDS_FIX',
+        feedback: null,
+        started_at: '2026-01-01T00:10:00Z',
+        completed_at: '2026-01-01T00:15:00Z',
+      })
+
+      // Get iterations - should be ordered by iteration number
+      const iterations = store.getIterationsByStep(run.id, 'review-step')
+      expect(iterations).toHaveLength(3)
+      expect(iterations[0].iteration).toBe(1)
+      expect(iterations[1].iteration).toBe(2)
+      expect(iterations[2].iteration).toBe(3)
+    })
+
+    test('Multiple iterations for same step', () => {
+      const workflow = store.createWorkflow({
+        name: 'multi-iter-test',
+        description: null,
+        yaml_content: 'name: multi-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert 5 iterations
+      for (let i = 1; i <= 5; i++) {
+        store.insertIteration({
+          id: `iter-5-${i}`,
+          run_id: run.id,
+          step_name: 'review-step',
+          iteration: i,
+          producer_task_id: `task-p-${i}`,
+          reviewer_task_id: `task-r-${i}`,
+          verdict: i === 5 ? 'PASS' : 'NEEDS_FIX',
+          feedback: `Iteration ${i}`,
+          started_at: `2026-01-01T00:${String(i * 10).padStart(2, '0')}:00Z`,
+          completed_at: `2026-01-01T00:${String(i * 10 + 5).padStart(2, '0')}:00Z`,
+        })
+      }
+
+      const iterations = store.getIterationsByStep(run.id, 'review-step')
+      expect(iterations).toHaveLength(5)
+      expect(iterations[4].verdict).toBe('PASS')
+
+      const lastCompleted = store.getLastCompletedIteration(run.id, 'review-step')
+      expect(lastCompleted!.iteration).toBe(5)
+    })
+
+    test('getIterationsByStep returns empty array for no iterations', () => {
+      const workflow = store.createWorkflow({
+        name: 'no-iter-test',
+        description: null,
+        yaml_content: 'name: no-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      const iterations = store.getIterationsByStep(run.id, 'nonexistent-step')
+      expect(iterations).toEqual([])
+    })
+
+    test('getLastCompletedIteration returns null when no completed iterations', () => {
+      const workflow = store.createWorkflow({
+        name: 'incomplete-iter-test',
+        description: null,
+        yaml_content: 'name: incomplete-iter-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      // Insert incomplete iteration
+      store.insertIteration({
+        id: 'iter-7',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'task-p-1',
+        reviewer_task_id: null,
+        verdict: null,
+        feedback: null,
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: null,
+      })
+
+      const lastCompleted = store.getLastCompletedIteration(run.id, 'review-step')
+      expect(lastCompleted).toBeNull()
+    })
+
+    test('Partial update preserves existing fields', () => {
+      const workflow = store.createWorkflow({
+        name: 'partial-update-test',
+        description: null,
+        yaml_content: 'name: partial-update-test',
+        file_path: null,
+        is_valid: true,
+        validation_errors: [],
+        step_count: 1,
+      })
+
+      const run = store.createRun({
+        workflow_id: workflow.id,
+        workflow_name: workflow.name,
+        status: 'running',
+        current_step_index: 0,
+        steps_state: sampleStepsState(),
+        output_dir: '/tmp/out',
+        started_at: null,
+        completed_at: null,
+        error_message: null,
+        variables: null,
+      })
+
+      store.insertIteration({
+        id: 'iter-8',
+        run_id: run.id,
+        step_name: 'review-step',
+        iteration: 1,
+        producer_task_id: 'original-producer',
+        reviewer_task_id: 'original-reviewer',
+        verdict: 'NEEDS_FIX',
+        feedback: 'Original feedback',
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: null,
+      })
+
+      // Update only verdict
+      store.updateIteration('iter-8', {
+        verdict: 'PASS',
+      })
+
+      const iterations = store.getIterationsByStep(run.id, 'review-step')
+      expect(iterations[0].verdict).toBe('PASS')
+      expect(iterations[0].producer_task_id).toBe('original-producer')
+      expect(iterations[0].reviewer_task_id).toBe('original-reviewer')
+      expect(iterations[0].feedback).toBe('Original feedback')
     })
   })
 })

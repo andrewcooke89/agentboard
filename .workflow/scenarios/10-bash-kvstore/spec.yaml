@@ -1,0 +1,52 @@
+schema_version: "feature_spec_v1.0"
+title: "Key-Value Store CLI in Bash"
+description: |
+  Implement a Bash script (kv.sh) that provides a simple file-backed
+  key-value store via command-line subcommands. Supports get, set, delete,
+  list, has, and count operations. Data is stored in a single plain-text
+  file (one key=value per line). Keys are alphanumeric plus hyphens and
+  underscores. Values can contain any printable characters.
+  Handles concurrent access safely using flock.
+  Exits with appropriate exit codes (0 success, 1 not found, 2 usage error).
+  No external dependencies beyond standard Unix utilities (grep, sed, flock).
+  Tests use a test script with assertions.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded: []
+
+acceptance:
+  - type: behavioral
+    description: "kv.sh set mykey myvalue stores the key-value pair"
+  - type: behavioral
+    description: "kv.sh get mykey retrieves the stored value"
+  - type: behavioral
+    description: "kv.sh set mykey newvalue overwrites the previous value"
+  - type: behavioral
+    description: "kv.sh delete mykey removes the key"
+  - type: behavioral
+    description: "kv.sh list outputs all keys, one per line"
+  - type: behavioral
+    description: "kv.sh has mykey exits 0 if key exists, 1 if not"
+  - type: behavioral
+    description: "kv.sh count outputs the number of stored keys"
+  - type: contract
+    description: "kv.sh get nonexistent exits with code 1"
+  - type: contract
+    description: "kv.sh with no arguments prints usage and exits with code 2"
+  - type: contract
+    description: "kv.sh set with invalid key (special chars) exits with code 2"
+  - type: invariant
+    description: "Data file persists between invocations"
+  - type: invariant
+    description: "Keys with spaces in values are handled correctly"
+
+priority: medium
+tags:
+  - cli
+  - key-value
+  - scenario-10
+  - tier-1
+  - moderate

@@ -5,6 +5,7 @@ import type { ServerContext } from './serverContext'
 import type { TaskStore } from './taskStore'
 import type { Task } from '../shared/types'
 import { escapeForDoubleQuotedShell } from './validators'
+import { getEnvForModel } from './modelEnvLoader'
 
 export interface TaskWorker {
   start: () => void
@@ -344,9 +345,26 @@ export function createTaskWorker(
     const escapedOutputPath = escapeForDoubleQuotedShell(outputPath)
     const escapedDonePath = escapeForDoubleQuotedShell(donePath)
 
+    // Resolve model env vars
+    const metadata = task.metadata ? JSON.parse(task.metadata) : {}
+    const modelId = metadata.model || 'claude'
+    const modelEnvs = getEnvForModel(modelId)
+
+    // Build env prefix for tmux command
+    const envPrefix = Object.entries(modelEnvs)
+      .map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}'`)
+      .join(' ')
+
+    // Unset CLAUDECODE to allow spawning Claude Code sessions from within an existing session.
+    // Unset ANTHROPIC_API_KEY so Claude Code uses the user's subscription instead of
+    // pay-as-you-go API auth (which may have insufficient credits).
+    const envCmd = envPrefix
+      ? `env -u CLAUDECODE -u ANTHROPIC_API_KEY ${envPrefix} `
+      : 'env -u CLAUDECODE -u ANTHROPIC_API_KEY '
+
     // Use proper shell escaping for project path (prevents shell injection)
     const escapedPath = escapeForDoubleQuotedShell(task.projectPath)
-    const claudeCmd = `cd "${escapedPath}" && { claude -p "$(cat ${promptFile})" --dangerously-skip-permissions 2>&1; echo "===TASK_EXIT_CODE=$?==="; } | tee "${escapedOutputPath}"; touch "${escapedDonePath}"; exec sh`
+    const claudeCmd = `cd "${escapedPath}" && { ${envCmd}claude -p "$(cat ${promptFile})" --dangerously-skip-permissions 2>&1; echo "===TASK_EXIT_CODE=$?==="; } | tee "${escapedOutputPath}"; touch "${escapedDonePath}"; exec sh`
 
     try {
       const result = Bun.spawnSync(

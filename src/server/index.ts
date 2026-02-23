@@ -3,6 +3,7 @@ import type { ServerWebSocket } from 'bun'
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 import { config } from './config'
+import { loadModelEnvs } from './modelEnvLoader'
 import { ensureTmux } from './prerequisites'
 import { SessionManager } from './SessionManager'
 import { SessionRegistry } from './SessionRegistry'
@@ -40,6 +41,7 @@ import { HistoryService } from './HistoryService'
 checkPortAvailable(config.port, logger)
 ensureTmux()
 pruneOrphanedWsSessions(config, logger)
+loadModelEnvs(config.modelEnvsPath)
 const resolvedTerminalMode = resolveTerminalMode()
 logger.info('terminal_mode_resolved', {
   configured: config.terminalMode,
@@ -223,7 +225,7 @@ const workflowHandlers = config.workflowEngineEnabled
       listRuns: (limit) => workflowStore.listRuns(limit != null ? { limit } : undefined),
       listRunsByWorkflow: (workflowId) => workflowStore.listRunsByWorkflow(workflowId),
       getRun: (runId) => workflowStore.getRun(runId),
-      createRun: (workflowId) => {
+      createRun: (workflowId, variables, projectPath) => {
         const workflow = workflowStore.getWorkflow(workflowId)
         if (!workflow) throw new Error(`Workflow not found: ${workflowId}`)
         const parsed = parseWorkflowYAML(workflow.yaml_content)
@@ -244,17 +246,25 @@ const workflowHandlers = config.workflowEngineEnabled
           resultCollected: false,
           resultContent: null,
         }))
+        const outputDir = path.join(config.workflowDir, 'runs', `${workflow.name}-${Date.now()}`)
+        // Build run variables: merge caller-provided variables with standard paths
+        const runVars: Record<string, string> = {
+          run_dir: outputDir,
+          output_dir: outputDir,
+          ...(projectPath ? { project_path: projectPath } : {}),
+          ...variables,
+        }
         return workflowStore.createRun({
           workflow_id: workflowId,
           workflow_name: workflow.name,
           status: 'running',
           current_step_index: 0,
           steps_state: stepsState,
-          output_dir: path.join(config.workflowDir, 'runs', `${workflow.name}-${Date.now()}`),
+          output_dir: outputDir,
           started_at: new Date().toISOString(),
           completed_at: null,
           error_message: null,
-          variables: null,
+          variables: runVars,
         })
       },
       updateRun: (runId, updates) => workflowStore.updateRun(runId, updates),

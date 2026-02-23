@@ -706,4 +706,591 @@ describe('workflowHandlers REST API', () => {
       expect(res.status).toBe(404)
     })
   })
+
+  // ─── Phase 8 REQ-10: Concern Response Endpoint ─────────────────────
+  describe('POST /api/workflow-runs/:runId/steps/:stepName/concern-response', () => {
+    it('accepts a valid concern response (accept)', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'review-step',
+          type: 'review_loop' as any,
+          status: 'running',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          concernWaitingSince: new Date().toISOString(),
+          concernResolution: null,
+        }],
+      })
+
+      const res = await req(app, 'POST', `/api/workflow-runs/${run.id}/steps/review-step/concern-response`, { action: 'accept' })
+      expect(res.status).toBe(200)
+      const body = await res.json() as Record<string, unknown>
+      expect(body.success).toBe(true)
+
+      // Verify the step state was updated
+      const updatedRun = workflowStore.getRun(run.id)!
+      expect(updatedRun.steps_state[0].concernResolution).toBe('accept')
+    })
+
+    it('accepts a valid concern response (reject)', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'review-step',
+          type: 'review_loop' as any,
+          status: 'running',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          concernWaitingSince: new Date().toISOString(),
+          concernResolution: null,
+        }],
+      })
+
+      const res = await req(app, 'POST', `/api/workflow-runs/${run.id}/steps/review-step/concern-response`, { action: 'reject' })
+      expect(res.status).toBe(200)
+      const body = await res.json() as Record<string, unknown>
+      expect(body.success).toBe(true)
+
+      const updatedRun = workflowStore.getRun(run.id)!
+      expect(updatedRun.steps_state[0].concernResolution).toBe('reject')
+    })
+
+    it('returns 400 for invalid action', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'review-step',
+          type: 'review_loop' as any,
+          status: 'running',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          concernWaitingSince: new Date().toISOString(),
+          concernResolution: null,
+        }],
+      })
+
+      const res = await req(app, 'POST', `/api/workflow-runs/${run.id}/steps/review-step/concern-response`, { action: 'maybe' })
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 400 when step is not waiting for concern', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'review-step',
+          type: 'review_loop' as any,
+          status: 'running',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          concernWaitingSince: null,
+        }],
+      })
+
+      const res = await req(app, 'POST', `/api/workflow-runs/${run.id}/steps/review-step/concern-response`, { action: 'accept' })
+      expect(res.status).toBe(400)
+    })
+
+    it('returns 404 for unknown run', async () => {
+      const res = await req(app, 'POST', '/api/workflow-runs/nonexistent/steps/foo/concern-response', { action: 'accept' })
+      expect(res.status).toBe(404)
+    })
+
+    it('returns 404 for unknown step name', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf)
+
+      const res = await req(app, 'POST', `/api/workflow-runs/${run.id}/steps/nonexistent/concern-response`, { action: 'accept' })
+      expect(res.status).toBe(404)
+    })
+  })
+
+  // ── POST /api/workflow-runs/:runId/signals/:signalId/resolve (SEC-2) ──
+
+  describe('POST /api/workflow-runs/:runId/signals/:signalId/resolve', () => {
+    // Helper to make request with optional auth headers
+    async function reqWithAuth(
+      app: Hono,
+      path: string,
+      body: unknown,
+      headers?: Record<string, string>
+    ): Promise<Response> {
+      const init: RequestInit = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      }
+      return app.request(path, init)
+    }
+
+    it('returns 401 when Authorization header is missing', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-1',
+        }],
+      })
+
+      // Create an unresolved signal
+      workflowStore.insertSignal({
+        id: 'test-signal-1',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-1.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-1/resolve`, {
+        action: 'approve',
+      })
+
+      expect(res.status).toBe(401)
+      const json = await res.json()
+      expect(json.error).toBe('Unauthorized')
+      expect(json.code).toBe('AUTH_001')
+    })
+
+    it('returns 401 when Authorization header is invalid format', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-2',
+        }],
+      })
+
+      workflowStore.insertSignal({
+        id: 'test-signal-2',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-2.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-2/resolve`, {
+        action: 'approve',
+      }, {
+        'Authorization': 'InvalidFormat',
+      })
+
+      expect(res.status).toBe(401)
+      const json = await res.json()
+      expect(json.error).toBe('Unauthorized')
+      expect(json.code).toBe('AUTH_001')
+    })
+
+    it('returns 403 when user role is not human or admin', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-3',
+        }],
+      })
+
+      workflowStore.insertSignal({
+        id: 'test-signal-3',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-3.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-3/resolve`, {
+        action: 'approve',
+      }, {
+        'Authorization': 'Bearer test-token',
+        'X-User-Role': 'bot',
+      })
+
+      expect(res.status).toBe(403)
+      const json = await res.json()
+      expect(json.error).toBe('Forbidden')
+      expect(json.code).toBe('AUTH_003')
+    })
+
+    it('succeeds when authorized with human role', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-4',
+        }],
+      })
+
+      workflowStore.insertSignal({
+        id: 'test-signal-4',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-4.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-4/resolve`, {
+        action: 'approve',
+      }, {
+        'Authorization': 'Bearer test-token',
+        'X-User-Role': 'human',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.action).toBe('approve')
+    })
+
+    it('succeeds when authorized with admin role', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-5',
+        }],
+      })
+
+      workflowStore.insertSignal({
+        id: 'test-signal-5',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-5.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-5/resolve`, {
+        action: 'reject',
+      }, {
+        'Authorization': 'Bearer test-token',
+        'X-User-Role': 'admin',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.action).toBe('reject')
+    })
+
+    it('succeeds when authorized without X-User-Role header (backwards compatibility)', async () => {
+      const wf = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, wf, {
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          taskId: null,
+          startedAt: new Date().toISOString(),
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+          amendmentPhase: 'awaiting_human',
+          amendmentSignalId: 'test-signal-6',
+        }],
+      })
+
+      workflowStore.insertSignal({
+        id: 'test-signal-6',
+        run_id: run.id,
+        step_name: 'build',
+        signal_type: 'amendment',
+        signal_file_path: '/tmp/test-signal-6.json',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 0,
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/signals/test-signal-6/resolve`, {
+        action: 'defer',
+      }, {
+        'Authorization': 'Bearer test-token',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.action).toBe('defer')
+    })
+  })
+
+  // SEC-4: Budget override bounds tests
+  describe('POST /api/workflow-runs/:runId/budget-override (SEC-4)', () => {
+    async function reqWithAuth(
+      app: Hono,
+      path: string,
+      body: unknown,
+      headers?: Record<string, string>
+    ): Promise<Response> {
+      const init: RequestInit = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      }
+      return app.request(path, init)
+    }
+
+    it('rejects budget override exceeding max limit', async () => {
+      const workflow = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, workflow, {
+        status: 'running',
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          amendmentPhase: 'awaiting_human',
+          amendmentCategory: 'quality',
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+        }],
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/budget-override`, {
+        category: 'quality',
+        new_max: 1001, // Exceeds MAX_BUDGET_OVERRIDE of 1000
+        reason: 'Need more budget',
+      }, {
+        'Authorization': 'Bearer test-token',
+      })
+
+      expect(res.status).toBe(400)
+      const json = await res.json()
+      expect(json.error).toBe('Budget override too large')
+      expect(json.max_allowed).toBe(1000)
+      expect(json.requested).toBe(1001)
+    })
+
+    it('accepts budget override at max limit', async () => {
+      const workflow = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, workflow, {
+        status: 'running',
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          amendmentPhase: 'awaiting_human',
+          amendmentCategory: 'quality',
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+        }],
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/budget-override`, {
+        category: 'quality',
+        new_max: 1000, // Exactly at MAX_BUDGET_OVERRIDE
+        reason: 'Max budget',
+      }, {
+        'Authorization': 'Bearer test-token',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.new_max).toBe(1000)
+    })
+
+    it('accepts small budget override without warning', async () => {
+      const workflow = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, workflow, {
+        status: 'running',
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          amendmentPhase: 'awaiting_human',
+          amendmentCategory: 'quality',
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+        }],
+      })
+
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/budget-override`, {
+        category: 'quality',
+        new_max: 50, // Below warning threshold of 100
+        reason: 'Small increase',
+      }, {
+        'Authorization': 'Bearer test-token',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.new_max).toBe(50)
+    })
+
+    it('accepts large budget override with logging', async () => {
+      const workflow = makeWorkflow(workflowStore)
+      const run = makeRunForWorkflow(workflowStore, workflow, {
+        status: 'running',
+        steps_state: [{
+          name: 'build',
+          type: 'spawn_session',
+          status: 'paused_escalated',
+          amendmentPhase: 'awaiting_human',
+          amendmentCategory: 'reconciliation',
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: null,
+          resultCollected: false,
+          resultContent: null,
+        }],
+      })
+
+      // Large override (>100) should be logged but accepted
+      const res = await reqWithAuth(app, `/api/workflow-runs/${run.id}/budget-override`, {
+        category: 'reconciliation',
+        new_max: 500, // Above warning threshold but below max
+        reason: 'Major reconciliation needed',
+      }, {
+        'Authorization': 'Bearer test-token',
+      })
+
+      expect(res.status).toBe(200)
+      const json = await res.json()
+      expect(json.success).toBe(true)
+      expect(json.new_max).toBe(500)
+      expect(json.category).toBe('reconciliation')
+    })
+  })
 })

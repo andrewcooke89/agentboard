@@ -192,14 +192,15 @@ describe('poolStore', () => {
     })
   })
 
-  // ─── Reconcile Orphaned Slots ────────────────────────────────────────────
+  // ─── Reconcile Orphaned Slots (CF-03) ────────────────────────────────────
 
   describe('reconcileOrphanedSlots', () => {
-    test('marks all active and queued slots as released (TEST-24)', () => {
+    test('marks all active and queued slots as released when no checker provided (TEST-24, fallback)', () => {
       store.insertSlot({ runId: 'r1', stepName: 's1', tier: 1, status: 'active' })
       store.insertSlot({ runId: 'r2', stepName: 's2', tier: 1, status: 'queued' })
       store.insertSlot({ runId: 'r3', stepName: 's3', tier: 1, status: 'active' })
 
+      // No checker = fallback behavior (release all)
       const changed = store.reconcileOrphanedSlots()
       expect(changed).toBe(3)
 
@@ -210,6 +211,61 @@ describe('poolStore', () => {
     test('returns 0 when no orphaned slots', () => {
       const changed = store.reconcileOrphanedSlots()
       expect(changed).toBe(0)
+    })
+
+    test('CF-03: only releases slots where tmux session is dead', () => {
+      store.insertSlot({ runId: 'r1', stepName: 'alive-step', tier: 1, status: 'active' })
+      store.insertSlot({ runId: 'r2', stepName: 'dead-step', tier: 1, status: 'active' })
+      store.insertSlot({ runId: 'r3', stepName: 'another-alive', tier: 1, status: 'active' })
+
+      // Mock tmux checker: only 'dead-step' is dead
+      const released = store.reconcileOrphanedSlots(
+        (_slotId, _runId, stepName) => stepName !== 'dead-step',
+      )
+
+      expect(released).toBe(1) // Only dead-step released
+      expect(store.getActiveCount()).toBe(2) // alive-step + another-alive still active
+      const active = store.listActiveSlots()
+      const activeNames = active.map(s => s.stepName)
+      expect(activeNames).toContain('alive-step')
+      expect(activeNames).toContain('another-alive')
+      expect(activeNames).not.toContain('dead-step')
+    })
+
+    test('CF-03: promotes queued entries after releasing orphaned slots', () => {
+      // maxSlots = 2, fill to capacity + queue
+      store.insertSlot({ runId: 'r1', stepName: 'active-alive', tier: 1, status: 'active' })
+      store.insertSlot({ runId: 'r2', stepName: 'active-dead', tier: 1, status: 'active' })
+      store.insertSlot({ runId: 'r3', stepName: 'queued-high', tier: 5, status: 'queued' })
+      store.insertSlot({ runId: 'r4', stepName: 'queued-low', tier: 1, status: 'queued' })
+
+      // Mock: active-dead is dead
+      const released = store.reconcileOrphanedSlots(
+        (_slotId, _runId, stepName) => stepName !== 'active-dead',
+      )
+
+      expect(released).toBe(1)
+      // After release: 1 active slot (active-alive) + 1 newly promoted (queued-high, highest tier)
+      expect(store.getActiveCount()).toBe(2)
+      const active = store.listActiveSlots()
+      const activeNames = active.map(s => s.stepName)
+      expect(activeNames).toContain('active-alive')
+      expect(activeNames).toContain('queued-high') // Promoted from queue (highest tier)
+
+      // queued-low should still be in queue
+      const queued = store.listQueuedSlots()
+      expect(queued).toHaveLength(1)
+      expect(queued[0].stepName).toBe('queued-low')
+    })
+
+    test('CF-03: all alive slots kept when all tmux sessions are alive', () => {
+      store.insertSlot({ runId: 'r1', stepName: 's1', tier: 1, status: 'active' })
+      store.insertSlot({ runId: 'r2', stepName: 's2', tier: 1, status: 'active' })
+
+      // All alive
+      const released = store.reconcileOrphanedSlots(() => true)
+      expect(released).toBe(0)
+      expect(store.getActiveCount()).toBe(2)
     })
   })
 

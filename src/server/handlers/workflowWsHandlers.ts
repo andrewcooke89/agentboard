@@ -14,7 +14,7 @@ export interface WorkflowStoreAdapter {
   listRuns(limit?: number): ReturnType<WorkflowStore['listRuns']>
   listRunsByWorkflow: WorkflowStore['listRunsByWorkflow']
   getRun: WorkflowStore['getRun']
-  createRun(workflowId: string): ReturnType<WorkflowStore['createRun']>
+  createRun(workflowId: string, variables?: Record<string, string>, projectPath?: string): ReturnType<WorkflowStore['createRun']>
   updateRun: WorkflowStore['updateRun']
   countActiveRuns(): number
 }
@@ -67,7 +67,7 @@ export function createWorkflowWsHandlers(
     ws: ServerWebSocket<WSData>,
     message: Extract<ClientMessage, { type: 'workflow-run' }>
   ): void {
-    const { workflowId } = message
+    const { workflowId, variables, projectPath } = message
 
     // Validate workflow exists
     const workflow = workflowStore.getWorkflow(workflowId)
@@ -90,7 +90,7 @@ export function createWorkflowWsHandlers(
     }
 
     try {
-      const run = workflowStore.createRun(workflowId)
+      const run = workflowStore.createRun(workflowId, variables, projectPath)
       ctx.broadcast({ type: 'workflow-run-update', run })
       ctx.logger.info('workflow_run_triggered', { workflowId, runId: run.id })
     } catch (err) {

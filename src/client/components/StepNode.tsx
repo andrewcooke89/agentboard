@@ -2,19 +2,32 @@
 import type { StepRunState, StepRunStatus } from '@shared/types'
 
 /** Status-to-Tailwind background + text classes */
-const STATUS_CLASSES: Record<StepRunStatus, string> = {
+export const STATUS_CLASSES: Record<StepRunStatus, string> = {
   pending: 'bg-gray-700 text-gray-300 border-gray-600',
   running: 'bg-blue-600 text-white border-blue-400 animate-pulse',
   completed: 'bg-green-600 text-white border-green-400',
   failed: 'bg-red-600 text-white border-red-400',
-  skipped: 'bg-yellow-500 text-gray-900 border-yellow-400',
-  queued: 'bg-indigo-600 text-white border-indigo-400 animate-pulse',
+  skipped: 'bg-gray-500 text-gray-300 border-gray-400',
+  queued: 'bg-yellow-500 text-gray-900 border-yellow-400',
   cancelled: 'bg-gray-500 text-white border-gray-400',
   partial: 'bg-orange-500 text-white border-orange-400',
+  // Phase 7: Signal statuses
+  waiting_signal: 'bg-blue-600 text-white border-blue-400 animate-pulse',
+  signal_received: 'bg-blue-500 text-white border-blue-400',
+  signal_timeout: 'bg-red-500 text-white border-red-400',
+  signal_error: 'bg-red-600 text-white border-red-400',
+  signal_resolved: 'bg-green-600 text-white border-green-400',
+  // Phase 15: New step statuses (REQ-18)
+  paused_amendment: 'bg-orange-500 text-white border-orange-400',
+  paused_escalated: 'bg-orange-500 text-white border-orange-400',
+  paused_human: 'bg-orange-500 text-white border-orange-400',
+  paused_starvation: 'bg-yellow-500 text-gray-900 border-yellow-400',
+  paused_exploration: 'bg-blue-500 text-white border-blue-400',
+  invalidated: 'bg-gray-600 text-white border-gray-500 step-invalidated',
 }
 
 /** Human-readable status labels */
-const STATUS_LABELS: Record<StepRunStatus, string> = {
+export const STATUS_LABELS: Record<StepRunStatus, string> = {
   pending: 'Pending',
   running: 'Running',
   completed: 'Completed',
@@ -23,6 +36,19 @@ const STATUS_LABELS: Record<StepRunStatus, string> = {
   queued: 'Queued',
   cancelled: 'Cancelled',
   partial: 'Partial',
+  // Phase 7
+  waiting_signal: 'Waiting Signal',
+  signal_received: 'Signal Received',
+  signal_timeout: 'Signal Timeout',
+  signal_error: 'Signal Error',
+  signal_resolved: 'Signal Resolved',
+  // Phase 15 (REQ-18)
+  paused_amendment: 'Paused (Amendment)',
+  paused_escalated: 'Paused (Escalated)',
+  paused_human: 'Paused (Human)',
+  paused_starvation: 'Paused (Starvation)',
+  paused_exploration: 'Paused (Exploration)',
+  invalidated: 'Invalidated',
 }
 
 /** SVG icons per status (16x16 viewBox) */
@@ -37,6 +63,7 @@ function StatusIcon({ status }: { status: StepRunStatus }) {
         </svg>
       )
     case 'running':
+    case 'waiting_signal':
       return (
         <svg className={`${cls} animate-spin`} viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
@@ -44,12 +71,15 @@ function StatusIcon({ status }: { status: StepRunStatus }) {
         </svg>
       )
     case 'completed':
+    case 'signal_resolved':
       return (
         <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )
     case 'failed':
+    case 'signal_error':
+    case 'signal_timeout':
       return (
         <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4.5 4.5L11.5 11.5M11.5 4.5L4.5 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -62,6 +92,42 @@ function StatusIcon({ status }: { status: StepRunStatus }) {
           <line x1="12.5" y1="4" x2="12.5" y2="12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       )
+    case 'queued':
+    case 'paused_starvation':
+      return (
+        <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="5" cy="8" r="1" fill="currentColor" />
+          <circle cx="8" cy="8" r="1" fill="currentColor" />
+          <circle cx="11" cy="8" r="1" fill="currentColor" />
+        </svg>
+      )
+    case 'paused_amendment':
+    case 'paused_escalated':
+    case 'paused_human':
+      return (
+        <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="4" y="3" width="3" height="10" rx="0.5" fill="currentColor" />
+          <rect x="9" y="3" width="3" height="10" rx="0.5" fill="currentColor" />
+        </svg>
+      )
+    case 'paused_exploration':
+      return (
+        <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      )
+    case 'invalidated':
+      return (
+        <svg className={cls} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 2L14 13H2L8 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M8 6V9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="11" r="0.75" fill="currentColor" />
+        </svg>
+      )
+    default:
+      return null
   }
 }
 
@@ -72,6 +138,12 @@ function typeLabel(type: string): string {
     case 'check_file': return 'file'
     case 'check_output': return 'output'
     case 'delay': return 'delay'
+    case 'parallel_group': return 'parallel'
+    case 'review_loop': return 'review'
+    case 'native_step': return 'command'
+    case 'spec_validate': return 'validate'
+    case 'amendment_check': return 'amendment'
+    case 'reconcile-spec': return 'reconcile'
     default: return type
   }
 }

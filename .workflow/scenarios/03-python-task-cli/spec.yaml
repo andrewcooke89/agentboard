@@ -1,0 +1,52 @@
+schema_version: "feature_spec_v1.0"
+title: "CLI Task Manager"
+description: |
+  Implement a command-line task manager in Python. Users can add, list,
+  complete, and delete tasks. Tasks are persisted to a JSON file in the
+  user's home directory (~/.tasks.json). Each task has an ID, title,
+  optional description, created timestamp, and completed flag. The CLI
+  uses argparse subcommands. No external dependencies beyond the Python
+  standard library.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded:
+    - __pycache__/
+    - .venv/
+    - dist/
+
+acceptance:
+  - type: behavioral
+    description: "'task add <title>' creates a new task with auto-incremented ID"
+  - type: behavioral
+    description: "'task add <title> -d <desc>' creates a task with description"
+  - type: behavioral
+    description: "'task list' shows all tasks with ID, status, and title"
+  - type: behavioral
+    description: "'task list --done' filters to completed tasks only"
+  - type: behavioral
+    description: "'task list --pending' filters to pending tasks only"
+  - type: behavioral
+    description: "'task done <id>' marks a task as completed with timestamp"
+  - type: behavioral
+    description: "'task delete <id>' removes a task permanently"
+  - type: behavioral
+    description: "'task delete <id>' prints error for non-existent ID"
+  - type: contract
+    description: "Tasks persist across invocations via JSON file"
+  - type: contract
+    description: "Task IDs are stable integers that never repeat"
+  - type: invariant
+    description: "Empty task list prints a friendly message, not an error"
+  - type: invariant
+    description: "JSON file is created automatically on first use"
+
+priority: medium
+tags:
+  - cli
+  - python
+  - scenario-03
+  - tier-1
+  - moderate

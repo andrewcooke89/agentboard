@@ -4,6 +4,9 @@ import type { StepRunState, WorkflowRun } from '@shared/types'
 import StepNode from './StepNode'
 import TaskOutputViewer from './TaskOutputViewer'
 import { useTaskStore } from '../stores/taskStore'
+import ParallelGroupNode from './ParallelGroupNode'
+import ReviewLoopNode from './ReviewLoopNode'
+import CleanupStatusDisplay from './CleanupStatusDisplay'
 
 /** Format ISO timestamp to locale time string */
 function formatTime(iso: string | null): string {
@@ -160,6 +163,13 @@ function StepDetailPanel({ step, onClose, onNavigateToSession }: { step: StepRun
           )}
         </div>
       )}
+
+      {/* Cleanup status for failed steps (REQ-26) */}
+      {step.status === 'failed' && step.cleanupState && (
+        <div className="mt-3">
+          <CleanupStatusDisplay cleanupState={step.cleanupState} label="Cleanup" />
+        </div>
+      )}
     </div>
   )
 }
@@ -277,14 +287,29 @@ export default function PipelineDiagram({ run, compact = false, onNavigateToSess
                   aria-hidden="true"
                 />
               )}
-              <StepNode
-                step={step}
-                index={i}
-                isSelected={selectedStepIndex === i}
-                isFocused={focusedIndex === i}
-                onClick={handleNodeClick}
-                compact={compact}
-              />
+              {step.type === 'parallel_group' ? (
+                <ParallelGroupNode
+                  step={step}
+                  isSelected={selectedStepIndex === i}
+                  onSelect={() => handleNodeClick(i)}
+                />
+              ) : step.type === 'review_loop' ? (
+                <ReviewLoopNode
+                  step={step}
+                  maxIterations={(step.reviewIterations?.length ?? 0) + (step.status === 'completed' || step.status === 'failed' ? 0 : 1) || 3}
+                  isSelected={selectedStepIndex === i}
+                  onSelect={() => handleNodeClick(i)}
+                />
+              ) : (
+                <StepNode
+                  step={step}
+                  index={i}
+                  isSelected={selectedStepIndex === i}
+                  isFocused={focusedIndex === i}
+                  onClick={handleNodeClick}
+                  compact={compact}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -297,6 +322,13 @@ export default function PipelineDiagram({ run, compact = false, onNavigateToSess
           onClose={() => setSelectedStepIndex(null)}
           onNavigateToSession={onNavigateToSession}
         />
+      )}
+
+      {/* Pipeline-level cleanup status (REQ-27) */}
+      {run?.pipelineCleanupState && (
+        <div className="mt-2 px-2">
+          <CleanupStatusDisplay cleanupState={run.pipelineCleanupState} label="Pipeline Cleanup" />
+        </div>
       )}
     </div>
   )

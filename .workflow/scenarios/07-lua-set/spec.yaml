@@ -1,0 +1,50 @@
+schema_version: "feature_spec_v1.0"
+title: "Set Data Structure in Lua"
+description: |
+  Implement a Lua module providing a Set data structure with standard set
+  operations. A Set contains unique elements (any hashable Lua value).
+  Provides add, remove, contains, size, is_empty, to_array, and iteration.
+  Supports set algebra: union, intersection, difference, symmetric_difference,
+  is_subset, is_superset, and equality. Sets are created via Set.new().
+  No external dependencies beyond the Lua standard library.
+  Includes a test file using assert() for validation.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded: []
+
+acceptance:
+  - type: behavioral
+    description: "Adding an element makes contains() return true for it"
+  - type: behavioral
+    description: "Adding a duplicate element does not change the size"
+  - type: behavioral
+    description: "Removing an element makes contains() return false"
+  - type: behavioral
+    description: "union({1,2}, {2,3}) returns {1,2,3}"
+  - type: behavioral
+    description: "intersection({1,2,3}, {2,3,4}) returns {2,3}"
+  - type: behavioral
+    description: "difference({1,2,3}, {2,3,4}) returns {1}"
+  - type: behavioral
+    description: "symmetric_difference({1,2,3}, {2,3,4}) returns {1,4}"
+  - type: behavioral
+    description: "is_subset({1,2}, {1,2,3}) returns true"
+  - type: contract
+    description: "Removing a non-existent element does not error"
+  - type: contract
+    description: "An empty set has size 0 and is_empty returns true"
+  - type: invariant
+    description: "to_array returns all elements (order may vary)"
+  - type: invariant
+    description: "Two sets with the same elements are equal via equals()"
+
+priority: medium
+tags:
+  - data-structure
+  - set
+  - scenario-07
+  - tier-1
+  - moderate

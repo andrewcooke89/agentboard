@@ -1,0 +1,48 @@
+schema_version: "feature_spec_v1.0"
+title: "Expression Calculator Library"
+description: |
+  Implement a Go library that evaluates arithmetic expressions given as strings.
+  Supports +, -, *, / operators with correct precedence and parentheses.
+  Handles integer and floating-point numbers. Returns an error for invalid
+  expressions (unbalanced parens, division by zero, unexpected tokens).
+  Exposed as a single Eval(expr string) (float64, error) function.
+  No external dependencies beyond the Go standard library.
+
+scope:
+  included:
+    - pkg/
+    - cmd/
+  excluded:
+    - vendor/
+
+acceptance:
+  - type: behavioral
+    description: "Eval('2 + 3') returns 5.0"
+  - type: behavioral
+    description: "Eval('2 + 3 * 4') returns 14.0 (precedence)"
+  - type: behavioral
+    description: "Eval('(2 + 3) * 4') returns 20.0 (parentheses)"
+  - type: behavioral
+    description: "Eval('10 / 3') returns 3.333... (float division)"
+  - type: behavioral
+    description: "Eval('10 / 0') returns division by zero error"
+  - type: behavioral
+    description: "Eval('-5 + 3') handles unary minus correctly"
+  - type: behavioral
+    description: "Eval('((2 + 3))') handles nested parentheses"
+  - type: contract
+    description: "Invalid expressions return a descriptive error, never panic"
+  - type: contract
+    description: "Eval('') returns an error for empty input"
+  - type: invariant
+    description: "Whitespace between tokens is ignored"
+  - type: invariant
+    description: "Result is always float64 regardless of integer inputs"
+
+priority: medium
+tags:
+  - parser
+  - calculator
+  - scenario-04
+  - tier-1
+  - moderate

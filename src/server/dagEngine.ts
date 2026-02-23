@@ -22,19 +22,59 @@ import type {
   WorkflowRun,
   WorkflowStep,
   StepRunState,
+  StepCondition,
   WorkflowStatus,
+  CleanupAction,
+  CleanupState,
 } from '../shared/types'
-import { substituteVariables, shellEscape } from './workflowSchema'
+import { substituteVariables, shellEscape, applyDefaults, parseWorkflowYAML } from './workflowSchema'
 import type { ParsedWorkflow } from './workflowSchema'
 import { sanitizeForLog } from './validators'
+import { validateSpec } from './specValidator'
+import {
+  ensureSignalDir,
+  checkStepSignals,
+  createSyntheticSignal,
+  writeResolutionFile,
+  validateSignalAuthority,
+  readSignalFile,
+  
+} from './signalProtocol'
+import type { SignalFile } from './signalProtocol'
+import {
+  readReviewerVerdict,
+  writeReviewLoopSummary,
+  normalizeVerdict,
+} from './reviewLoopProtocol'
+import type { ReviewLoopSummary, IterationSummary } from './reviewLoopProtocol'
+import yaml from 'js-yaml'
+import {
+  parseAmendmentSignal,
+  shouldAutoReview,
+  shouldEscalateToHuman,
+  isFundamental,
+  buildHandlerPrompt,
+  buildResumePrompt,
+  readResolutionFile,
+  type AmendmentConfig,
+  type AmendmentSignal,
+} from './amendmentHandler'
+import { callGemini, type GeminiRequest, type GeminiResponse, type BackoffConfig } from './geminiClient'
+import { processAggregatorStep } from './aggregatorHandler'
+import { evaluateCondition as evaluateConditionExpr, evaluateExpression, type ConditionContext } from './conditionEvaluator'
+import { expandPerWorkUnit, type ExpansionContext } from './perWorkUnitEngine'
+import { prepareContextBriefing, createDefaultBriefingConfig } from './contextLibrarian'
+import type { ConsumerProfile } from './contextLibrarian'
+import { loadProjectProfileRaw } from './projectProfile'
 
 // Steps that bypass the session pool (they don't need a tmux session)
 const POOL_BYPASS_TYPES = new Set([
   'native_step', 'check_file', 'check_output', 'delay',
   'gemini_offload', 'spec_validate', 'aggregator', 'amendment_check',
+  'reconcile-spec',
 ])
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped', 'cancelled', 'partial'])
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped', 'cancelled', 'partial', 'signal_timeout', 'signal_error', 'paused_escalated', 'paused_human', 'paused_starvation'])
 
 const MAX_NATIVE_STDOUT = 1024 * 1024 // 1 MB
 
@@ -42,6 +82,7 @@ const MAX_NATIVE_STDOUT = 1024 * 1024 // 1 MB
 const PREDEFINED_ACTIONS: Record<string, string> = {
   git_rebase_from_main: 'git fetch origin main && git rebase origin/main',
   run_tests: 'bun test',
+  'prepare-context': '__handled_internally__',  // Phase 20: handled by contextLibrarian
 }
 
 // Grace period for termination state machine (M-02)
@@ -57,6 +98,54 @@ export function createDAGEngine(
   taskStore: TaskStore,
   pool: SessionPool | null,
 ): DAGEngine {
+
+  // REQ-14/REQ-44: Track processed signal files per step to prevent re-processing.
+  // Key: "{runId}:{stepName}", Value: Set of processed file paths.
+  const processedSignalFiles = new Map<string, Set<string>>()
+
+  // ROBUSTNESS-2 (REQ-37): In-memory re-entrance guard for processReviewLoop.
+  // Key: "{runId}:{stepName}". NOT persisted to DB to avoid stale locks.
+  const reviewLoopProcessing = new Set<string>()
+
+  function getProcessedSignals(runId: string, stepName: string): Set<string> {
+    const key = `${runId}:${stepName}`
+    let set = processedSignalFiles.get(key)
+    if (!set) {
+      set = new Set<string>()
+      processedSignalFiles.set(key, set)
+    }
+    return set
+  }
+
+  function generateIterationId(): string {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  /**
+   * P-1 (REQ-25): Load review_loop checkpoint extensions from signal-checkpoint files.
+   * Scans the run's signal directory for checkpoint files containing review_loop extensions
+   * (iteration count, previous feedback) for crash recovery.
+   */
+  function loadCheckpointExtensions(runDir: string, _stepName: string): { iteration?: number; previous_feedback?: string } | null {
+    try {
+      const signalDir = path.join(runDir, 'signals')
+      if (!fs.existsSync(signalDir)) return null
+      const files = fs.readdirSync(signalDir).filter(f => f.startsWith('checkpoint-') && (f.endsWith('.yaml') || f.endsWith('.yml')))
+      for (const file of files) {
+        const filePath = path.join(signalDir, file)
+        const signal = readSignalFile(filePath)
+        if (signal?.checkpoint?.extensions?.review_loop) {
+          const ext = signal.checkpoint.extensions.review_loop as { iteration?: number; previous_feedback?: string }
+          if (ext && typeof ext === 'object') {
+            return ext
+          }
+        }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -80,16 +169,24 @@ export function createDAGEngine(
       steps_state: run.steps_state,
       completed_at: run.completed_at,
       error_message: run.error_message,
+      pipelineCleanupState: run.pipelineCleanupState,
     })
     if (updated) broadcastRunUpdate(updated)
   }
 
-  function failWorkflow(run: WorkflowRun, errorMessage: string): void {
+  function failWorkflow(run: WorkflowRun, errorMessage: string, parsed?: ParsedWorkflow): void {
     run.status = 'failed' as WorkflowStatus
     run.error_message = errorMessage
     run.completed_at = new Date().toISOString()
     saveAndBroadcast(run)
     ctx.logger.info('dag_workflow_failed', { runId: run.id, error: sanitizeForLog(errorMessage) })
+
+    // Phase 15: Pipeline-level on_error cleanup (REQ-27)
+    if (parsed?.on_error && parsed.on_error.length > 0) {
+      runCleanupActions(run, parsed.on_error, 'pipeline').catch(err => {
+        ctx.logger.warn('pipeline_cleanup_error', { runId: run.id, error: String(err) })
+      })
+    }
   }
 
   function completeWorkflow(run: WorkflowRun): void {
@@ -99,11 +196,105 @@ export function createDAGEngine(
     ctx.logger.info('dag_workflow_completed', { runId: run.id })
   }
 
+  // Phase 15: Run cleanup actions for a step or pipeline (REQ-24, REQ-27)
+  async function runCleanupActions(
+    run: WorkflowRun,
+    actions: CleanupAction[],
+    level: 'step' | 'pipeline',
+    stepState?: StepRunState,
+  ): Promise<void> {
+    const cleanupState: CleanupState = {
+      level,
+      status: 'running',
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      errorMessage: null,
+    }
+
+    if (level === 'step' && stepState) {
+      stepState.cleanupState = cleanupState
+    } else {
+      run.pipelineCleanupState = cleanupState
+    }
+
+    saveAndBroadcast(run)
+    ctx.broadcast({
+      type: 'cleanup_started',
+      runId: run.id,
+      stepName: stepState?.name ?? '',
+      level,
+    })
+
+    // Simple string-level variable substitution for cleanup commands
+    const subst = (template: string): string => {
+      const vars = run.variables ?? {}
+      return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_m, key: string) => vars[key] ?? '')
+    }
+
+    let hasError = false
+    for (const action of actions) {
+      try {
+        const workDir = action.working_dir
+          ? subst(action.working_dir)
+          : run.output_dir
+        const cmd = subst(action.command)
+        const timeout = (action.timeoutSeconds ?? 30) * 1000
+
+        const proc = Bun.spawn(['sh', '-c', cmd], {
+          cwd: workDir,
+          stdout: 'pipe',
+          stderr: 'pipe',
+          env: { ...process.env },
+        })
+
+        const timer = setTimeout(() => proc.kill(), timeout)
+        await proc.exited
+        clearTimeout(timer)
+
+        if (proc.exitCode !== 0) {
+          ctx.logger.warn('cleanup_action_failed', {
+            runId: run.id,
+            stepName: stepState?.name,
+            level,
+            command: cmd.slice(0, 200),
+            exitCode: proc.exitCode,
+          })
+          hasError = true
+        }
+      } catch (err) {
+        ctx.logger.warn('cleanup_action_error', {
+          runId: run.id,
+          stepName: stepState?.name,
+          level,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        hasError = true
+      }
+    }
+
+    cleanupState.status = hasError ? 'failed' : 'completed'
+    cleanupState.completedAt = new Date().toISOString()
+    if (hasError) {
+      cleanupState.errorMessage = 'One or more cleanup actions failed (see logs)'
+    }
+
+    ctx.broadcast({
+      type: 'cleanup_completed',
+      runId: run.id,
+      stepName: stepState?.name ?? '',
+      level,
+      success: !hasError,
+    })
+
+    saveAndBroadcast(run)
+  }
+
   function getRunTier(run: WorkflowRun, parsed: ParsedWorkflow): number {
     if (run.variables && 'tier' in run.variables) {
       const val = parseInt(run.variables.tier, 10)
       if (!isNaN(val)) return val
     }
+    if (parsed.defaults?.tier !== undefined) return parsed.defaults.tier
     if (parsed.default_tier !== undefined) return parsed.default_tier
     return 1
   }
@@ -121,6 +312,7 @@ export function createDAGEngine(
   function evaluateCondition(
     run: WorkflowRun,
     condition: WorkflowStep['condition'],
+    parsed: ParsedWorkflow,
   ): { met: boolean; reason?: string } {
     if (!condition) return { met: true }
     switch (condition.type) {
@@ -141,6 +333,40 @@ export function createDAGEngine(
         }
         return { met: false, reason: `output of "${condition.step}" does not contain "${condition.contains}"` }
       }
+      case 'expression': {
+        // P1-1: Wire conditionEvaluator for expression-type conditions
+        const runTier = getRunTier(run, parsed)
+        const stepOutputs: Record<string, Record<string, unknown>> = {}
+        for (const stepState of run.steps_state) {
+          if (stepState.resultContent) {
+            try {
+              stepOutputs[stepState.name] = { _raw: stepState.resultContent, ...JSON.parse(stepState.resultContent) }
+            } catch {
+              stepOutputs[stepState.name] = { _raw: stepState.resultContent }
+            }
+          }
+        }
+        // Phase 25: Load project profile for expression condition evaluation
+        let projectProfile: Record<string, unknown> | undefined
+        const projectPath = run.variables?.project_path
+        if (projectPath) {
+          try {
+            projectProfile = loadProjectProfileRaw(projectPath)
+          } catch { /* no profile available */ }
+        }
+        const condCtx: ConditionContext = {
+          tier: runTier,
+          stepOutputs,
+          variables: run.variables ?? {},
+          projectProfile,
+        }
+        // Phase 25: Resolve template variables in condition expression before evaluation
+        // e.g. file_exists("{{ run_dir }}/compiler-analysis/pre-impl-ref.txt")
+        const resolvedExpr = resolveTemplateVarsInExpr(condition.expr, run, projectProfile)
+        const resolvedCondition: StepCondition = { type: 'expression', expr: resolvedExpr }
+        const result = evaluateConditionExpr(resolvedCondition, condCtx)
+        return { met: result, reason: result ? undefined : `expression "${condition.expr}" evaluated to false` }
+      }
       default:
         return { met: false, reason: 'unknown condition type' }
     }
@@ -148,14 +374,18 @@ export function createDAGEngine(
 
   /** Get effective steps with variable substitution */
   function getEffectiveSteps(run: WorkflowRun, parsed: ParsedWorkflow): WorkflowStep[] | null {
+    let steps = parsed.steps
+    if (parsed.defaults) {
+      steps = applyDefaults(steps, parsed.defaults)
+    }
     if (run.variables && Object.keys(run.variables).length > 0) {
       try {
-        return substituteVariables(parsed.steps, run.variables)
+        return substituteVariables(steps, run.variables)
       } catch {
         return null
       }
     }
-    return parsed.steps
+    return steps
   }
 
   /**
@@ -173,6 +403,46 @@ export function createDAGEngine(
       }
     }
     return map
+  }
+
+  /**
+   * CRITICAL #1: Ensure per_work_unit children exist in runtime stepDefMap.
+   * Child states are pre-expanded at run creation, but parsed YAML does not include
+   * those synthetic child names. Rebuild child definitions from parent config here.
+   */
+  function hydratePerWorkUnitChildDefs(run: WorkflowRun, stepDefMap: Map<string, WorkflowStep>): void {
+    const seenContainers = new Set<string>()
+    for (const state of run.steps_state) {
+      if (state.parentGroup) seenContainers.add(state.parentGroup)
+    }
+
+    for (const containerName of seenContainers) {
+      const containerState = run.steps_state.find((s) => s.name === containerName)
+      if (!containerState?.isPerWorkUnitContainer) continue
+
+      const containerDef = stepDefMap.get(containerName)
+      if (!containerDef?.per_work_unit) continue
+
+      const expansionCtx: ExpansionContext = {
+        runId: run.id,
+        outputDir: run.output_dir,
+        defaultAgent: containerDef.agent,
+        variables: run.variables,
+      }
+
+      const expanded = expandPerWorkUnit(containerDef, expansionCtx)
+      for (const item of expanded) {
+        if (!stepDefMap.has(item.name)) {
+          stepDefMap.set(item.name, {
+            ...item.step,
+            name: item.name,
+            ...(item.dependsOnExpanded && item.dependsOnExpanded.length > 0
+              ? { depends_on: item.dependsOnExpanded }
+              : {}),
+          })
+        }
+      }
+    }
   }
 
   /**
@@ -204,9 +474,33 @@ export function createDAGEngine(
   function areTopLevelDependenciesMet(
     run: WorkflowRun,
     stepIndex: number,
-    _stateIndexMap: Map<string, number>,
+    stateIndexMap: Map<string, number>,
+    stepDefMap?: Map<string, WorkflowStep>,
   ): boolean {
-    // Find the previous top-level step (skip children with parentGroup)
+    const stepState = run.steps_state[stepIndex]
+    const stepDef = stepDefMap?.get(stepState.name)
+
+    // Phase 25: If step has explicit depends_on, use those instead of positional ordering
+    if (stepDef?.depends_on && stepDef.depends_on.length > 0) {
+      for (const depName of stepDef.depends_on) {
+        const depIdx = stateIndexMap.get(depName)
+        if (depIdx === undefined) continue // Unknown dep — skip (may be optional)
+        const depState = run.steps_state[depIdx]
+        // Completed or skipped = satisfied
+        if (depState.status === 'completed' || depState.status === 'skipped') continue
+        // Paused statuses block dependents — these require human intervention or resolution
+        // before the pipeline can proceed. paused_human (review escalation), paused_starvation
+        // (pool exhaustion), paused_amendment (spec concern), paused_exploration (needs input),
+        // and paused_escalated all mean the step has NOT successfully completed.
+        // Failed dependency blocks this step
+        if (depState.status === 'failed' || depState.status === 'cancelled') return false
+        // Any other status (pending, running, queued) = not yet satisfied
+        return false
+      }
+      return true
+    }
+
+    // No explicit depends_on: fall back to positional (previous top-level step must be terminal)
     let prevTopLevelIndex = -1
     for (let i = stepIndex - 1; i >= 0; i--) {
       if (!run.steps_state[i].parentGroup) {
@@ -403,6 +697,72 @@ export function createDAGEngine(
   }
 
   /**
+   * Build a prompt for a spawn_session step from its agent/description/inputs/outputs fields.
+   * Resolution order: 1) stepDef.prompt  2) agent definition file  3) synthesized from fields
+   */
+  function buildAgentPrompt(stepDef: WorkflowStep, run: WorkflowRun): string {
+    // 1. If step has explicit prompt field, use it directly
+    if (stepDef.prompt) return stepDef.prompt
+
+    // 2. Try loading agent definition file from project .workflow/agents/{agent}.md
+    const projectPath = stepDef.projectPath ?? run.variables?.project_path ?? run.output_dir
+    if (stepDef.agent && projectPath) {
+      const agentFile = path.join(projectPath, '.workflow', 'agents', `${stepDef.agent}.md`)
+      try {
+        if (fs.existsSync(agentFile)) {
+          const agentDef = fs.readFileSync(agentFile, 'utf-8')
+          if (agentDef.trim()) {
+            // Append agent_prompt_override if present
+            if (stepDef.agent_prompt_override) {
+              return `${agentDef}\n\n${stepDef.agent_prompt_override}`
+            }
+            return agentDef
+          }
+        }
+      } catch { /* fall through to synthesized prompt */ }
+    }
+
+    // 3. Synthesize prompt from agent name + description + inputs/outputs
+    const parts: string[] = []
+
+    if (stepDef.agent) {
+      parts.push(`You are the "${stepDef.agent}" agent.`)
+    }
+
+    if (stepDef.description) {
+      parts.push(`\nTask: ${stepDef.description}`)
+    }
+
+    if (stepDef.agent_prompt_override) {
+      parts.push(`\n${stepDef.agent_prompt_override}`)
+    }
+
+    if (stepDef.posture) {
+      parts.push(`\nPosture: ${stepDef.posture}`)
+    }
+
+    // Include input file paths as context
+    if (stepDef.inputs && Array.isArray(stepDef.inputs)) {
+      const inputPaths = stepDef.inputs.map(inp => {
+        if (typeof inp === 'string') return inp
+        if (inp && typeof inp === 'object' && 'path' in (inp as Record<string, unknown>)) {
+          return String((inp as Record<string, unknown>).path)
+        }
+        return String(inp)
+      })
+      parts.push(`\nInput files:\n${inputPaths.map(p => `- ${p}`).join('\n')}`)
+    }
+
+    // Include expected output paths
+    if (stepDef.outputs && Array.isArray(stepDef.outputs)) {
+      const outputPaths = stepDef.outputs.map(o => String(o))
+      parts.push(`\nExpected outputs:\n${outputPaths.map(p => `- ${p}`).join('\n')}`)
+    }
+
+    return parts.join('\n') || stepDef.name
+  }
+
+  /**
    * Release pool slot for a step if it holds one.
    */
   function releasePoolSlotIfHeld(stepState: StepRunState, run: WorkflowRun): void {
@@ -459,9 +819,30 @@ export function createDAGEngine(
             if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true })
           } catch { /* best effort */ }
         }
+
+        // Phase 7: Signal directory setup
+        if (stepDef.signal_protocol && stepDef.signal_dir) {
+          try {
+            const signalDir = stepDef.signal_dir
+            ensureSignalDir(signalDir)
+            ctx.logger.info('dag_signal_dir_created', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              signalDir,
+            })
+          } catch (err) {
+            stepState.status = 'failed'
+            stepState.errorMessage = `Failed to create signal directory: ${err instanceof Error ? err.message : String(err)}`
+            stepState.completedAt = new Date().toISOString()
+            releasePoolSlotIfHeld(stepState, run)
+            saveAndBroadcast(run)
+            return
+          }
+        }
+        const rawPrompt = buildAgentPrompt(stepDef, run)
         const prompt = outputDir
-          ? `Working directory: ${outputDir}\n\n${stepDef.prompt ?? ''}`
-          : (stepDef.prompt ?? '')
+          ? `Working directory: ${outputDir}\n\n${rawPrompt}`
+          : rawPrompt
 
         const task = taskStore.createTask({
           projectPath: stepDef.projectPath ?? run.output_dir,
@@ -480,11 +861,24 @@ export function createDAGEngine(
         if (stepDef.agentType) {
           metadataObj.agent_type = stepDef.agentType
         }
+        if (stepDef.model) {
+          metadataObj.model = stepDef.model
+        }
         taskStore.updateTask(task.id, { metadata: JSON.stringify(metadataObj) })
 
         stepState.status = 'running'
         stepState.taskId = task.id
         stepState.startedAt = new Date().toISOString()
+
+        // Phase 7: Initialize signal protocol state
+        if (stepDef.signal_protocol) {
+          stepState.signalProtocol = true
+          stepState.signalDir = stepDef.signal_dir ?? null
+          stepState.signalTimeoutSeconds = stepDef.signal_timeout_seconds ?? (stepDef.timeoutSeconds ?? 300) + 60
+          stepState.verifiedCompletion = true // default, set false if synthetic later
+          stepState.status = 'waiting_signal'
+        }
+
         saveAndBroadcast(run)
 
         ctx.logger.info('dag_step_spawned', {
@@ -526,12 +920,230 @@ export function createDAGEngine(
         break
       }
 
+      case 'spec_validate': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        break
+      }
+
+      case 'amendment_check': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        break
+      }
+
+      case 'reconcile-spec': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        break
+      }
+
+      // Phase 22: gemini_offload — no pool slot, completes via geminiClient
+      case 'gemini_offload': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+
+        // Execute Gemini call asynchronously
+        executeGeminiOffload(run, stepDef, stepState)
+        break
+      }
+
+      // Phase 23: aggregator — collects findings from multiple input steps
+      case 'aggregator': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+
+        // Build step definition map from run's steps_state (which contains all step definitions)
+        const stepDefMap = new Map<string, WorkflowStep>()
+        // Use the workflow definition to get step definitions
+        const workflow = workflowStore.getWorkflow(run.workflow_id)
+        if (workflow) {
+          const parsedWorkflow = parseWorkflowYAML(workflow.yaml_content)
+          if (parsedWorkflow.valid && parsedWorkflow.workflow) {
+            const steps = getEffectiveSteps(run, parsedWorkflow.workflow) ?? []
+            for (const s of steps) {
+              stepDefMap.set(s.name, s)
+              // Also include parallel_group children
+              if (s.type === 'parallel_group' && s.steps) {
+                for (const child of s.steps) {
+                  stepDefMap.set(child.name, child)
+                }
+              }
+            }
+          }
+        }
+
+        // Execute aggregation
+        const result = processAggregatorStep(run, stepDef, stepState, stepDefMap)
+
+        if (result.complete) {
+          stepState.status = 'completed'
+          stepState.completedAt = new Date().toISOString()
+          if (result.result) {
+            stepState.resultContent = JSON.stringify(result.result)
+            stepState.resultCollected = true
+          }
+          saveAndBroadcast(run)
+          ctx.logger.info('dag_aggregator_completed', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            verdict: result.result?.verdict,
+            findingsCount: result.result?.stats.after_evidence_filter,
+          })
+        } else {
+          stepState.status = 'failed'
+          stepState.errorMessage = result.error ?? 'aggregation failed'
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          ctx.logger.error('dag_aggregator_failed', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            error: sanitizeForLog(result.error ?? 'unknown'),
+          })
+        }
+        break
+      }
+
+      // Phase 21: human_gate — pause for human approval
+      case 'human_gate': {
+        stepState.status = 'paused_human'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        ctx.broadcast({
+          type: 'step_paused',
+          runId: run.id,
+          stepName: stepDef.name,
+          reason: 'human_gate: explicit human approval required',
+        })
+        break
+      }
+
       default: {
         stepState.status = 'failed'
         stepState.errorMessage = `Unknown step type: ${stepDef.type}`
         stepState.completedAt = new Date().toISOString()
         saveAndBroadcast(run)
       }
+    }
+  }
+
+  /**
+   * Execute a gemini_offload step asynchronously.
+   * Phase 22: Calls Gemini API and writes output to file.
+   */
+  async function executeGeminiOffload(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+  ): Promise<void> {
+    try {
+      // Build prompt from template and input files
+      let prompt = stepDef.prompt_template ?? ''
+
+      // Read and include input files if specified
+      if (stepDef.input_files && stepDef.input_files.length > 0) {
+        for (const inputFile of stepDef.input_files) {
+          const inputPath = resolveOutputPath(run, inputFile)
+          if (fs.existsSync(inputPath)) {
+            const content = fs.readFileSync(inputPath, 'utf-8')
+            prompt = prompt.replace(`{{${inputFile}}}`, content)
+            // Also support basename without path
+            const basename = path.basename(inputFile)
+            prompt = prompt.replace(`{{${basename}}}`, content)
+          }
+        }
+      }
+
+      // Substitute workflow variables
+      if (run.variables) {
+        for (const [key, value] of Object.entries(run.variables)) {
+          prompt = prompt.replace(new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g'), value)
+        }
+      }
+
+      // Call Gemini API
+      const geminiRequest: GeminiRequest = {
+        model: stepDef.model ?? 'gemini-1.5-flash',
+        prompt,
+        maxTokens: stepDef.max_tokens,
+        temperature: stepDef.temperature,
+      }
+
+      // P1-3: Pass retry_backoff from step config to geminiClient
+      const backoffConfig: BackoffConfig | undefined = stepDef.retry_backoff
+      const response: GeminiResponse = await callGemini(geminiRequest, { backoff: backoffConfig })
+
+      // Handle skipped (no API key or rate limited)
+      if (response.skipped) {
+        stepState.status = 'skipped'
+        stepState.skippedReason = response.reason ?? 'gemini_offload skipped'
+        stepState.completedAt = new Date().toISOString()
+        stepState.resultContent = `gemini_offload skipped: ${response.reason}`
+        stepState.resultCollected = true
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_gemini_offload_skipped', {
+          runId: run.id,
+          step: sanitizeForLog(stepDef.name),
+          reason: response.reason,
+        })
+        return
+      }
+
+      // Handle error
+      if (response.error) {
+        stepState.status = 'failed'
+        stepState.errorMessage = response.error
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        ctx.logger.error('dag_gemini_offload_error', {
+          runId: run.id,
+          step: sanitizeForLog(stepDef.name),
+          error: sanitizeForLog(response.error),
+        })
+        return
+      }
+
+      // Write output to file if specified
+      if (stepDef.output_file && response.content) {
+        const outputPath = resolveOutputPath(run, stepDef.output_file)
+        const outputDir = path.dirname(outputPath)
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true })
+        }
+        fs.writeFileSync(outputPath, response.content, 'utf-8')
+      }
+
+      // Mark step as completed
+      stepState.status = 'completed'
+      stepState.completedAt = new Date().toISOString()
+      stepState.resultContent = response.content ?? null
+      stepState.resultFile = stepDef.output_file ?? null
+      stepState.resultCollected = true
+      saveAndBroadcast(run)
+
+      ctx.logger.info('dag_gemini_offload_completed', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens,
+        latencyMs: response.latencyMs,
+      })
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      stepState.status = 'failed'
+      stepState.errorMessage = errorMsg
+      stepState.completedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+      ctx.logger.error('dag_gemini_offload_exception', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        error: sanitizeForLog(errorMsg),
+      })
     }
   }
 
@@ -547,6 +1159,13 @@ export function createDAGEngine(
       case 'spawn_session': {
         if (!stepState.taskId) return
 
+        // Phase 7: Signal protocol path
+        if (stepState.signalProtocol && stepState.signalDir) {
+          monitorSignalProtocolStep(run, stepDef, stepState)
+          return
+        }
+
+        // Legacy path (existing code from lines 550-639, unchanged)
         // M-01 / REQ-38: Signal file authority -- check signal files BEFORE task status.
         // Signal files are authoritative over tmux/task state.
         try {
@@ -721,6 +1340,234 @@ export function createDAGEngine(
 
         // Resolve command from action or command field
         let cmd: string | null = null
+        if (stepDef.action === 'prepare-context') {
+          // Phase 20: Context librarian integration (REQ-01..REQ-26)
+          stepState.status = 'running'
+          stepState.startedAt = stepState.startedAt ?? new Date().toISOString()
+          saveAndBroadcast(run)
+          const profile = (stepDef.env?.CONSUMER_PROFILE ?? 'implementor') as ConsumerProfile
+          const config = {
+            ...createDefaultBriefingConfig(profile),
+            token_budget: parseInt(stepDef.env?.TOKEN_BUDGET ?? '8000', 10),
+            sources: (stepDef.env?.CONTEXT_SOURCES ?? 'codebase,project_facts').split(','),
+          }
+          const outputDir = resolveOutputPath(run, stepDef.working_dir ?? run.output_dir)
+          const projectDir = resolveOutputPath(run, stepDef.env?.PROJECT_PATH ?? run.output_dir)
+          prepareContextBriefing(config, outputDir, projectDir).then(briefingPath => {
+            stepState.status = 'completed'
+            stepState.resultContent = briefingPath
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+          }).catch(err => {
+            stepState.status = 'failed'
+            stepState.errorMessage = err instanceof Error ? err.message : String(err)
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+          })
+          break
+        }
+        // Phase 25: checks array support — run multiple sub-checks with pause/fail policies
+        if (stepDef.checks && stepDef.checks.length > 0) {
+          stepState.status = 'running'
+          stepState.startedAt = stepState.startedAt ?? new Date().toISOString()
+          saveAndBroadcast(run)
+
+          const checkResults: Array<{ name: string; passed: boolean; message?: string }> = []
+          let paused = false
+
+          // Build condition context for check condition evaluation
+          const condCtx = buildCheckConditionContext(run)
+          // Load project profile for template variable resolution in check commands
+          const checksProjectProfile = condCtx.projectProfile
+
+          for (const check of stepDef.checks) {
+            // Evaluate check-level condition (skip if condition is false)
+            if (check.condition) {
+              const condMet = evaluateExpressionForChecks(check.condition, condCtx)
+              if (!condMet) {
+                checkResults.push({ name: check.name, passed: true, message: 'skipped (condition not met)' })
+                ctx.logger.info('dag_check_skipped', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepDef.name),
+                  check: check.name,
+                  condition: check.condition,
+                })
+                continue
+              }
+            }
+
+            // Expression-only checks (check: field, no command) — evaluate inline
+            if (check.check && !check.command) {
+              const exprResult = evaluateExpressionForChecks(check.check, condCtx)
+              if (!exprResult) {
+                const failAction = check.on_failure?.action ?? 'fail'
+                const failMsg = check.on_failure?.message ?? `check "${check.name}" expression failed: ${check.check}`
+                checkResults.push({ name: check.name, passed: false, message: failMsg })
+                ctx.logger.warn('dag_check_expr_failed', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepDef.name),
+                  check: check.name,
+                  expression: check.check,
+                })
+                if (failAction === 'pause') {
+                  paused = true
+                  continue // pause collects all failures, doesn't stop
+                } else {
+                  // fail — stop immediately
+                  stepState.status = 'failed'
+                  stepState.errorMessage = failMsg
+                  stepState.completedAt = new Date().toISOString()
+                  saveAndBroadcast(run)
+                  break
+                }
+              } else {
+                checkResults.push({ name: check.name, passed: true })
+              }
+              continue
+            }
+
+            // Command-based check — run the command
+            if (!check.command) {
+              checkResults.push({ name: check.name, passed: true, message: 'no command or check expression' })
+              continue
+            }
+
+            const rawCwd = stepDef.working_dir || run.variables?.project_path || run.output_dir
+            const checkCwd = resolveTemplateVars(rawCwd, run, checksProjectProfile)
+            try {
+              if (!fs.existsSync(checkCwd)) {
+                fs.mkdirSync(checkCwd, { recursive: true })
+              }
+            } catch { /* best-effort */ }
+
+            const checkEnv: Record<string, string> = { ...process.env as Record<string, string> }
+            if (stepDef.env) {
+              for (const [k, v] of Object.entries(stepDef.env)) {
+                checkEnv[k] = resolveTemplateVars(v, run, checksProjectProfile)
+              }
+            }
+
+            // Phase 25: Resolve template variables in check command
+            const resolvedCheckCmd = resolveTemplateVars(check.command, run, checksProjectProfile)
+            try {
+              const checkResult = Bun.spawnSync(['sh', '-c', resolvedCheckCmd], {
+                cwd: checkCwd,
+                env: checkEnv,
+                stdout: 'pipe',
+                stderr: 'pipe',
+                timeout: (stepDef.timeoutSeconds ?? 300) * 1000,
+              })
+
+              const exitCode = checkResult.exitCode ?? -1
+              if (exitCode === 0) {
+                checkResults.push({ name: check.name, passed: true })
+                ctx.logger.info('dag_check_passed', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepDef.name),
+                  check: check.name,
+                })
+              } else {
+                const failAction = check.on_failure?.action ?? 'fail'
+                const failMsg = check.on_failure?.message ?? `check "${check.name}" failed (exit ${exitCode})`
+                const stderr = checkResult.stderr ? Buffer.from(checkResult.stderr).toString('utf-8').slice(0, 500) : ''
+                checkResults.push({ name: check.name, passed: false, message: `${failMsg}${stderr ? '\n' + stderr : ''}` })
+                ctx.logger.warn('dag_check_failed', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepDef.name),
+                  check: check.name,
+                  exitCode,
+                  action: failAction,
+                })
+
+                if (failAction === 'pause') {
+                  paused = true
+                  continue // collect remaining check results
+                } else {
+                  // fail — stop immediately
+                  stepState.status = 'failed'
+                  stepState.errorMessage = failMsg
+                  stepState.completedAt = new Date().toISOString()
+                  saveAndBroadcast(run)
+                  break
+                }
+              }
+            } catch (err) {
+              const failAction = check.on_failure?.action ?? 'fail'
+              const failMsg = check.on_failure?.message ?? `check "${check.name}" error: ${String(err)}`
+              checkResults.push({ name: check.name, passed: false, message: failMsg })
+              if (failAction === 'fail') {
+                stepState.status = 'failed'
+                stepState.errorMessage = failMsg
+                stepState.completedAt = new Date().toISOString()
+                saveAndBroadcast(run)
+                break
+              }
+              paused = true
+            }
+          }
+
+          // Process review_routing_validation if present
+          if (stepDef.review_routing_validation && !stepState.status?.startsWith('failed')) {
+            const rrv = stepDef.review_routing_validation
+            let rrvEnabled = true
+            if (rrv.when) {
+              rrvEnabled = evaluateExpressionForChecks(rrv.when, condCtx)
+            }
+            if (rrvEnabled && rrv.checks) {
+              for (const rrvCheck of rrv.checks) {
+                if (rrvCheck.check) {
+                  const exprResult = evaluateExpressionForChecks(rrvCheck.check, condCtx)
+                  if (!exprResult) {
+                    const failAction = rrvCheck.on_failure?.action ?? 'pause'
+                    const failMsg = rrvCheck.on_failure?.message ?? `review routing check "${rrvCheck.name}" failed`
+                    checkResults.push({ name: rrvCheck.name, passed: false, message: failMsg })
+                    if (failAction === 'fail') {
+                      stepState.status = 'failed'
+                      stepState.errorMessage = failMsg
+                      stepState.completedAt = new Date().toISOString()
+                      saveAndBroadcast(run)
+                      break
+                    }
+                    paused = true
+                  } else {
+                    checkResults.push({ name: rrvCheck.name, passed: true })
+                  }
+                }
+              }
+            }
+          }
+
+          // If step wasn't already failed by a check, finalize
+          if (stepState.status !== 'failed') {
+            const passed = checkResults.filter(c => c.passed).length
+            const failed = checkResults.filter(c => !c.passed).length
+            stepState.resultContent = JSON.stringify({ checks: checkResults, passed, failed, paused })
+            stepState.resultCollected = true
+
+            if (paused) {
+              stepState.status = 'paused_escalated'
+              stepState.errorMessage = `${failed} check(s) failed with pause policy — pipeline paused for operator acknowledgement`
+              ctx.logger.warn('dag_native_step_paused', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                passed,
+                failed,
+              })
+            } else {
+              stepState.status = 'completed'
+              stepState.completedAt = new Date().toISOString()
+              ctx.logger.info('dag_native_step_checks_completed', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                passed,
+                failed,
+              })
+            }
+            saveAndBroadcast(run)
+          }
+          break
+        }
+
         if (stepDef.action) {
           const resolved = PREDEFINED_ACTIONS[stepDef.action]
           if (!resolved) {
@@ -734,28 +1581,39 @@ export function createDAGEngine(
         } else if (stepDef.command) {
           cmd = stepDef.command
         } else {
+          // MEDIUM #4: native_step without command/action/checks must fail (not no-op)
+          // This matches the expected test behavior and legacy engine behavior
           stepState.status = 'failed'
-          stepState.errorMessage = 'native_step requires command or action'
+          stepState.errorMessage = 'native_step requires command, action, or checks'
           stepState.completedAt = new Date().toISOString()
           saveAndBroadcast(run)
           break
         }
 
+        // Phase 25: Resolve template variables in command and args
+        let nativeProjectProfile: Record<string, unknown> | undefined
+        const nativeProjectPath = run.variables?.project_path
+        if (nativeProjectPath) {
+          try { nativeProjectProfile = loadProjectProfileRaw(nativeProjectPath) } catch { /* ok */ }
+        }
+        cmd = resolveTemplateVars(cmd, run, nativeProjectProfile)
+
         // Append shell-escaped args
         if (stepDef.args && stepDef.args.length > 0) {
-          cmd = cmd + ' ' + stepDef.args.map(a => shellEscape(a)).join(' ')
+          cmd = cmd + ' ' + stepDef.args.map(a => shellEscape(resolveTemplateVars(a, run, nativeProjectProfile))).join(' ')
         }
 
         // Build env
         const spawnEnv: Record<string, string> = { ...process.env as Record<string, string> }
         if (stepDef.env) {
           for (const [k, v] of Object.entries(stepDef.env)) {
-            spawnEnv[k] = v
+            spawnEnv[k] = resolveTemplateVars(v, run, nativeProjectProfile)
           }
         }
 
         // Determine cwd (REQ-02 parity: project_path fallback)
-        const cwd = stepDef.working_dir || run.variables?.project_path || run.output_dir
+        const rawCwdNative = stepDef.working_dir || run.variables?.project_path || run.output_dir
+        const cwd = resolveTemplateVars(rawCwdNative, run, nativeProjectProfile)
         try {
           if (!fs.existsSync(cwd)) {
             fs.mkdirSync(cwd, { recursive: true })
@@ -829,6 +1687,31 @@ export function createDAGEngine(
             stepState.completedAt = new Date().toISOString()
           }
 
+          // Phase 21: expect:fail inverts success/failure semantics (TDD red verification)
+          if (stepDef.expect === 'fail') {
+            if (stepState.status === 'completed') {
+              // Expected failure but got success — that's a failure
+              stepState.status = 'failed'
+              stepState.errorMessage = 'expect:fail — command succeeded but was expected to fail'
+              ctx.logger.info('dag_native_step_expect_fail_inverted', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                actual: 'success',
+              })
+            } else if (stepState.status === 'failed' && stepState.errorMessage?.startsWith('exit code')) {
+              // Expected failure and got failure — that's success
+              stepState.status = 'completed'
+              stepState.errorMessage = null
+              stepState.resultContent = stepResult || 'expect:fail — command failed as expected'
+              stepState.resultCollected = true
+              ctx.logger.info('dag_native_step_expect_fail_inverted', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                actual: 'failure_as_expected',
+              })
+            }
+          }
+
           // Handle retry on failure
           if (stepState.status === 'failed') {
             const maxRetries = stepDef.maxRetries ?? 0
@@ -844,6 +1727,28 @@ export function createDAGEngine(
               })
             }
           }
+
+          // Phase 25: on_step_failure policy — convert failure to completion/skip
+          if (stepState.status === 'failed' && stepDef.on_step_failure) {
+            if (stepDef.on_step_failure === 'completed_with_warnings') {
+              const warning = stepState.errorMessage
+              stepState.status = 'completed'
+              stepState.resultContent = `completed_with_warnings: ${warning}`
+              stepState.resultCollected = true
+              ctx.logger.info('dag_native_step_completed_with_warnings', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                warning: sanitizeForLog(warning ?? ''),
+              })
+            } else if (stepDef.on_step_failure === 'skip') {
+              stepState.status = 'skipped'
+              stepState.skippedReason = `on_step_failure: skip — ${stepState.errorMessage}`
+              ctx.logger.info('dag_native_step_skipped_on_failure', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+              })
+            }
+          }
         } catch (err) {
           stepState.status = 'failed'
           stepState.errorMessage = `spawn error: ${String(err)}`
@@ -855,6 +1760,641 @@ export function createDAGEngine(
           })
         }
 
+        saveAndBroadcast(run)
+        break
+      }
+
+      case 'spec_validate': {
+        // Synchronous execution — no pool slot consumed (in POOL_BYPASS_TYPES)
+        try {
+          const specPath = path.resolve(run.output_dir, stepDef.spec_path ?? '')
+          const schemaPath = path.resolve(run.output_dir, stepDef.schema_path ?? '')
+          const constitutionSections = stepDef.constitution_sections ?? []
+          const strict = stepDef.strict ?? false
+
+          const report = validateSpec(specPath, schemaPath, constitutionSections, strict)
+
+          // Write report to output dir
+          const reportPath = path.join(getChildOutputDir(run, stepState), `${stepDef.name}_report.json`)
+          fs.mkdirSync(path.dirname(reportPath), { recursive: true })
+          fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+
+          // Set result content for downstream steps
+          stepState.resultContent = JSON.stringify(report)
+          stepState.resultCollected = true
+
+          if (report.valid) {
+            stepState.status = 'completed'
+            ctx.logger.info('dag_spec_validate_passed', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+            })
+          } else {
+            stepState.status = 'failed'
+            stepState.errorMessage = `Spec validation failed: ${report.errors.map(e => e.message).join('; ')}`
+            ctx.logger.info('dag_spec_validate_failed', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              errorCount: report.errors.length,
+            })
+          }
+          stepState.completedAt = new Date().toISOString()
+        } catch (err) {
+          stepState.status = 'failed'
+          stepState.errorMessage = `spec_validate error: ${String(err)}`
+          stepState.completedAt = new Date().toISOString()
+          ctx.logger.error('dag_spec_validate_error', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            error: String(err),
+          })
+        }
+
+        saveAndBroadcast(run)
+        break
+      }
+
+      case 'amendment_check': {
+        // Synchronous execution -- scan signal_dir for amendment signals
+        try {
+          const signalDir = stepDef.signal_dir
+          if (!signalDir || !fs.existsSync(signalDir)) {
+            stepState.status = 'completed'
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            break
+          }
+
+          const signalTypes = stepDef.signal_types ?? ['amendment_required']
+          const files = fs.readdirSync(signalDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
+
+          let foundSignal = false
+          for (const file of files) {
+            const filePath = path.join(signalDir, file)
+            try {
+              // SEC-3: Skip symlinks to prevent path traversal
+              const lstat = fs.lstatSync(filePath)
+              if (lstat.isSymbolicLink()) {
+                ctx.logger.warn('dag_amendment_symlink_rejected', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  file: sanitizeForLog(file),
+                })
+                continue
+              }
+
+              // Stale signal detection (REQ-07): skip files older than step start
+              const stat = fs.statSync(filePath)
+              if (stepState.startedAt && stat.mtimeMs < new Date(stepState.startedAt).getTime()) {
+                continue
+              }
+
+              const content = fs.readFileSync(filePath, 'utf-8')
+              const parsed = yaml.load(content) as Record<string, unknown>
+              if (!parsed || typeof parsed !== 'object') continue
+
+              const signalType = String(parsed.signal_type ?? '')
+              if (!signalTypes.includes(signalType)) continue
+
+              const amendment = parseAmendmentSignal(parsed)
+              if (!amendment) {
+                ctx.logger.warn('dag_amendment_malformed', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  file: sanitizeForLog(file),
+                })
+                continue
+              }
+
+              // Valid amendment found -- transition to paused_amendment
+              stepState.status = 'paused_amendment'
+              stepState.amendmentPhase = 'detected'
+              stepState.amendmentSignalFile = filePath
+              stepState.amendmentType = amendment.amendment.type
+              stepState.amendmentCategory = amendment.amendment.category
+              stepState.amendmentSpecSection = amendment.amendment.spec_section
+
+              // Store signal in DB
+              workflowStore.insertSignal({
+                id: `${run.id}_${stepState.name}_amendment_${Date.now()}`,
+                run_id: run.id,
+                step_name: stepState.name,
+                signal_type: signalType,
+                signal_file_path: filePath,
+                resolution: null,
+                resolution_file_path: null,
+                resolved_at: null,
+                synthetic: 0,
+              })
+
+              ctx.broadcast({
+                type: 'amendment_detected',
+                runId: run.id,
+                stepName: stepState.name,
+                amendmentType: amendment.amendment.type,
+                category: amendment.amendment.category,
+              })
+
+              ctx.logger.info('dag_amendment_detected', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                type: amendment.amendment.type,
+                category: amendment.amendment.category,
+                section: sanitizeForLog(amendment.amendment.spec_section),
+              })
+
+              foundSignal = true
+              break  // Process one amendment at a time
+            } catch (fileErr) {
+              ctx.logger.warn('dag_amendment_file_error', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                file: sanitizeForLog(file),
+                error: String(fileErr),
+              })
+            }
+          }
+
+          if (!foundSignal) {
+            // No signals found -- complete normally
+            stepState.status = 'completed'
+            stepState.completedAt = new Date().toISOString()
+          }
+        } catch (err) {
+          stepState.status = 'failed'
+          stepState.errorMessage = `Amendment check failed: ${String(err)}`
+          stepState.completedAt = new Date().toISOString()
+          ctx.logger.error('dag_amendment_check_error', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            error: String(err),
+          })
+        }
+        saveAndBroadcast(run)
+        break
+      }
+
+      case 'reconcile-spec': {
+        // P-8 (REQ-36, REQ-37): Batch reconciliation — scan signal_dir for reconciliation amendments
+        try {
+          const signalDir = stepDef.signal_dir
+          if (!signalDir || !fs.existsSync(signalDir)) {
+            stepState.status = 'completed'
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            break
+          }
+
+          const signalTypes = stepDef.signal_types ?? ['reconciliation']
+          const files = fs.readdirSync(signalDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
+
+          // Collect all reconciliation signals, grouped by spec_section
+          const bySection = new Map<string, Array<{ filePath: string; amendment: AmendmentSignal }>>()
+
+          for (const file of files) {
+            const filePath = path.join(signalDir, file)
+            try {
+              // SEC-3: Skip symlinks to prevent path traversal
+              const lstat = fs.lstatSync(filePath)
+              if (lstat.isSymbolicLink()) {
+                ctx.logger.warn('dag_reconcile_symlink_rejected', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  file: sanitizeForLog(file),
+                })
+                continue
+              }
+
+              // Stale signal detection: skip files older than step start
+              const stat = fs.statSync(filePath)
+              if (stepState.startedAt && stat.mtimeMs < new Date(stepState.startedAt).getTime()) {
+                continue
+              }
+
+              const content = fs.readFileSync(filePath, 'utf-8')
+              const parsed = yaml.load(content) as Record<string, unknown>
+              if (!parsed || typeof parsed !== 'object') continue
+
+              const signalType = String(parsed.signal_type ?? '')
+              if (!signalTypes.includes(signalType)) continue
+
+              const amendment = parseAmendmentSignal(parsed)
+              if (!amendment) {
+                ctx.logger.warn('dag_reconcile_malformed', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  file: sanitizeForLog(file),
+                })
+                continue
+              }
+
+              // Group by spec_section
+              const section = amendment.amendment.spec_section
+              if (!bySection.has(section)) {
+                bySection.set(section, [])
+              }
+              bySection.get(section)!.push({ filePath, amendment })
+            } catch (fileErr) {
+              ctx.logger.warn('dag_reconcile_file_error', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                file: sanitizeForLog(file),
+                error: String(fileErr),
+              })
+            }
+          }
+
+          const affectedSections = bySection.size
+          const threshold = stepDef.batch_threshold ?? 3
+
+          if (affectedSections === 0) {
+            // No reconciliation signals — complete normally
+            stepState.status = 'completed'
+            stepState.completedAt = new Date().toISOString()
+          } else if (affectedSections >= threshold) {
+            // REQ-37: Escalate to human for batch approval
+            stepState.status = 'paused_human'
+            stepState.batchAmendmentCount = affectedSections
+            ctx.broadcast({
+              type: 'batch_reconciliation_threshold',
+              runId: run.id,
+              stepName: stepState.name,
+              sections: affectedSections,
+              threshold,
+            })
+            ctx.logger.info('dag_reconcile_threshold_exceeded', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              sections: affectedSections,
+              threshold,
+            })
+          } else {
+            // Process batch amendments below threshold
+            for (const [section, signals] of bySection) {
+              for (const { filePath, amendment } of signals) {
+                // Store each signal in DB
+                workflowStore.insertSignal({
+                  id: `${run.id}_${stepState.name}_reconcile_${section}_${Date.now()}`,
+                  run_id: run.id,
+                  step_name: stepState.name,
+                  signal_type: 'reconciliation',
+                  signal_file_path: filePath,
+                  resolution: 'approved',
+                  resolution_file_path: null,
+                  resolved_at: new Date().toISOString(),
+                  synthetic: 0,
+                })
+
+                // Record amendment in DB and auto-resolve
+                const amendmentId = workflowStore.insertAmendment({
+                  run_id: run.id,
+                  step_name: stepState.name,
+                  signal_file: filePath,
+                  amendment_type: amendment.amendment.type,
+                  category: 'reconciliation',
+                  spec_section: amendment.amendment.spec_section,
+                  issue: amendment.amendment.issue,
+                  proposed_change: amendment.amendment.proposed_addition,
+                  approval_timestamp: Date.now(),
+                  rationale: 'Auto-approved: below batch threshold',
+                  target: amendment.amendment.target,
+                })
+                workflowStore.resolveAmendment(amendmentId, 'approved', 'batch_reconciliation')
+              }
+            }
+
+            stepState.batchAmendmentCount = affectedSections
+            stepState.status = 'completed'
+            stepState.completedAt = new Date().toISOString()
+
+            ctx.broadcast({
+              type: 'batch_reconciliation_complete',
+              runId: run.id,
+              stepName: stepState.name,
+              sectionsProcessed: affectedSections,
+            })
+
+            ctx.logger.info('dag_reconcile_batch_processed', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              sections: affectedSections,
+            })
+          }
+        } catch (err) {
+          stepState.status = 'failed'
+          stepState.errorMessage = `Reconciliation check failed: ${String(err)}`
+          stepState.completedAt = new Date().toISOString()
+          ctx.logger.error('dag_reconcile_error', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            error: String(err),
+          })
+        }
+        saveAndBroadcast(run)
+        break
+      }
+    }
+  }
+
+  /**
+   * Monitor a step using the signal protocol (Phase 7).
+   * Checks for signal files, handles synthetic signals for fallback, and processes signal types.
+   */
+  function monitorSignalProtocolStep(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+  ): void {
+    // REQ-14/REQ-44: Pass processed signal files set for deduplication
+    const processed = getProcessedSignals(run.id, stepState.name)
+    const signal = checkStepSignals(
+      stepState.signalDir!,
+      stepState.name,
+      stepState.startedAt!,
+      processed,
+    )
+
+    if (signal) {
+      // Validate signal authority
+      const loggerAdapter = { warn: (...args: unknown[]) => ctx.logger.warn(String(args[0]), typeof args[1] === 'object' ? args[1] as Record<string, unknown> : {}) }
+      if (!validateSignalAuthority(signal, loggerAdapter)) {
+        ctx.logger.warn('dag_signal_authority_rejected', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          agent: signal.agent,
+        })
+        return // Ignore unauthorized signals
+      }
+
+      // Insert DB record
+      workflowStore.insertSignal({
+        id: `${run.id}_${stepState.name}_${Date.now()}`,
+        run_id: run.id,
+        step_name: stepState.name,
+        signal_type: signal.signal_type,
+        signal_file_path: `${stepState.signalDir}/${stepState.name}_${signal.signal_type}.yaml`,
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: signal.synthetic ? 1 : 0,
+      })
+
+      stepState.lastSignalType = signal.signal_type
+      stepState.verifiedCompletion = !signal.synthetic
+      processSignal(run, stepDef, stepState, signal)
+      return
+    }
+
+    // No signal found — check for task completion as fallback (synthetic signal)
+    const task = taskStore.getTask(stepState.taskId!)
+    if (!task) {
+      // Task disappeared — generate synthetic error
+      const _synthetic = createSyntheticSignal(stepState.name, run.id, 'error', 'task_disappeared')
+      stepState.lastSignalType = 'error'
+      stepState.verifiedCompletion = false
+      stepState.status = 'failed'
+      stepState.errorMessage = 'task disappeared (synthetic signal)'
+      stepState.completedAt = new Date().toISOString()
+      releasePoolSlotIfHeld(stepState, run)
+      saveAndBroadcast(run)
+      ctx.logger.warn('dag_synthetic_signal', {
+        runId: run.id,
+        step: sanitizeForLog(stepState.name),
+        source: 'task_disappeared',
+      })
+      return
+    }
+
+    if (task.status === 'completed' || task.status === 'failed') {
+      // Task ended without writing a signal file — generate synthetic signal
+      const signalType = task.status === 'completed' ? 'completed' : 'error'
+      const synthetic = createSyntheticSignal(stepState.name, run.id, signalType as any, 'task_status_fallback')
+
+      workflowStore.insertSignal({
+        id: `${run.id}_${stepState.name}_synthetic_${Date.now()}`,
+        run_id: run.id,
+        step_name: stepState.name,
+        signal_type: signalType,
+        signal_file_path: '',
+        resolution: null,
+        resolution_file_path: null,
+        resolved_at: null,
+        synthetic: 1,
+      })
+
+      stepState.lastSignalType = signalType
+      stepState.verifiedCompletion = false
+      ctx.logger.warn('dag_synthetic_signal', {
+        runId: run.id,
+        step: sanitizeForLog(stepState.name),
+        source: 'task_status_fallback',
+        taskStatus: task.status,
+      })
+      processSignal(run, stepDef, stepState, synthetic)
+      return
+    }
+
+    // Check signal timeout (REQ-21/REQ-26)
+    if (stepState.startedAt && stepState.signalTimeoutSeconds) {
+      const elapsed = (Date.now() - new Date(stepState.startedAt).getTime()) / 1000
+      if (elapsed > stepState.signalTimeoutSeconds) {
+        // REQ-21/REQ-26: Generate synthetic error signal and insert to DB
+        const _synthetic = createSyntheticSignal(stepState.name, run.id, 'error', 'signal_timeout')
+
+        workflowStore.insertSignal({
+          id: `${run.id}_${stepState.name}_timeout_${Date.now()}`,
+          run_id: run.id,
+          step_name: stepState.name,
+          signal_type: 'error',
+          signal_file_path: '',
+          resolution: null,
+          resolution_file_path: null,
+          resolved_at: null,
+          synthetic: 1,
+        })
+
+        stepState.lastSignalType = 'error'
+        stepState.verifiedCompletion = false
+        stepState.status = 'signal_timeout'
+        stepState.errorMessage = `Signal timeout after ${stepState.signalTimeoutSeconds}s`
+        stepState.completedAt = new Date().toISOString()
+        releasePoolSlotIfHeld(stepState, run)
+        saveAndBroadcast(run)
+        ctx.logger.warn('dag_signal_timeout', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          timeout: stepState.signalTimeoutSeconds,
+          synthetic: true,
+          source: 'signal_timeout',
+        })
+        // signal_timeout is treated as failure for workflow completion
+        return
+      }
+    }
+
+    // Still waiting for signal — no action
+  }
+
+  /**
+   * Process a parsed signal and update step state accordingly (Phase 7).
+   */
+  function processSignal(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+    signal: SignalFile,
+  ): void {
+    switch (signal.signal_type) {
+      case 'completed': {
+        stepState.status = 'completed'
+        stepState.completedAt = new Date().toISOString()
+        collectStepResult(run, stepDef, stepState)
+        releasePoolSlotIfHeld(stepState, run)
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_step_completed_via_signal', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          verified: stepState.verifiedCompletion,
+          synthetic: signal.synthetic ?? false,
+        })
+        break
+      }
+
+      case 'error': {
+        const maxRetries = stepDef.maxRetries ?? 0
+        if (stepState.retryCount < maxRetries) {
+          stepState.retryCount += 1
+          stepState.taskId = null
+          stepState.status = 'pending'
+          stepState.lastSignalType = undefined
+          saveAndBroadcast(run)
+          return
+        }
+        stepState.status = 'failed'
+        stepState.errorMessage = signal.checkpoint?.extensions?.error as string
+          ?? 'failed via signal'
+        stepState.completedAt = new Date().toISOString()
+        releasePoolSlotIfHeld(stepState, run)
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_step_failed_via_signal', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          verified: stepState.verifiedCompletion,
+        })
+        break
+      }
+
+      case 'amendment_required': {
+        // Phase 10: Check if step is configured for amendments
+        if (!stepDef.can_request_amendment) {
+          ctx.logger.warn('dag_amendment_not_configured', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            reason: 'step does not have can_request_amendment enabled',
+          })
+          stepState.status = 'failed'
+          stepState.errorMessage = 'Amendment requested but step does not have can_request_amendment enabled'
+          stepState.completedAt = new Date().toISOString()
+          releasePoolSlotIfHeld(stepState, run)
+          saveAndBroadcast(run)
+          break
+        }
+
+        stepState.status = 'paused_amendment'
+        stepState.amendmentPhase = 'detected'
+        // Store signal file path for processing
+        if (stepState.signalDir) {
+          stepState.amendmentSignalFile = path.join(
+            stepState.signalDir,
+            `${stepState.name}_amendment_required.yaml`,
+          )
+        }
+        releasePoolSlotIfHeld(stepState, run)
+        // Write resolution file placeholder
+        if (stepState.signalDir) {
+          try {
+            writeResolutionFile(
+              stepState.signalDir,
+              `${stepState.name}_amendment_required.yaml`,
+              'pending_amendment',
+              'agentboard',
+              signal.checkpoint,
+            )
+          } catch { /* best effort */ }
+        }
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_step_paused', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          reason: 'amendment_required',
+        })
+        break
+      }
+
+      case 'human_required': {
+        stepState.status = 'paused_human'
+        releasePoolSlotIfHeld(stepState, run)
+        if (stepState.signalDir) {
+          try {
+            writeResolutionFile(
+              stepState.signalDir,
+              `${stepState.name}_human_required.yaml`,
+              'pending_human',
+              'agentboard',
+              signal.checkpoint,
+            )
+          } catch { /* best effort */ }
+        }
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_step_paused', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          reason: 'human_required',
+        })
+        break
+      }
+
+      case 'blocked': {
+        stepState.status = 'paused_amendment'  // blocked treated like amendment
+        releasePoolSlotIfHeld(stepState, run)
+        if (stepState.signalDir) {
+          try {
+            writeResolutionFile(
+              stepState.signalDir,
+              `${stepState.name}_blocked.yaml`,
+              'pending_resolution',
+              'agentboard',
+              signal.checkpoint,
+            )
+          } catch { /* best effort */ }
+        }
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_step_paused', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          reason: 'blocked',
+        })
+        break
+      }
+
+      case 'progress': {
+        // Progress signals update checkpoint but don't change step status
+        // Step remains in waiting_signal state
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_signal_progress', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          subtask: signal.checkpoint?.last_completed_subtask,
+        })
+        break
+      }
+
+      default: {
+        // Unknown signal type — treat as error
+        stepState.status = 'signal_error'
+        stepState.errorMessage = `Unknown signal type: ${signal.signal_type}`
+        stepState.completedAt = new Date().toISOString()
+        releasePoolSlotIfHeld(stepState, run)
         saveAndBroadcast(run)
         break
       }
@@ -880,56 +2420,236 @@ export function createDAGEngine(
     }
   }
 
-  // ── Review Loop Processing (REQ-40) ─────────────────────────────────
+  // ── Review Loop Processing (Phase 8) ─────────────────────────────────
 
   /**
-   * Process a review_loop child within a parallel_group.
-   * Reserves ONE pool slot for the entire duration. Producer and reviewer
-   * sub-steps share this single slot sequentially. The slot is only released
-   * when the review_loop completes (PASS verdict, max_iterations, or failure).
+   * Process a review_loop step. Handles pool slot cycling between producer
+   * and reviewer sub-steps, YAML-based verdict parsing, exhaustion policies,
+   * CONCERN handling, DB iteration tracking, and crash recovery.
    *
-   * State machine per tick:
-   * - pending → request pool slot, if granted start producer (reviewSubStep='producer')
-   * - running + reviewSubStep='producer' → monitor producer task, on completion start reviewer
-   * - running + reviewSubStep='reviewer' → monitor reviewer task, check verdict
-   *   - PASS → complete review_loop, release slot
-   *   - FAIL/REVISE + iterations remaining → loop back to producer
-   *   - max_iterations reached → complete review_loop, release slot
-   * - failed → release slot
+   * State machine using reviewSubStep:
+   * - null → initialize, request producer pool slot
+   * - 'producer' → monitor producer task
+   * - 'between' → producer done, slot released, request reviewer pool slot
+   * - 'reviewer' → monitor reviewer task, extract verdict, decide
    */
-  function processReviewLoopChild(
+  function processReviewLoop(
     run: WorkflowRun,
-    childState: StepRunState,
-    childDef: WorkflowStep,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
     runTier: number,
     parsed: ParsedWorkflow,
   ): void {
-    const maxIter = childDef.max_iterations ?? 3
+    // ROBUSTNESS-2 (REQ-37): Re-entrance guard -- prevents concurrent processReviewLoop calls
+    // Uses in-memory Set (not serialized state) to avoid stale locks after crash/reload
+    const guardKey = `${run.id}:${stepDef.name}`
+    if (reviewLoopProcessing.has(guardKey)) {
+      return
+    }
+    reviewLoopProcessing.add(guardKey)
 
-    // ── Pending: request pool slot and start producer ──
-    if (childState.status === 'pending') {
-      // Initialize review loop tracking
-      if (childState.reviewIteration === undefined) {
-        childState.reviewIteration = 0
+    try {
+    // SECURITY-2 (REQ-35): Runtime ceiling enforcement -- prevents bypass via tier_override or mutation
+    const ceiling = parseInt(process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS ?? '10', 10)
+    const maxIter = Math.min(stepDef.max_iterations ?? 3, ceiling)
+    const onMaxIterations = stepDef.on_max_iterations ?? 'escalate'
+
+    if (stepDef.max_iterations && stepDef.max_iterations > ceiling) {
+      ctx.logger.warn('dag_review_loop_ceiling_enforced', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        requested: stepDef.max_iterations,
+        clamped: maxIter,
+        ceiling,
+      })
+    }
+
+    // ── P-2 (REQ-24): Crash recovery -- detect interrupted iterations on first call ──
+    if (!stepState.crashRecoveryChecked) {
+      const lastIteration = workflowStore.getLastIteration(run.id, stepDef.name)
+
+      if (lastIteration && lastIteration.started_at && !lastIteration.completed_at) {
+        // Iteration was interrupted -- determine which sub-step to resume
+        if (!lastIteration.producer_task_id) {
+          // Producer never started -- restart iteration
+          stepState.reviewIteration = lastIteration.iteration
+          stepState.reviewSubStep = 'producer'
+          stepState.currentIterationId = lastIteration.id
+          stepState.status = 'running'
+          ctx.logger.info('dag_review_loop_crash_recovery', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: lastIteration.iteration,
+            resumeAt: 'producer',
+          })
+        } else if (!lastIteration.reviewer_task_id) {
+          // Producer may have completed -- check for output file
+          const hasProducerOutput = stepDef.producer?.result_file
+            ? fs.existsSync(path.resolve(run.output_dir, stepDef.producer.result_file))
+            : false
+          if (hasProducerOutput) {
+            // Producer completed, start reviewer
+            stepState.reviewIteration = lastIteration.iteration
+            stepState.reviewSubStep = 'between'
+            stepState.currentIterationId = lastIteration.id
+            stepState.status = 'running'
+            ctx.logger.info('dag_review_loop_crash_recovery', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iteration: lastIteration.iteration,
+              resumeAt: 'reviewer',
+            })
+          } else {
+            // Producer didn't complete -- restart it
+            stepState.reviewIteration = lastIteration.iteration
+            stepState.reviewSubStep = 'producer'
+            stepState.currentIterationId = lastIteration.id
+            stepState.status = 'running'
+            ctx.logger.info('dag_review_loop_crash_recovery', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iteration: lastIteration.iteration,
+              resumeAt: 'producer_restart',
+            })
+          }
+        } else {
+          // Both started -- check if reviewer output exists
+          const hasReviewerOutput = stepDef.reviewer?.result_file
+            ? fs.existsSync(path.resolve(run.output_dir, stepDef.reviewer.result_file))
+            : false
+          if (hasReviewerOutput) {
+            // Reviewer output exists -- process verdict
+            stepState.reviewIteration = lastIteration.iteration
+            stepState.reviewSubStep = 'reviewer'
+            stepState.currentIterationId = lastIteration.id
+            stepState.status = 'running'
+            // Set taskId to reviewer task so the verdict processing path picks it up
+            stepState.taskId = lastIteration.reviewer_task_id
+            ctx.logger.info('dag_review_loop_crash_recovery', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iteration: lastIteration.iteration,
+              resumeAt: 'verdict',
+            })
+          } else {
+            // Re-run reviewer
+            stepState.reviewIteration = lastIteration.iteration
+            stepState.reviewSubStep = 'between'
+            stepState.currentIterationId = lastIteration.id
+            stepState.status = 'running'
+            ctx.logger.info('dag_review_loop_crash_recovery', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iteration: lastIteration.iteration,
+              resumeAt: 'reviewer_restart',
+            })
+          }
+        }
+
+        // P-1 (REQ-25): Load checkpoint extensions for review_loop state
+        const extensions = loadCheckpointExtensions(run.output_dir, stepDef.name)
+        if (extensions) {
+          if (extensions.iteration !== undefined) {
+            stepState.reviewIteration = extensions.iteration
+          }
+          if (extensions.previous_feedback) {
+            stepState.reviewFeedback = extensions.previous_feedback
+          }
+          ctx.logger.info('dag_review_loop_checkpoint_extensions_loaded', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            extensionIteration: extensions.iteration,
+            hasFeedback: !!extensions.previous_feedback,
+          })
+        }
+      } else if (lastIteration && lastIteration.verdict === 'PASS') {
+        // Last completed iteration was PASS -- mark step complete
+        stepState.status = 'completed'
+        stepState.completedAt = new Date().toISOString()
+        stepState.crashRecoveryChecked = true
+        saveAndBroadcast(run)
+        return
       }
-      childState.reviewSubStep = null
-      childState.reviewVerdict = null
 
-      // Request pool slot
-      if (pool && parsed.system?.session_pool) {
-        const slot = pool.requestSlot({
+      stepState.crashRecoveryChecked = true
+      if (stepState.status === 'running') {
+        stepState.startedAt = stepState.startedAt ?? new Date().toISOString()
+        saveAndBroadcast(run)
+      }
+    }
+
+    // Helper: Build and write summary file
+    function buildAndWriteSummary(finalOutcome: string): void {
+      try {
+        const iterations = workflowStore.getIterationsByStep(run.id, stepDef.name)
+        const iterationSummaries: IterationSummary[] = iterations.map((iter) => {
+          // P-5: Calculate producer/reviewer durations using producer_completed_at timestamp
+          const producerDuration = iter.producer_completed_at && iter.started_at
+            ? (new Date(iter.producer_completed_at).getTime() - new Date(iter.started_at).getTime()) / 1000
+            : 0
+          const reviewerDuration = iter.completed_at && iter.producer_completed_at
+            ? (new Date(iter.completed_at).getTime() - new Date(iter.producer_completed_at).getTime()) / 1000
+            : 0
+
+          return {
+            iteration: iter.iteration,
+            verdict: iter.verdict ?? 'UNKNOWN',
+            feedback: iter.feedback,
+            producer_duration_seconds: producerDuration,
+            reviewer_duration_seconds: reviewerDuration,
+          }
+        })
+
+        const summary: ReviewLoopSummary = {
+          step_name: stepDef.name,
+          total_iterations: iterations.length,
+          final_outcome: finalOutcome,
+          iterations: iterationSummaries,
+        }
+
+        const summaryDir = path.join(run.output_dir, 'review-loop-summaries')
+        writeReviewLoopSummary(summaryDir, stepDef.name, summary)
+      } catch (err) {
+        ctx.logger.warn('dag_review_loop_summary_write_failed', {
           runId: run.id,
-          stepName: childDef.name,
+          step: sanitizeForLog(stepDef.name),
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    // ── Pending: initialize and request producer pool slot ──
+    if (stepState.status === 'pending') {
+      if (stepState.reviewIteration === undefined) {
+        stepState.reviewIteration = 0
+      }
+      stepState.reviewSubStep = null
+      stepState.reviewVerdict = null
+      stepState.reviewFeedback = null
+
+      // Request pool slot for producer
+      if (pool && parsed.system?.session_pool) {
+        const result = pool.requestSlot({
+          runId: run.id,
+          stepName: stepDef.name,
           tier: runTier,
         })
-        childState.poolSlotId = slot.id
-        if (slot.status === 'queued') {
-          childState.status = 'queued'
+        if (result.rejected || !result.slot) {
+          ctx.logger.warn('dag_pool_queue_full', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            reason: result.reason,
+          })
+          return
+        }
+        stepState.poolSlotId = result.slot.id
+        if (result.slot.status === 'queued') {
+          stepState.status = 'queued'
           saveAndBroadcast(run)
           ctx.broadcast({
             type: 'step_queued',
             runId: run.id,
-            stepName: childDef.name,
+            stepName: stepDef.name,
             queuePosition: pool.getStatus().queue.length,
           })
           return
@@ -937,20 +2657,44 @@ export function createDAGEngine(
         ctx.broadcast({
           type: 'pool_slot_granted',
           runId: run.id,
-          stepName: childDef.name,
-          slotId: slot.id,
+          stepName: stepDef.name,
+          slotId: result.slot.id,
         })
       }
 
-      // Start producer
-      childState.status = 'running'
-      childState.startedAt = new Date().toISOString()
-      childState.reviewSubStep = 'producer'
-      childState.reviewIteration = 1
-      startStep(run, childDef.producer!, childState)
+      // Start first iteration's producer
+      stepState.status = 'running'
+      stepState.startedAt = new Date().toISOString()
+      stepState.reviewSubStep = 'producer'
+      stepState.reviewIteration = 1
+
+      // DB: insert iteration record
+      const iterationId = generateIterationId()
+      stepState.currentIterationId = iterationId
+      workflowStore.insertIteration({
+        id: iterationId,
+        run_id: run.id,
+        step_name: stepDef.name,
+        iteration: 1,
+        producer_task_id: null,
+        reviewer_task_id: null,
+        verdict: null,
+        feedback: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        producer_completed_at: null,
+      })
+
+      startStep(run, stepDef.producer!, stepState)
+
+      // DB: update with producer task ID
+      if (stepState.taskId) {
+        workflowStore.updateIteration(iterationId, { producer_task_id: stepState.taskId })
+      }
+
       ctx.logger.info('dag_review_loop_started', {
         runId: run.id,
-        step: sanitizeForLog(childDef.name),
+        step: sanitizeForLog(stepDef.name),
         iteration: 1,
         subStep: 'producer',
       })
@@ -958,24 +2702,43 @@ export function createDAGEngine(
     }
 
     // ── Queued: waiting for pool slot ──
-    if (childState.status === 'queued' && childState.poolSlotId) {
-      const slot = pool?.getSlot(childState.poolSlotId)
+    if (stepState.status === 'queued' && stepState.poolSlotId) {
+      const slot = pool?.getSlot(stepState.poolSlotId)
       if (slot && slot.status === 'active') {
         ctx.broadcast({
           type: 'pool_slot_granted',
           runId: run.id,
-          stepName: childDef.name,
+          stepName: stepDef.name,
           slotId: slot.id,
         })
-        // Start producer
-        childState.status = 'running'
-        childState.startedAt = new Date().toISOString()
-        childState.reviewSubStep = 'producer'
-        childState.reviewIteration = 1
-        startStep(run, childDef.producer!, childState)
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        stepState.reviewSubStep = 'producer'
+        stepState.reviewIteration = 1
+
+        const iterationId = generateIterationId()
+        stepState.currentIterationId = iterationId
+        workflowStore.insertIteration({
+          id: iterationId,
+          run_id: run.id,
+          step_name: stepDef.name,
+          iteration: 1,
+          producer_task_id: null,
+          reviewer_task_id: null,
+          verdict: null,
+          feedback: null,
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          producer_completed_at: null,
+        })
+
+        startStep(run, stepDef.producer!, stepState)
+        if (stepState.taskId) {
+          workflowStore.updateIteration(iterationId, { producer_task_id: stepState.taskId })
+        }
         ctx.logger.info('dag_review_loop_started', {
           runId: run.id,
-          step: sanitizeForLog(childDef.name),
+          step: sanitizeForLog(stepDef.name),
           iteration: 1,
           subStep: 'producer',
         })
@@ -983,128 +2746,697 @@ export function createDAGEngine(
       return
     }
 
-    // ── Running: monitor current sub-step ──
-    if (childState.status === 'running') {
-      if (!childState.taskId) return
+    // ── Running / waiting_signal: monitor current sub-step ──
+    // Review loop sub-steps (producer/reviewer) may use signal_protocol, which sets
+    // status to 'waiting_signal'. We treat that the same as 'running' for monitoring:
+    // check task completion and advance the review loop state machine.
+    if (stepState.status === 'waiting_signal') {
+      stepState.status = 'running'
+      // Fall through to the monitoring logic below
+    }
+    if (stepState.status !== 'running') return
 
-      const task = taskStore.getTask(childState.taskId)
-      if (!task) {
-        childState.status = 'failed'
-        childState.errorMessage = 'task disappeared'
-        childState.completedAt = new Date().toISOString()
-        releasePoolSlotIfHeld(childState, run)
+    // Handle 'between' state: producer done, need reviewer slot
+    if (stepState.reviewSubStep === 'between') {
+      // REQ-17: One-tick gap — on the first tick after entering 'between',
+      // clear the flag and return without requesting a slot. This gives
+      // other steps a chance to acquire the slot that was just released.
+      if (stepState.needsReviewerSlot) {
+        stepState.needsReviewerSlot = false
         saveAndBroadcast(run)
         return
       }
 
-      // Still running - wait
-      if (task.status !== 'completed' && task.status !== 'failed') return
-
-      // Task failed
-      if (task.status === 'failed') {
-        childState.status = 'failed'
-        childState.errorMessage = `${childState.reviewSubStep} failed: ${task.errorMessage ?? 'unknown error'}`
-        childState.completedAt = new Date().toISOString()
-        releasePoolSlotIfHeld(childState, run)
-        saveAndBroadcast(run)
-        ctx.logger.info('dag_review_loop_failed', {
+      if (pool && parsed.system?.session_pool) {
+        const result = pool.requestSlot({
           runId: run.id,
-          step: sanitizeForLog(childDef.name),
-          iteration: childState.reviewIteration,
-          subStep: childState.reviewSubStep,
-          error: sanitizeForLog(task.errorMessage ?? 'unknown'),
+          stepName: stepDef.name,
+          tier: runTier,
         })
-        return
-      }
+        if (result.rejected || !result.slot) {
+          // Pool starvation check
+          if (stepState.reviewerQueuedAt) {
+            const elapsed = (Date.now() - new Date(stepState.reviewerQueuedAt).getTime()) / 1000
+            if (elapsed > 300) {
+              ctx.logger.warn('dag_review_loop_pool_starvation', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                waitSeconds: Math.round(elapsed),
+              })
 
-      // Task completed
-      if (childState.reviewSubStep === 'producer') {
-        // Collect result from producer
-        collectStepResult(run, childDef.producer!, childState)
+              // P-3: Escalate to paused_starvation
+              stepState.status = 'paused_starvation' as any
+              stepState.errorMessage = `Pool starvation: reviewer queued for ${Math.round(elapsed)}s, exceeds 300s timeout`
+              saveAndBroadcast(run)
 
-        // Transition to reviewer
-        childState.reviewSubStep = 'reviewer'
-        childState.taskId = null
-        startStep(run, childDef.reviewer!, childState)
-        ctx.logger.info('dag_review_loop_transition', {
-          runId: run.id,
-          step: sanitizeForLog(childDef.name),
-          iteration: childState.reviewIteration,
-          from: 'producer',
-          to: 'reviewer',
-        })
-        return
-      }
-
-      if (childState.reviewSubStep === 'reviewer') {
-        // Collect result from reviewer to check verdict
-        collectStepResult(run, childDef.reviewer!, childState)
-
-        // Determine verdict from result content
-        const verdict = extractVerdict(childState.resultContent)
-        childState.reviewVerdict = verdict
-
-        ctx.logger.info('dag_review_loop_verdict', {
-          runId: run.id,
-          step: sanitizeForLog(childDef.name),
-          iteration: childState.reviewIteration,
-          verdict,
-        })
-
-        if (verdict === 'PASS') {
-          // Review passed - complete the loop
-          childState.status = 'completed'
-          childState.completedAt = new Date().toISOString()
-          releasePoolSlotIfHeld(childState, run)
+              ctx.broadcast({
+                type: 'step_starvation',
+                runId: run.id,
+                stepName: stepDef.name,
+                waitSeconds: Math.round(elapsed),
+              })
+              return
+            }
+          }
+          return
+        }
+        stepState.poolSlotId = result.slot.id
+        if (result.slot.status === 'queued') {
+          if (!stepState.reviewerQueuedAt) {
+            stepState.reviewerQueuedAt = new Date().toISOString()
+          }
           saveAndBroadcast(run)
           return
         }
+        ctx.broadcast({
+          type: 'pool_slot_granted',
+          runId: run.id,
+          stepName: stepDef.name,
+          slotId: result.slot.id,
+        })
+      }
 
-        // Check if max iterations reached
-        if ((childState.reviewIteration ?? 0) >= maxIter) {
-          childState.status = 'completed'
-          childState.completedAt = new Date().toISOString()
-          childState.reviewVerdict = `max_iterations_reached (last: ${verdict})`
-          releasePoolSlotIfHeld(childState, run)
+      // Start reviewer
+      stepState.reviewSubStep = 'reviewer'
+      stepState.reviewerQueuedAt = null
+      stepState.taskId = null
+
+      // Inject feedback into reviewer prompt if available
+      const reviewerDef = { ...stepDef.reviewer! }
+      if (stepState.reviewFeedback) {
+        reviewerDef.prompt = `${reviewerDef.prompt ?? ''}\n\nPrevious iteration feedback:\n${stepState.reviewFeedback}`
+      }
+
+      startStep(run, reviewerDef, stepState)
+
+      // DB: update with reviewer task ID
+      if (stepState.currentIterationId && stepState.taskId) {
+        workflowStore.updateIteration(stepState.currentIterationId, { reviewer_task_id: stepState.taskId })
+      }
+
+      ctx.logger.info('dag_review_loop_transition', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        iteration: stepState.reviewIteration,
+        from: 'producer',
+        to: 'reviewer',
+      })
+      saveAndBroadcast(run)
+      return
+    }
+
+    // Monitor running task
+    if (!stepState.taskId) return
+
+    const task = taskStore.getTask(stepState.taskId)
+    if (!task) {
+      stepState.status = 'failed'
+      stepState.errorMessage = 'task disappeared'
+      stepState.completedAt = new Date().toISOString()
+      releasePoolSlotIfHeld(stepState, run)
+      saveAndBroadcast(run)
+      return
+    }
+
+    // Still running - wait
+    if (task.status !== 'completed' && task.status !== 'failed') return
+
+    // Task failed
+    if (task.status === 'failed') {
+      stepState.status = 'failed'
+      stepState.errorMessage = `${stepState.reviewSubStep} failed: ${task.errorMessage ?? 'unknown error'}`
+      stepState.completedAt = new Date().toISOString()
+
+      // DB: update iteration
+      if (stepState.currentIterationId) {
+        workflowStore.updateIteration(stepState.currentIterationId, {
+          verdict: 'TASK_FAILED',
+          completed_at: new Date().toISOString(),
+        })
+      }
+
+      releasePoolSlotIfHeld(stepState, run)
+      saveAndBroadcast(run)
+      ctx.logger.info('dag_review_loop_failed', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        iteration: stepState.reviewIteration,
+        subStep: stepState.reviewSubStep,
+        error: sanitizeForLog(task.errorMessage ?? 'unknown'),
+      })
+      return
+    }
+
+    // Task completed
+    if (stepState.reviewSubStep === 'producer') {
+      collectStepResult(run, stepDef.producer!, stepState)
+
+      // Check for amendment signal
+      if (stepState.signalDir) {
+        const processed = getProcessedSignals(run.id, stepDef.name)
+        const signal = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed)
+        if (signal && signal.signal_type === 'amendment_required') {
+          stepState.status = 'paused_amendment'
+          releasePoolSlotIfHeld(stepState, run)
           saveAndBroadcast(run)
-          ctx.logger.info('dag_review_loop_max_iterations', {
+          ctx.logger.info('dag_review_loop_amendment', {
             runId: run.id,
-            step: sanitizeForLog(childDef.name),
-            iterations: childState.reviewIteration,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+            subStep: 'producer',
+          })
+          return
+        }
+      }
+
+      // P-5 (REQ-28): Record producer completion timestamp for duration tracking
+      if (stepState.currentIterationId) {
+        const producerCompletedAt = new Date().toISOString()
+        workflowStore.updateIteration(stepState.currentIterationId, {
+          producer_completed_at: producerCompletedAt,
+        })
+      }
+
+      // Release pool slot before requesting reviewer slot
+      releasePoolSlotIfHeld(stepState, run)
+
+      // Transition to 'between' state — set needsReviewerSlot flag
+      // so the actual slot request happens on the NEXT tick,
+      // giving other steps a chance to acquire the released slot (REQ-17)
+      stepState.reviewSubStep = 'between'
+      stepState.needsReviewerSlot = true
+      stepState.taskId = null
+      saveAndBroadcast(run)
+      ctx.logger.info('dag_review_loop_producer_done', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        iteration: stepState.reviewIteration,
+      })
+      return
+    }
+
+    if (stepState.reviewSubStep === 'reviewer') {
+      collectStepResult(run, stepDef.reviewer!, stepState)
+
+      // Check for amendment signal
+      if (stepState.signalDir) {
+        const processed = getProcessedSignals(run.id, stepDef.name)
+        const signal = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed)
+        if (signal && signal.signal_type === 'amendment_required') {
+          stepState.status = 'paused_amendment'
+          releasePoolSlotIfHeld(stepState, run)
+          saveAndBroadcast(run)
+          ctx.logger.info('dag_review_loop_amendment', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+            subStep: 'reviewer',
+          })
+          return
+        }
+      }
+
+      // Extract verdict from reviewer output using YAML parsing
+      const verdictField = stepDef.reviewer?.verdict_field ?? 'verdict'
+      const feedbackField = stepDef.reviewer?.feedback_field
+      let verdictResult = null as ReturnType<typeof readReviewerVerdict>
+
+      // Try reading from reviewer's output file
+      if (stepDef.reviewer?.result_file) {
+        const outputPath = path.resolve(
+          getChildOutputDir(run, stepState),
+          stepDef.reviewer.result_file,
+        )
+        verdictResult = readReviewerVerdict(outputPath, verdictField, feedbackField)
+      }
+
+      // Fallback: try resultContent
+      if (!verdictResult && stepState.resultContent) {
+        const { verdict, warning } = normalizeVerdict(
+          stepState.resultContent.match(new RegExp(`${verdictField}\\s*:\\s*(.+)`, 'i'))?.[1]?.trim() ?? 'FAIL'
+        )
+        verdictResult = {
+          verdict,
+          raw: stepState.resultContent.slice(0, 100),
+          feedback: null,
+          warning,
+        }
+      }
+
+      // Fallback: extract verdict from task stdout (the tee'd output file)
+      // Agents don't always write to the expected result_file path, but they
+      // typically include the verdict in their stdout output.
+      if (!verdictResult && stepState.taskId) {
+        const reviewerTask = taskStore.getTask(stepState.taskId)
+        if (reviewerTask?.outputPath && fs.existsSync(reviewerTask.outputPath)) {
+          try {
+            const taskOutput = fs.readFileSync(reviewerTask.outputPath, 'utf-8')
+            // Look for verdict pattern in stdout
+            const verdictMatch = taskOutput.match(new RegExp(`${verdictField}\\s*[:=]\\s*(.+)`, 'im'))
+            if (verdictMatch) {
+              const { verdict, warning } = normalizeVerdict(verdictMatch[1].trim())
+              verdictResult = {
+                verdict,
+                raw: verdictMatch[1].trim(),
+                feedback: null,
+                warning: (warning ? warning + ' ' : '') + '(extracted from task stdout)',
+              }
+            }
+            // Also try "Overall: PASS/FAIL" pattern common in reviewer output
+            if (!verdictResult) {
+              const overallMatch = taskOutput.match(/\bOverall\s*[:=]\s*(PASS|FAIL|APPROVE|APPROVED|REJECT|NEEDS_FIX)\b/i)
+              if (overallMatch) {
+                const { verdict, warning } = normalizeVerdict(overallMatch[1].trim())
+                verdictResult = {
+                  verdict,
+                  raw: overallMatch[1].trim(),
+                  feedback: null,
+                  warning: (warning ? warning + ' ' : '') + '(extracted from "Overall:" in task stdout)',
+                }
+              }
+            }
+          } catch {
+            // Ignore read errors
+          }
+        }
+      }
+
+      // Default to FAIL if no verdict found
+      if (!verdictResult) {
+        verdictResult = {
+          verdict: 'FAIL',
+          raw: 'no_verdict_found',
+          feedback: null,
+          warning: 'No verdict found in reviewer output, treating as FAIL.',
+        }
+      }
+
+      const verdict = verdictResult.verdict
+      const feedback = verdictResult.feedback
+      stepState.reviewVerdict = verdict
+      stepState.reviewFeedback = feedback
+
+      if (verdictResult.warning) {
+        ctx.logger.warn('dag_review_loop_verdict_warning', {
+          runId: run.id,
+          step: sanitizeForLog(stepDef.name),
+          warning: verdictResult.warning,
+        })
+      }
+
+      // DB: update iteration with verdict
+      if (stepState.currentIterationId) {
+        workflowStore.updateIteration(stepState.currentIterationId, {
+          verdict,
+          feedback,
+          completed_at: new Date().toISOString(),
+        })
+      }
+
+      // Release reviewer pool slot
+      releasePoolSlotIfHeld(stepState, run)
+
+      // Broadcast review iteration event
+      ctx.broadcast({
+        type: 'review_iteration',
+        runId: run.id,
+        stepName: stepDef.name,
+        iteration: stepState.reviewIteration ?? 1,
+        verdict,
+      } as any)
+
+      ctx.logger.info('dag_review_loop_verdict', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        iteration: stepState.reviewIteration,
+        verdict,
+      })
+
+      // ── Verdict decision ──
+
+      if (verdict === 'PASS') {
+        buildAndWriteSummary('PASS')
+        stepState.status = 'completed'
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        return
+      }
+
+      if (verdict === 'CONCERN') {
+        const onConcern = stepDef.on_concern ?? { timeout_minutes: 30, default_action: 'reject' }
+        const timeoutMinutes = onConcern.timeout_minutes ?? 30
+        const defaultAction = onConcern.default_action ?? 'reject'
+
+        if (!stepState.concernWaitingSince) {
+          stepState.concernWaitingSince = new Date().toISOString()
+          stepState.concernResolution = null
+          saveAndBroadcast(run)
+          ctx.logger.info('dag_review_loop_concern', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+            timeoutMinutes,
+            defaultAction,
           })
           return
         }
 
-        // Loop back to producer for another iteration
-        childState.reviewIteration = (childState.reviewIteration ?? 0) + 1
-        childState.reviewSubStep = 'producer'
-        childState.taskId = null
-        childState.resultContent = null
-        childState.resultCollected = false
-        startStep(run, childDef.producer!, childState)
-        ctx.logger.info('dag_review_loop_iteration', {
-          runId: run.id,
-          step: sanitizeForLog(childDef.name),
-          iteration: childState.reviewIteration,
-          subStep: 'producer',
-        })
-        return
+        // REQ-10: Check for human resolution before applying timeout default
+        if (stepState.concernResolution === 'accept') {
+          stepState.concernWaitingSince = null
+          stepState.concernResolution = null
+          ctx.logger.info('dag_review_loop_concern_human_accept', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+          })
+          buildAndWriteSummary('accepted_with_warning')
+          stepState.status = 'completed'
+          stepState.completedWithWarning = true
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
+
+        if (stepState.concernResolution === 'reject') {
+          stepState.concernWaitingSince = null
+          stepState.concernResolution = null
+          ctx.logger.info('dag_review_loop_concern_human_reject', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+          })
+          // reject → treat as FAIL, fall through to max_iterations check
+        } else {
+          // No human resolution yet — check timeout
+          const elapsed = (Date.now() - new Date(stepState.concernWaitingSince).getTime()) / (1000 * 60)
+          if (elapsed < timeoutMinutes) {
+            return // Still waiting for human response or timeout
+          }
+
+          // Timeout reached without human response
+          stepState.concernWaitingSince = null
+          stepState.concernResolution = null
+          ctx.logger.info('dag_review_loop_concern_timeout', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            iteration: stepState.reviewIteration,
+            defaultAction,
+          })
+
+          if (defaultAction === 'accept') {
+            buildAndWriteSummary('accepted_with_warning')
+            stepState.status = 'completed'
+            stepState.completedWithWarning = true
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            return
+          }
+          // reject → treat as FAIL, fall through to max_iterations check
+        }
       }
+
+      // FAIL/NEEDS_FIX: check if iterations remain
+      if ((stepState.reviewIteration ?? 0) >= maxIter) {
+        // Max iterations reached -- apply policy
+        switch (onMaxIterations) {
+          case 'accept_last':
+            buildAndWriteSummary('accepted_with_warning')
+            stepState.status = 'completed'
+            stepState.completedWithWarning = true
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            ctx.logger.info('dag_review_loop_max_iterations', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iterations: stepState.reviewIteration,
+              policy: 'accept_last',
+            })
+            return
+
+          case 'fail':
+            buildAndWriteSummary('FAIL')
+            stepState.status = 'failed'
+            stepState.errorMessage = `review_loop '${stepDef.name}' exhausted ${maxIter} iterations with verdict: ${verdict}`
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            ctx.logger.info('dag_review_loop_max_iterations', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iterations: stepState.reviewIteration,
+              policy: 'fail',
+            })
+            return
+
+          case 'escalate':
+          default:
+            buildAndWriteSummary('escalated')
+            stepState.status = 'paused_human'
+            saveAndBroadcast(run)
+            ctx.logger.info('dag_review_loop_max_iterations', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              iterations: stepState.reviewIteration,
+              policy: 'escalate',
+            })
+            return
+        }
+      }
+
+      // Loop back to producer for next iteration
+      // ROBUSTNESS-1 (REQ-36): DB-first iteration increment -- DB insert before memory update
+      const { nextIteration, iterationId: newIterationId } = workflowStore.incrementAndInsertIteration(
+        run.id,
+        stepDef.name,
+        stepState.reviewIteration ?? 0,
+      )
+      stepState.reviewIteration = nextIteration
+      stepState.currentIterationId = newIterationId
+      stepState.reviewSubStep = 'producer'
+      stepState.taskId = null
+      stepState.resultContent = null
+      stepState.resultCollected = false
+      stepState.status = 'running'
+
+      // Inject feedback into producer prompt for next iteration
+      const producerDef = { ...stepDef.producer! }
+      if (feedback) {
+        producerDef.prompt = `${producerDef.prompt ?? ''}\n\nReviewer feedback from iteration ${nextIteration - 1}:\n${feedback}`
+      }
+
+      // Request new pool slot for producer
+      if (pool && parsed.system?.session_pool) {
+        const result = pool.requestSlot({
+          runId: run.id,
+          stepName: stepDef.name,
+          tier: runTier,
+        })
+        if (result.rejected || !result.slot) {
+          return // Will retry on next tick
+        }
+        stepState.poolSlotId = result.slot.id
+        if (result.slot.status === 'queued') {
+          saveAndBroadcast(run)
+          return
+        }
+      }
+
+      startStep(run, producerDef, stepState)
+      if (stepState.taskId) {
+        workflowStore.updateIteration(newIterationId, { producer_task_id: stepState.taskId })
+      }
+
+      ctx.logger.info('dag_review_loop_iteration', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        iteration: nextIteration,
+        subStep: 'producer',
+      })
+      saveAndBroadcast(run)
+      return
+    }
+    } finally {
+      reviewLoopProcessing.delete(guardKey)
     }
   }
 
+  // ── Per-Work-Unit Container Processing (CRITICAL #1) ────────────────────
+
   /**
-   * Extract verdict from reviewer result content.
-   * Looks for "verdict: PASS" or "verdict: FAIL" or "verdict: REVISE" in result.
-   * Defaults to 'FAIL' if no verdict found.
+   * CRITICAL #1: Process per_work_unit container steps.
+   * These expand into multiple children with parentGroup set.
+   * Unlike parallel_group, children execute sequentially (no depends_on, no on_failure).
    */
-  function extractVerdict(content: string | null): string {
-    if (!content) return 'FAIL'
-    const match = content.match(/verdict:\s*(PASS|FAIL|REVISE)/i)
-    if (match) return match[1].toUpperCase()
-    // Also check for just the word on its own line
-    if (/^PASS$/m.test(content)) return 'PASS'
-    return 'FAIL'
+  function processPerWorkUnitContainer(
+    run: WorkflowRun,
+    containerDef: WorkflowStep,
+    containerState: StepRunState,
+    stepDefMap: Map<string, WorkflowStep>,
+    stateIndexMap: Map<string, number>,
+    runTier: number,
+    parsed: ParsedWorkflow,
+  ): void {
+    // Find all children in steps_state
+    const childStates: { state: StepRunState; index: number; def: WorkflowStep }[] = []
+    for (let i = 0; i < run.steps_state.length; i++) {
+      const s = run.steps_state[i]
+      if (s.parentGroup === containerDef.name) {
+        const def = stepDefMap.get(s.name)
+        if (def) childStates.push({ state: s, index: i, def })
+      }
+    }
+
+    if (childStates.length === 0) {
+      // No children found - mark container as completed
+      containerState.status = 'completed'
+      containerState.completedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+      return
+    }
+
+    // Check if all children are terminal
+    const allTerminal = childStates.every(c => TERMINAL_STATUSES.has(c.state.status))
+    if (allTerminal) {
+      const anyFailed = childStates.some(c => c.state.status === 'failed')
+      if (anyFailed) {
+        containerState.status = 'failed'
+        const failedNames = childStates.filter(c => c.state.status === 'failed').map(c => c.state.name)
+        containerState.errorMessage = `per_work_unit '${containerDef.name}': ${failedNames.length} of ${childStates.length} children failed. Failed: [${failedNames.join(', ')}].`
+        containerState.completedAt = new Date().toISOString()
+      } else {
+        containerState.status = 'completed'
+        containerState.completedAt = new Date().toISOString()
+      }
+      saveAndBroadcast(run)
+      return
+    }
+
+    // Mark container as running if still pending
+    if (containerState.status === 'pending') {
+      containerState.status = 'running'
+      containerState.startedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+    }
+
+    // Process children sequentially (find first non-terminal child and process it)
+    for (const child of childStates) {
+      if (TERMINAL_STATUSES.has(child.state.status)) continue
+
+      // REQ-40: review_loop children manage their own pool slot and sub-step lifecycle
+      if (child.def.type === 'review_loop') {
+        if (child.state.status === 'pending') {
+          // Tier filtering
+          const tierSkip = evaluateTierFilter(child.def, runTier)
+          if (tierSkip) {
+            child.state.status = 'skipped'
+            child.state.skippedReason = tierSkip
+            child.state.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            continue
+          }
+
+          // Condition evaluation
+          if (child.def.condition) {
+            const condResult = evaluateCondition(run, child.def.condition, parsed)
+            if (!condResult.met) {
+              child.state.status = 'skipped'
+              child.state.skippedReason = condResult.reason ?? 'condition not met'
+              child.state.completedAt = new Date().toISOString()
+              saveAndBroadcast(run)
+              continue
+            }
+          }
+        }
+        processReviewLoop(run, child.def, child.state, runTier, parsed)
+        continue
+      }
+
+      if (child.state.status === 'pending') {
+        // Tier filtering
+        const tierSkip = evaluateTierFilter(child.def, runTier)
+        if (tierSkip) {
+          child.state.status = 'skipped'
+          child.state.skippedReason = tierSkip
+          child.state.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          continue
+        }
+
+        // Condition evaluation
+        if (child.def.condition) {
+          const condResult = evaluateCondition(run, child.def.condition, parsed)
+          if (!condResult.met) {
+            child.state.status = 'skipped'
+            child.state.skippedReason = condResult.reason ?? 'condition not met'
+            child.state.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            continue
+          }
+        }
+
+        // Pool slot for spawn_session within per_work_unit
+        if (child.def.type === 'spawn_session' && pool && parsed.system?.session_pool) {
+          const result = pool.requestSlot({
+            runId: run.id,
+            stepName: child.def.name,
+            tier: runTier,
+          })
+          if (result.rejected || !result.slot) {
+            ctx.logger.warn('dag_pool_queue_full', {
+              runId: run.id,
+              step: sanitizeForLog(child.def.name),
+              reason: result.reason,
+            })
+            continue
+          }
+          child.state.poolSlotId = result.slot.id
+          if (result.slot.status === 'queued') {
+            child.state.status = 'queued'
+            saveAndBroadcast(run)
+            ctx.broadcast({
+              type: 'step_queued',
+              runId: run.id,
+              stepName: child.def.name,
+              queuePosition: pool.getStatus().queue.length,
+            })
+            continue
+          }
+          ctx.broadcast({
+            type: 'pool_slot_granted',
+            runId: run.id,
+            stepName: child.def.name,
+            slotId: result.slot.id,
+          })
+        }
+
+        // Start the child step
+        startStep(run, child.def, child.state)
+        continue
+      }
+
+      // Handle queued children (waiting for pool slot)
+      if (child.state.status === 'queued' && child.state.poolSlotId) {
+        const slot = pool?.getSlot(child.state.poolSlotId)
+        if (slot && slot.status === 'active') {
+          ctx.broadcast({
+            type: 'pool_slot_granted',
+            runId: run.id,
+            stepName: child.def.name,
+            slotId: slot.id,
+          })
+          startStep(run, child.def, child.state)
+        }
+        continue
+      }
+
+      // Monitor running children
+      if (child.state.status === 'running' || child.state.status === 'waiting_signal') {
+        monitorStep(run, child.def, child.state)
+      }
+
+      // Only process one non-terminal child at a time (sequential execution)
+      break
+    }
   }
 
   // ── Parallel Group Processing ────────────────────────────────────────
@@ -1147,13 +3479,14 @@ export function createDAGEngine(
         if (TERMINAL_STATUSES.has(child.state.status)) continue
 
         // REQ-39: For running spawn_session tasks under cancel_all, use termination state machine
-        if (onFailure === 'cancel_all' && child.state.status === 'running' && child.def.type === 'spawn_session') {
+        // Phase 7: Also handle waiting_signal status (signal protocol steps)
+        if (onFailure === 'cancel_all' && (child.state.status === 'running' || child.state.status === 'waiting_signal') && child.def.type === 'spawn_session') {
           const done = terminateRunningChild(child.state, run, 'cancel_all')
           if (!done) {
             terminationsInProgress = true
             continue // Don't mark as cancelled yet -- state machine still in progress
           }
-        } else if (onFailure === 'fail_fast' && child.state.status === 'running' && child.def.type === 'spawn_session') {
+        } else if (onFailure === 'fail_fast' && (child.state.status === 'running' || child.state.status === 'waiting_signal') && child.def.type === 'spawn_session') {
           const done = terminateRunningChild(child.state, run, 'fail_fast')
           if (!done) {
             terminationsInProgress = true
@@ -1257,7 +3590,7 @@ export function createDAGEngine(
               child.state.completedAt = new Date().toISOString()
               releasePoolSlotIfHeld(child.state, run)
             } else if (child.state.status === 'running' && child.def.type === 'spawn_session') {
-              terminateRunningChild(child.state, run, 'fail_fast')
+              terminateRunningChild(child.state, run, 'cancel_all')
               child.state.status = 'cancelled'
               child.state.completedAt = new Date().toISOString()
               releasePoolSlotIfHeld(child.state, run)
@@ -1302,7 +3635,7 @@ export function createDAGEngine(
 
           // Condition evaluation
           if (child.def.condition) {
-            const condResult = evaluateCondition(run, child.def.condition)
+            const condResult = evaluateCondition(run, child.def.condition, parsed)
             if (!condResult.met) {
               child.state.status = 'skipped'
               child.state.skippedReason = condResult.reason ?? 'condition not met'
@@ -1312,7 +3645,7 @@ export function createDAGEngine(
             }
           }
         }
-        processReviewLoopChild(run, child.state, child.def, runTier, parsed)
+        processReviewLoop(run, child.def, child.state, runTier, parsed)
         continue
       }
 
@@ -1332,7 +3665,7 @@ export function createDAGEngine(
 
         // Condition evaluation
         if (child.def.condition) {
-          const condResult = evaluateCondition(run, child.def.condition)
+          const condResult = evaluateCondition(run, child.def.condition, parsed)
           if (!condResult.met) {
             child.state.status = 'skipped'
             child.state.skippedReason = condResult.reason ?? 'condition not met'
@@ -1347,13 +3680,23 @@ export function createDAGEngine(
           // REQ-25/26/27: max_parallel enforcement
           if (runningSessionCount >= maxParallel) continue
 
-          const slot = pool.requestSlot({
+          const result = pool.requestSlot({
             runId: run.id,
             stepName: child.def.name,
             tier: runTier,
           })
-          child.state.poolSlotId = slot.id
-          if (slot.status === 'queued') {
+          // REQ-24: Queue full -- reject at slot-request level
+          if (result.rejected || !result.slot) {
+            ctx.logger.warn('dag_pool_queue_full', {
+              runId: run.id,
+              step: sanitizeForLog(child.def.name),
+              reason: result.reason,
+            })
+            // Leave as pending; will retry on next tick when queue has room
+            continue
+          }
+          child.state.poolSlotId = result.slot.id
+          if (result.slot.status === 'queued') {
             child.state.status = 'queued'
             runningSessionCount++
             saveAndBroadcast(run)
@@ -1370,7 +3713,7 @@ export function createDAGEngine(
             type: 'pool_slot_granted',
             runId: run.id,
             stepName: child.def.name,
-            slotId: slot.id,
+            slotId: result.slot.id,
           })
         }
 
@@ -1395,8 +3738,853 @@ export function createDAGEngine(
       }
 
       // Monitor running children
-      if (child.state.status === 'running') {
+      if (child.state.status === 'running' || child.state.status === 'waiting_signal') {
         monitorStep(run, child.def, child.state)
+      }
+    }
+  }
+
+  // ── Amendment Processing (Phase 10) ──────────────────────────────────
+
+  function processAmendment(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+    runTier: number,
+    parsed: ParsedWorkflow,
+  ): void {
+    const phase = stepState.amendmentPhase
+
+    switch (phase) {
+      case 'detected': {
+        // Parse amendment from stored signal file
+        if (!stepState.amendmentSignalFile) {
+          stepState.status = 'failed'
+          stepState.errorMessage = 'Amendment detected but no signal file recorded'
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
+
+        let signalContent: Record<string, unknown>
+        try {
+          const raw = fs.readFileSync(stepState.amendmentSignalFile, 'utf-8')
+          signalContent = yaml.load(raw) as Record<string, unknown>
+        } catch {
+          stepState.status = 'failed'
+          stepState.errorMessage = 'Failed to read amendment signal file'
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
+
+        const amendment = parseAmendmentSignal(signalContent)
+        if (!amendment) {
+          stepState.status = 'failed'
+          stepState.errorMessage = 'Failed to parse amendment from signal file'
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
+
+        // REQ-15: Fundamental amendments always escalate immediately
+        if (isFundamental(amendment)) {
+          stepState.status = 'paused_escalated'
+          stepState.amendmentPhase = 'awaiting_human'
+          ctx.broadcast({
+            type: 'amendment_escalated',
+            runId: run.id,
+            stepName: stepState.name,
+            reason: 'fundamental amendment requires human review',
+          })
+          ctx.logger.info('dag_amendment_escalated', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            reason: 'fundamental',
+          })
+          saveAndBroadcast(run)
+          return
+        }
+
+        // REQ-14: Same-section-twice check
+        const config: AmendmentConfig = stepDef.amendment_config ?? {}
+        if (config.same_section_twice === 'escalate' && amendment.amendment.spec_section) {
+          const priorAmendments = workflowStore.getAmendmentsBySection(run.id, amendment.amendment.spec_section)
+          if (priorAmendments.length > 0) {
+            stepState.status = 'paused_escalated'
+            stepState.amendmentPhase = 'awaiting_human'
+            ctx.broadcast({
+              type: 'amendment_escalated',
+              runId: run.id,
+              stepName: stepState.name,
+              reason: `same section amended twice: ${amendment.amendment.spec_section}`,
+            })
+            ctx.logger.info('dag_amendment_escalated', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              reason: 'same_section_twice',
+              section: sanitizeForLog(amendment.amendment.spec_section),
+            })
+            saveAndBroadcast(run)
+            return
+          }
+        }
+
+        // REQ-10, REQ-11: Budget check with BEGIN IMMEDIATE transaction
+        const category = amendment.amendment.category
+        const workUnit = signalContent.work_unit ? String(signalContent.work_unit) : null
+        const budgetResult = workflowStore.checkAndIncrementBudget(run.id, workUnit, category)
+
+        if (!budgetResult.allowed) {
+          // REQ-13: Budget exceeded -> escalate
+          stepState.status = 'paused_escalated'
+          stepState.amendmentPhase = 'awaiting_human'
+          ctx.broadcast({
+            type: 'amendment_escalated',
+            runId: run.id,
+            stepName: stepState.name,
+            reason: `${category} budget exceeded (${budgetResult.used}/${budgetResult.max})`,
+          })
+          ctx.broadcast({
+            type: 'budget_updated',
+            runId: run.id,
+            category,
+            used: budgetResult.used,
+            max: budgetResult.max,
+          })
+          ctx.logger.info('dag_amendment_budget_exceeded', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            category,
+            used: budgetResult.used,
+            max: budgetResult.max,
+          })
+
+          // REQ-30: Log SCHEMA_GAP when quality budget exhausted
+          if (category === 'quality') {
+            const outputDir = run.output_dir
+            if (outputDir) {
+              try {
+                const gapDir = path.join(outputDir, 'schema_gaps')
+                if (!fs.existsSync(gapDir)) fs.mkdirSync(gapDir, { recursive: true })
+                const gapFile = path.join(gapDir, `SCHEMA_GAP_${Date.now()}.yaml`)
+                const gapRecord = {
+                  run_id: run.id,
+                  step: stepState.name,
+                  category: 'quality_budget_exhausted',
+                  amendment_type: stepState.amendmentType,
+                  spec_section: stepState.amendmentSpecSection,
+                  timestamp: new Date().toISOString(),
+                }
+                fs.writeFileSync(gapFile, yaml.dump(gapRecord), 'utf-8')
+              } catch { /* best effort */ }
+            }
+          }
+
+          saveAndBroadcast(run)
+          return
+        }
+
+        // Record amendment in DB
+        const amendmentId = workflowStore.insertAmendment({
+          run_id: run.id,
+          step_name: stepState.name,
+          work_unit: workUnit ?? undefined,
+          signal_file: stepState.amendmentSignalFile,
+          amendment_type: amendment.amendment.type,
+          category: amendment.amendment.category,
+          spec_section: amendment.amendment.spec_section,
+          issue: amendment.amendment.issue,
+          proposed_change: amendment.amendment.proposed_addition,
+        })
+        stepState.amendmentSignalId = amendmentId
+
+        // REQ-18: Check if human escalation needed
+        if (shouldEscalateToHuman(amendment, config, runTier)) {
+          stepState.status = 'paused_escalated'
+          stepState.amendmentPhase = 'awaiting_human'
+          ctx.broadcast({
+            type: 'amendment_escalated',
+            runId: run.id,
+            stepName: stepState.name,
+            reason: 'amendment requires human review',
+          })
+          saveAndBroadcast(run)
+          return
+        }
+
+        // Auto-review: advance to handler_running
+        if (shouldAutoReview(amendment, config)) {
+          stepState.amendmentPhase = 'handler_running'
+          stepState.amendmentRetryCount = 0
+          ctx.logger.info('dag_amendment_auto_review', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            type: amendment.amendment.type,
+          })
+          // Actual handler spawning happens on next tick when phase is handler_running
+        } else {
+          // Not auto-reviewable and not human-required = shouldn't happen, but escalate to be safe
+          stepState.status = 'paused_escalated'
+          stepState.amendmentPhase = 'awaiting_human'
+        }
+
+        saveAndBroadcast(run)
+        return
+      }
+
+      case 'handler_running': {
+        // REQ-06: Sequential amendment processing -- only one handler can be active at a time
+        // Check if another step already has an active handler (hashandlerTaskId)
+        const otherHandlerActive = run.steps_state.some(
+          s => s.name !== stepState.name &&
+               s.status === 'paused_amendment' &&
+               s.amendmentPhase === 'handler_running' &&
+               s.amendmentHandlerTaskId
+        )
+
+        // CF-1: Spawn real amendment handler session
+        if (!stepState.amendmentHandlerTaskId) {
+          // If another handler is active, wait for it to complete before spawning
+          if (otherHandlerActive) {
+            return  // Wait for the other handler to complete
+          }
+          // Parse the amendment signal to build handler prompt
+          if (!stepState.amendmentSignalFile) {
+            stepState.status = 'failed'
+            stepState.errorMessage = 'Handler running but no signal file recorded'
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            return
+          }
+
+          let signalContent: Record<string, unknown>
+          let amendment: AmendmentSignal | null
+          try {
+            const raw = fs.readFileSync(stepState.amendmentSignalFile, 'utf-8')
+            signalContent = yaml.load(raw) as Record<string, unknown>
+            amendment = parseAmendmentSignal(signalContent)
+          } catch {
+            stepState.status = 'failed'
+            stepState.errorMessage = 'Failed to read amendment signal file for handler'
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            return
+          }
+
+          if (!amendment) {
+            stepState.status = 'failed'
+            stepState.errorMessage = 'Failed to parse amendment signal for handler'
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            return
+          }
+
+          // Request a pool slot for the handler session
+          if (pool && parsed.system?.session_pool) {
+            const result = pool.requestSlot({
+              runId: run.id,
+              stepName: `${stepState.name}:amendment-handler`,
+              tier: runTier,
+            })
+            if (result.rejected || !result.slot) {
+              // Pool full -- wait for slot
+              return
+            }
+            stepState.poolSlotId = result.slot.id
+            if (result.slot.status === 'queued') {
+              saveAndBroadcast(run)
+              return
+            }
+            ctx.broadcast({
+              type: 'pool_slot_granted',
+              runId: run.id,
+              stepName: stepState.name,
+              slotId: result.slot.id,
+            })
+          }
+
+          // Build the handler prompt
+          const specPath = stepDef.spec_path ?? path.join(run.output_dir, 'spec.md')
+          const constitutionSections = stepDef.constitution_sections ?? []
+          const checkpoint = amendment.checkpoint ?? {}
+
+          const handlerPrompt = buildHandlerPrompt(
+            amendment,
+            specPath,
+            constitutionSections,
+            checkpoint,
+          )
+
+          // Build the resolution output path for the handler to write its result
+          const outputDir = getChildOutputDir(run, stepState)
+          try {
+            if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true })
+          } catch { /* best effort */ }
+
+          const resolutionPath = path.join(outputDir, `amendment-resolution-${stepState.name}.yaml`)
+
+          // Create a task for the amendment handler agent
+          const handlerTask = taskStore.createTask({
+            projectPath: stepDef.projectPath ?? run.output_dir,
+            prompt: `${handlerPrompt}\n\n## Resolution Output Path\nWrite your resolution to: ${resolutionPath}\n`,
+            templateId: null,
+            priority: 7, // Higher priority than normal tasks
+            status: 'queued',
+            maxRetries: 0,
+            timeoutSeconds: (stepDef.amendment_config?.handler_timeout_seconds ?? 300),
+          })
+
+          // Set agent type metadata
+          const metadataObj: Record<string, string> = {
+            workflow_run_id: run.id,
+            workflow_step_name: stepState.name,
+            agent_type: 'amendment-handler',
+            amendment_type: amendment.amendment.type,
+            amendment_section: amendment.amendment.spec_section,
+            resolution_path: resolutionPath,
+          }
+          taskStore.updateTask(handlerTask.id, { metadata: JSON.stringify(metadataObj) })
+
+          stepState.amendmentHandlerTaskId = handlerTask.id
+          stepState.startedAt = new Date().toISOString()
+
+          ctx.logger.info('dag_amendment_handler_spawned', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            taskId: handlerTask.id,
+            amendmentType: amendment.amendment.type,
+            specSection: sanitizeForLog(amendment.amendment.spec_section),
+          })
+          saveAndBroadcast(run)
+          return
+        }
+
+        // Monitor running handler task for completion
+        const handlerTask = taskStore.getTask(stepState.amendmentHandlerTaskId)
+        if (!handlerTask) {
+          // Task disappeared -- treat as failure, retry
+          stepState.amendmentRetryCount = (stepState.amendmentRetryCount ?? 0) + 1
+          if (stepState.amendmentRetryCount >= 2) {
+            stepState.status = 'paused_escalated'
+            stepState.amendmentPhase = 'awaiting_human'
+            ctx.broadcast({
+              type: 'amendment_escalated',
+              runId: run.id,
+              stepName: stepState.name,
+              reason: 'handler task disappeared after max retries',
+            })
+          } else {
+            stepState.amendmentHandlerTaskId = null  // Reset for retry
+            releasePoolSlotIfHeld(stepState, run)
+          }
+          saveAndBroadcast(run)
+          return
+        }
+
+        // Task still running -- check timeout then wait
+        if (handlerTask.status !== 'completed' && handlerTask.status !== 'failed') {
+          // Fall through to timeout check below
+        } else if (handlerTask.status === 'failed') {
+          // Handler task failed
+          stepState.amendmentRetryCount = (stepState.amendmentRetryCount ?? 0) + 1
+          releasePoolSlotIfHeld(stepState, run)
+          if (stepState.amendmentRetryCount >= 2) {
+            stepState.status = 'paused_escalated'
+            stepState.amendmentPhase = 'awaiting_human'
+            ctx.broadcast({
+              type: 'amendment_escalated',
+              runId: run.id,
+              stepName: stepState.name,
+              reason: `handler failed: ${handlerTask.errorMessage ?? 'unknown error'}`,
+            })
+            ctx.logger.warn('dag_amendment_handler_failed', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              error: handlerTask.errorMessage ?? 'unknown',
+              retries: stepState.amendmentRetryCount,
+            })
+          } else {
+            stepState.amendmentHandlerTaskId = null  // Reset for retry
+            ctx.logger.info('dag_amendment_handler_retry', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              retry: stepState.amendmentRetryCount,
+              reason: 'task_failed',
+            })
+          }
+          saveAndBroadcast(run)
+          return
+        } else {
+          // Handler completed -- check for resolution file and advance
+          const outputDir = getChildOutputDir(run, stepState)
+          const resolutionPath = path.join(outputDir, `amendment-resolution-${stepState.name}.yaml`)
+          const resolution = readResolutionFile(resolutionPath)
+
+          if (resolution) {
+            // Store resolution info for handler_complete phase
+            stepState.amendmentPhase = 'handler_complete'
+            releasePoolSlotIfHeld(stepState, run)
+            ctx.logger.info('dag_amendment_handler_complete', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              resolution: resolution.resolution,
+            })
+          } else {
+            // Handler completed but no valid resolution file -- auto-approve for gap/correction
+            // (handler may have written output differently)
+            stepState.amendmentPhase = 'handler_complete'
+            releasePoolSlotIfHeld(stepState, run)
+            ctx.logger.warn('dag_amendment_handler_no_resolution', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              note: 'handler completed without resolution file, advancing to handler_complete',
+            })
+          }
+          saveAndBroadcast(run)
+          return
+        }
+
+        // Check handler timeout (REQ-19)
+        const handlerConfig: AmendmentConfig = stepDef.amendment_config ?? {}
+        const timeoutMs = (handlerConfig.handler_timeout_seconds ?? 300) * 1000
+        if (stepState.startedAt) {
+          const elapsed = Date.now() - new Date(stepState.startedAt).getTime()
+          if (elapsed > timeoutMs) {
+            stepState.amendmentRetryCount = (stepState.amendmentRetryCount ?? 0) + 1
+            // REQ-20: Max retries (default 2)
+            if (stepState.amendmentRetryCount >= 2) {
+              stepState.status = 'paused_escalated'
+              stepState.amendmentPhase = 'awaiting_human'
+              ctx.broadcast({
+                type: 'amendment_escalated',
+                runId: run.id,
+                stepName: stepState.name,
+                reason: 'handler timeout after max retries',
+              })
+              ctx.logger.warn('dag_amendment_handler_timeout', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                retries: stepState.amendmentRetryCount,
+              })
+            } else {
+              // Retry: reset handler task
+              stepState.amendmentHandlerTaskId = null
+              ctx.logger.info('dag_amendment_handler_retry', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                retry: stepState.amendmentRetryCount,
+              })
+            }
+            saveAndBroadcast(run)
+            return
+          }
+        }
+        return
+      }
+
+      case 'handler_complete': {
+        // REQ-47: Invalidation cycle detection
+        stepState.invalidationCount = (stepState.invalidationCount ?? 0) + 1
+        if (stepState.invalidationCount >= 3) {
+          stepState.status = 'paused_escalated'
+          stepState.amendmentPhase = 'awaiting_human'
+          ctx.logger.warn('dag_amendment_invalidation_cycle', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            invalidationCount: stepState.invalidationCount,
+          })
+          ctx.broadcast({
+            type: 'amendment_escalated',
+            runId: run.id,
+            stepName: stepState.name,
+            reason: `invalidation cycle detected (${stepState.invalidationCount} amendments on same step)`,
+          })
+          saveAndBroadcast(run)
+          return
+        }
+
+        // CF-1/P-3: Read actual resolution from handler output file
+        const outputDir = getChildOutputDir(run, stepState)
+        const resolutionPath = path.join(outputDir, `amendment-resolution-${stepState.name}.yaml`)
+        const handlerResolution = readResolutionFile(resolutionPath)
+
+        // Determine resolution: read from file, or default to 'approved' if no file
+        const actualResolution = handlerResolution?.resolution ?? 'approved'
+        const resolvedBy = handlerResolution?.resolved_by ?? 'amendment-handler'
+
+        // REQ-21/22: Resolution processing - support both approved and rejected
+        if (stepState.amendmentSignalId) {
+          workflowStore.resolveAmendment(stepState.amendmentSignalId, actualResolution, resolvedBy)
+        }
+
+        // CF-7/REQ-23/REQ-43/REQ-44: Write resolution file to disk for crash recovery
+        if (stepState.signalDir && stepState.amendmentSignalFile) {
+          try {
+            // Read original signal to extract checkpoint
+            const signalContent = readSignalFile(stepState.amendmentSignalFile)
+            const checkpoint = signalContent?.checkpoint ?? null
+            const signalFileName = path.basename(stepState.amendmentSignalFile)
+
+            writeResolutionFile(
+              stepState.signalDir,
+              signalFileName,
+              actualResolution,
+              resolvedBy,
+              checkpoint
+            )
+          } catch (err) {
+            // Best effort - log but don't fail the resolution
+            ctx.logger.warn('dag_resolution_file_write_failed', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+
+        // P-3: Handle rejected amendments -- skip spec changes, resume with rejection note
+        if (actualResolution === 'rejected') {
+          // No spec changes for rejected amendments
+          ctx.logger.info('dag_amendment_rejected', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            reason: handlerResolution?.spec_changes ?? 'rejected by handler',
+          })
+        }
+
+        // Build resume prompt for the paused step using checkpoint data
+        let resumePrompt: string | null = null
+        if (stepState.amendmentSignalFile) {
+          try {
+            const raw = fs.readFileSync(stepState.amendmentSignalFile, 'utf-8')
+            const signalObj = yaml.load(raw) as Record<string, unknown>
+            const amendment = parseAmendmentSignal(signalObj)
+            if (amendment) {
+              resumePrompt = buildResumePrompt(
+                amendment.checkpoint ?? {},
+                {
+                  type: amendment.amendment.type,
+                  spec_section: amendment.amendment.spec_section,
+                  issue: amendment.amendment.issue,
+                },
+                actualResolution as 'approved' | 'rejected' | 'deferred',
+              )
+            }
+          } catch {
+            // Best effort -- resume without prompt if parsing fails
+            ctx.logger.warn('dag_amendment_resume_prompt_failed', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+            })
+          }
+        }
+
+        // Transition step back to running (resumed from checkpoint)
+        stepState.status = 'running'
+        stepState.amendmentPhase = null
+        stepState.amendmentHandlerTaskId = null
+
+        // CF-1: Spawn a resume session with checkpoint context if we have a resume prompt
+        if (resumePrompt && stepDef.type === 'spawn_session') {
+          // Create a new task for the resumed step with checkpoint context
+          const resumeTask = taskStore.createTask({
+            projectPath: stepDef.projectPath ?? run.output_dir,
+            prompt: `${resumePrompt}\n\nOriginal task prompt:\n${stepDef.prompt ?? ''}`,
+            templateId: null,
+            priority: 5,
+            status: 'queued',
+            maxRetries: stepDef.maxRetries ?? 0,
+            timeoutSeconds: stepDef.timeoutSeconds ?? 1800,
+          })
+          const metadataObj: Record<string, string> = {
+            workflow_run_id: run.id,
+            workflow_step_name: stepState.name,
+            resume_after_amendment: 'true',
+            amendment_resolution: actualResolution,
+          }
+          if (stepDef.agentType) {
+            metadataObj.agent_type = stepDef.agentType
+          }
+          taskStore.updateTask(resumeTask.id, { metadata: JSON.stringify(metadataObj) })
+          stepState.taskId = resumeTask.id
+          stepState.startedAt = new Date().toISOString()
+
+          ctx.logger.info('dag_amendment_resume_spawned', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            taskId: resumeTask.id,
+            resolution: actualResolution,
+          })
+        }
+
+        ctx.broadcast({
+          type: 'amendment_resolved',
+          runId: run.id,
+          stepName: stepState.name,
+          resolution: actualResolution,
+        })
+
+        ctx.logger.info('dag_amendment_resolved', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          resolution: actualResolution,
+        })
+
+        saveAndBroadcast(run)
+        return
+      }
+
+      case 'awaiting_human': {
+        // REQ-46: State machine enforcement for paused_escalated
+        // paused_escalated can only transition to 'running' (human resolution via API) or 'cancelled'
+        // Guard: if somehow status drifted, force it back
+        if (stepState.status !== 'paused_escalated' && stepState.status !== 'cancelled') {
+          ctx.logger.warn('dag_amendment_invalid_state', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            expectedStatus: 'paused_escalated',
+            actualStatus: stepState.status,
+          })
+          stepState.status = 'paused_escalated'
+          saveAndBroadcast(run)
+        }
+        // Human resolution comes through the REST API (WU-5)
+        // Nothing else to do here in tick() -- wait for API call
+        return
+      }
+
+      default: {
+        // Unknown phase -- log and skip
+        ctx.logger.warn('dag_amendment_unknown_phase', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          phase: String(phase),
+        })
+        return
+      }
+    }
+  }
+
+  // ── Amendment Crash Recovery (Phase 10) ──────────────────────────────
+
+  /**
+   * Check if a tmux session exists.
+   */
+  function checkTmuxSession(sessionId: string | null | undefined): boolean {
+    if (!sessionId) return false
+    try {
+      const result = Bun.spawnSync(['tmux', 'has-session', '-t', sessionId], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      return result.exitCode === 0
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Kill a tmux session if it exists.
+   */
+  function killTmuxSession(sessionId: string): void {
+    try {
+      Bun.spawnSync(['tmux', 'kill-session', '-t', sessionId], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+    } catch (err) {
+      ctx.logger.warn('tmux_kill_session_failed', {
+        sessionId,
+        error: String(err),
+      })
+    }
+  }
+
+  /**
+   * Recover amendment processing state after engine restart.
+   * Called at start of tick() before the main step loop.
+   */
+  function recoverAmendments(run: WorkflowRun): void {
+    for (const stepState of run.steps_state) {
+      if (stepState.status !== 'paused_amendment') continue
+
+      const phase = stepState.amendmentPhase
+
+      // Scenario 1 (REQ-41): Mid-detect -- phase is 'detected' or null
+      // Re-process from the beginning
+      if (!phase || phase === 'detected') {
+        if (stepState.amendmentSignalFile && fs.existsSync(stepState.amendmentSignalFile)) {
+          // Signal file still exists, re-process from budget check
+          ctx.logger.info('dag_amendment_recover', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            scenario: 'mid_detect',
+            action: 'reprocess',
+          })
+          stepState.amendmentPhase = 'detected'  // Ensure phase is set
+          // processAmendment will handle it on next tick
+        } else {
+          // Signal file gone -- can't recover, fail the step
+          stepState.status = 'failed'
+          stepState.errorMessage = 'Amendment signal file missing after crash recovery'
+          stepState.completedAt = new Date().toISOString()
+          ctx.logger.warn('dag_amendment_recover', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            scenario: 'mid_detect',
+            action: 'failed_missing_signal',
+          })
+          saveAndBroadcast(run)
+        }
+      }
+
+      // Scenario 2 (REQ-42): Mid-handler -- phase is 'handler_running'
+      else if (phase === 'handler_running') {
+        if (stepState.amendmentHandlerTaskId) {
+          // If the task still exists in the store AND there's no signalDir to check,
+          // skip recovery — processAmendment will handle it normally.
+          // When signalDir IS set, recovery checks for resolution files and handles retries.
+          const existingTask = taskStore.getTask(stepState.amendmentHandlerTaskId)
+          if (existingTask && !stepState.signalDir) {
+            // Task still tracked, no signal dir to check -- skip recovery
+            continue
+          }
+
+          // Task has vanished -- genuine crash recovery
+          ctx.logger.info('dag_amendment_recover', {
+            runId: run.id,
+            step: sanitizeForLog(stepState.name),
+            scenario: 'mid_handler',
+            action: 'check_handler',
+          })
+
+          // REQ-42: Check if tmux session exists and kill orphaned sessions
+          const sessionExists = checkTmuxSession(stepState.amendmentHandlerTaskId)
+          if (sessionExists) {
+            killTmuxSession(stepState.amendmentHandlerTaskId)
+            ctx.logger.info('dag_amendment_recover_killed_session', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              sessionId: stepState.amendmentHandlerTaskId,
+            })
+          }
+
+          // REQ-42: Release pool slot if held
+          if (pool && stepState.amendmentHandlerTaskId) {
+            pool.releaseSlot(stepState.amendmentHandlerTaskId)
+            ctx.logger.info('dag_amendment_recover_released_slot', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              slotId: stepState.amendmentHandlerTaskId,
+            })
+          }
+
+          // Check for resolution file in signal dir
+          const signalDir = stepState.signalDir
+          if (signalDir && fs.existsSync(signalDir)) {
+            const resolvedFiles = fs.readdirSync(signalDir).filter(f => f.includes('_resolved'))
+            if (resolvedFiles.length > 0) {
+              // Resolution found -- advance to handler_complete
+              stepState.amendmentPhase = 'handler_complete'
+              stepState.amendmentHandlerTaskId = null  // Clear handler task ID
+              ctx.logger.info('dag_amendment_recover', {
+                runId: run.id,
+                step: sanitizeForLog(stepState.name),
+                scenario: 'mid_handler',
+                action: 'found_resolution',
+              })
+            } else {
+              // No resolution -- clear handler task ID so processAmendment
+              // re-spawns on the main loop (counts as implicit retry)
+              stepState.amendmentHandlerTaskId = null  // Reset for retry
+              stepState.amendmentRetryCount = (stepState.amendmentRetryCount ?? 0) + 1
+              if (stepState.amendmentRetryCount >= 2) {
+                stepState.status = 'paused_escalated'
+                stepState.amendmentPhase = 'awaiting_human'
+                ctx.logger.warn('dag_amendment_recover', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  scenario: 'mid_handler',
+                  action: 'max_retries_escalated',
+                })
+              } else {
+                ctx.logger.info('dag_amendment_recover', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  scenario: 'mid_handler',
+                  action: 'retry',
+                  retryCount: stepState.amendmentRetryCount,
+                })
+              }
+            }
+          } else {
+            // No signal dir and task vanished -- clear handler task ID
+            // and let processAmendment re-evaluate on the main loop.
+            // If signal file is still available, it will re-spawn a handler.
+            // If not, processAmendment will fail the step gracefully.
+            stepState.amendmentHandlerTaskId = null
+            ctx.logger.info('dag_amendment_recover', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              scenario: 'mid_handler',
+              action: 'cleared_vanished_handler',
+            })
+          }
+        }
+        // No handler task ID -- let processAmendment handle spawning on next tick
+      }
+
+      // Scenario 3 (REQ-43/44): Mid-resume -- phase is 'handler_complete'
+      else if (phase === 'handler_complete') {
+        // Resolution is ready but step wasn't resumed yet
+        // processAmendment will handle it on next tick
+        ctx.logger.info('dag_amendment_recover', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          scenario: 'mid_resume',
+          action: 'will_resume_next_tick',
+        })
+      }
+
+      // Scenario 4 (REQ-48): Mid-budget-check
+      // SQLite handles this via transaction rollback -- unresolved signal + no budget increment
+      // means we re-run from 'detected' phase (covered by Scenario 1)
+    }
+  }
+
+  /**
+   * Ensure standard pipeline variables are populated in run.variables.
+   * Called at tick() start — lazy initialization so variables are set regardless of how the run was created.
+   * Persists variables directly to DB without touching steps_state (avoids race with async handlers).
+   */
+  function ensureStandardVariables(run: WorkflowRun): void {
+    if (!run.variables) run.variables = {}
+    let changed = false
+
+    // run_dir = the run's output directory
+    if (!run.variables.run_dir && run.output_dir) {
+      run.variables.run_dir = run.output_dir
+      changed = true
+    }
+
+    // output_dir = same as run.output_dir for top-level steps
+    if (!run.variables.output_dir && run.output_dir) {
+      run.variables.output_dir = run.output_dir
+      changed = true
+    }
+
+    if (changed) {
+      // Persist only variables — don't saveAndBroadcast which would overwrite steps_state
+      workflowStore.updateRun(run.id, { variables: run.variables })
+
+      // Ensure run directory exists
+      if (run.output_dir) {
+        try {
+          if (!fs.existsSync(run.output_dir)) {
+            fs.mkdirSync(run.output_dir, { recursive: true })
+          }
+        } catch { /* best effort */ }
       }
     }
   }
@@ -1404,6 +4592,9 @@ export function createDAGEngine(
   // ── Main Tick ─────────────────────────────────────────────────────────
 
   function tick(run: WorkflowRun, parsed: ParsedWorkflow): void {
+    // Auto-populate standard variables on first tick
+    ensureStandardVariables(run)
+
     const steps = getEffectiveSteps(run, parsed)
     if (!steps) {
       failWorkflow(run, 'Cannot parse workflow steps')
@@ -1411,21 +4602,39 @@ export function createDAGEngine(
     }
 
     const stepDefMap = buildStepDefMap(steps)
+    hydratePerWorkUnitChildDefs(run, stepDefMap)
     const stateIndexMap = buildStateIndexMap(run.steps_state)
     const runTier = getRunTier(run, parsed)
 
     // Check for completion: all top-level steps + children in terminal state
     const allTerminal = run.steps_state.every(s => TERMINAL_STATUSES.has(s.status))
     if (allTerminal) {
+      // Phase 15: Run step-level on_error cleanup for failed steps (REQ-24)
+      for (const s of run.steps_state) {
+        if (s.status === 'failed' && !s.cleanupState) {
+          const def = stepDefMap.get(s.name)
+          if (def?.on_error && def.on_error.length > 0) {
+            runCleanupActions(run, def.on_error, 'step', s).catch(err => {
+              ctx.logger.warn('step_cleanup_error', { runId: run.id, stepName: s.name, error: String(err) })
+            })
+          }
+        }
+      }
+
       // REQ-08: Only check top-level steps for workflow failure
-      const anyFailed = run.steps_state.some(s => !s.parentGroup && s.status === 'failed')
+      // Phase 7: signal_timeout and signal_error are also failure conditions
+      const FAILURE_STATUSES = new Set(['failed', 'signal_timeout', 'signal_error', 'paused_escalated', 'paused_human'])
+      const anyFailed = run.steps_state.some(s => !s.parentGroup && FAILURE_STATUSES.has(s.status))
       if (anyFailed) {
-        failWorkflow(run, 'One or more steps failed')
+        failWorkflow(run, 'One or more steps failed', parsed)
       } else {
         completeWorkflow(run)
       }
       return
     }
+
+    // Phase 10: Recover amendment state after crash
+    recoverAmendments(run)
 
     // Process each top-level step (skip children -- they're handled by their group)
     for (let i = 0; i < run.steps_state.length; i++) {
@@ -1441,15 +4650,39 @@ export function createDAGEngine(
       const stepDef = stepDefMap.get(stepState.name)
       if (!stepDef) continue
 
+      // Dependency check applies to ALL step types before they can start processing.
+      // Steps already running/waiting_signal are not re-checked (they've already started).
+      if (stepState.status === 'pending') {
+        if (!areTopLevelDependenciesMet(run, i, stateIndexMap, stepDefMap)) continue
+      }
+
       // Handle parallel_group
       if (stepDef.type === 'parallel_group') {
         processParallelGroup(run, stepDef, stepState, stepDefMap, stateIndexMap, runTier, parsed)
         continue
       }
 
-      // For top-level non-group steps: check implicit sequential dependency
+      // CRITICAL #1: Handle per_work_unit container steps
+      // These have children with parentGroup set, similar to parallel_group
+      if (stepState.isPerWorkUnitContainer) {
+        processPerWorkUnitContainer(run, stepDef, stepState, stepDefMap, stateIndexMap, runTier, parsed)
+        continue
+      }
+
+      // Handle review_loop at top level
+      if (stepDef.type === 'review_loop') {
+        processReviewLoop(run, stepDef, stepState, runTier, parsed)
+        continue
+      }
+
+      // Phase 10: Process amendment steps
+      if (stepState.status === 'paused_amendment') {
+        processAmendment(run, stepDef, stepState, runTier, parsed)
+        continue
+      }
+
+      // For top-level non-group steps: tier filtering and condition evaluation
       if (stepState.status === 'pending') {
-        if (!areTopLevelDependenciesMet(run, i, stateIndexMap)) continue
 
         // Tier filtering
         const tierSkip = evaluateTierFilter(stepDef, runTier)
@@ -1463,7 +4696,7 @@ export function createDAGEngine(
 
         // Condition evaluation
         if (stepDef.condition) {
-          const condResult = evaluateCondition(run, stepDef.condition)
+          const condResult = evaluateCondition(run, stepDef.condition, parsed)
           if (!condResult.met) {
             stepState.status = 'skipped'
             stepState.skippedReason = condResult.reason ?? 'condition not met'
@@ -1476,13 +4709,23 @@ export function createDAGEngine(
         // Pool slot for spawn_session
         if (stepDef.type === 'spawn_session' && pool && parsed.system?.session_pool) {
           if (!POOL_BYPASS_TYPES.has(stepDef.type)) {
-            const slot = pool.requestSlot({
+            const result = pool.requestSlot({
               runId: run.id,
               stepName: stepDef.name,
               tier: runTier,
             })
-            stepState.poolSlotId = slot.id
-            if (slot.status === 'queued') {
+            // REQ-24: Queue full -- reject at slot-request level
+            if (result.rejected || !result.slot) {
+              ctx.logger.warn('dag_pool_queue_full', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                reason: result.reason,
+              })
+              // Leave as pending; will retry on next tick when queue has room
+              continue
+            }
+            stepState.poolSlotId = result.slot.id
+            if (result.slot.status === 'queued') {
               stepState.status = 'queued'
               saveAndBroadcast(run)
               ctx.broadcast({
@@ -1497,7 +4740,7 @@ export function createDAGEngine(
               type: 'pool_slot_granted',
               runId: run.id,
               stepName: stepDef.name,
-              slotId: slot.id,
+              slotId: result.slot.id,
             })
           }
         }
@@ -1522,10 +4765,177 @@ export function createDAGEngine(
       }
 
       // Monitor running steps
-      if (stepState.status === 'running') {
+      if (stepState.status === 'running' || stepState.status === 'waiting_signal') {
         monitorStep(run, stepDef, stepState)
       }
     }
+  }
+
+  // ── Phase 25: Check condition helpers ──────────────────────────────
+
+  /**
+   * Build a ConditionContext for evaluating check-level conditions.
+   * Includes project_profile data so conditions like "model_routing.enabled == true"
+   * and "compiler_ir.hir_enabled" resolve correctly.
+   */
+  function buildCheckConditionContext(run: WorkflowRun): ConditionContext {
+    // Build step outputs from completed steps
+    const stepOutputs: Record<string, Record<string, unknown>> = {}
+    for (const ss of run.steps_state) {
+      if (ss.resultContent) {
+        try {
+          const obj = JSON.parse(ss.resultContent)
+          if (typeof obj === 'object' && obj !== null) {
+            stepOutputs[ss.name] = obj
+          } else {
+            stepOutputs[ss.name] = { _raw: ss.resultContent }
+          }
+        } catch {
+          stepOutputs[ss.name] = { _raw: ss.resultContent }
+        }
+      }
+    }
+
+    // Load project profile if project_path is available
+    let projectProfile: Record<string, unknown> | undefined
+    const projectPath = run.variables?.project_path
+    if (projectPath) {
+      try {
+        projectProfile = loadProjectProfileRaw(projectPath)
+      } catch {
+        // No profile available — conditions referencing it will resolve to unmatched strings
+      }
+    }
+
+    // Determine tier from run variables or workflow definition
+    let tier = 1
+    if (run.variables?.tier) {
+      const tierNum = parseInt(run.variables.tier, 10)
+      if (!isNaN(tierNum)) tier = tierNum
+    } else {
+      // Try to get default_tier from the workflow definition
+      const workflow = workflowStore.getWorkflow(run.workflow_id)
+      if (workflow) {
+        const result = parseWorkflowYAML(workflow.yaml_content)
+        if (result.valid && result.workflow?.default_tier !== undefined) {
+          tier = result.workflow.default_tier
+        }
+      }
+    }
+
+    return {
+      tier,
+      stepOutputs,
+      variables: run.variables ?? {},
+      projectProfile,
+    }
+  }
+
+  /**
+   * Evaluate a string condition expression for check-level conditions.
+   * Wraps the conditionEvaluator's evaluateExpression with a ConditionContext.
+   */
+  function evaluateExpressionForChecks(expr: string, condCtx: ConditionContext): boolean {
+    // Detect semantic English conditions that can't be parsed as expressions
+    // e.g. "any model has invocation: proxy", "all values in X are valid"
+    const SEMANTIC_KEYWORDS = /\b(any|all|every|has|are|valid|contains|each|must|should)\b/i
+    if (SEMANTIC_KEYWORDS.test(expr) && !expr.includes('==') && !expr.includes('!=') && !expr.includes('>=')) {
+      ctx.logger.info('dag_check_condition_semantic_skip', { expr })
+      return false // Skip — can't evaluate semantic English conditions
+    }
+
+    try {
+      return evaluateExpression(expr, condCtx)
+    } catch {
+      // If expression evaluation fails, skip the check (conservative)
+      ctx.logger.warn('dag_check_condition_eval_error', { expr })
+      return false
+    }
+  }
+
+  /**
+   * Resolve {{ variable }} template syntax in condition expression strings.
+   * Lightweight wrapper — only resolves template vars, doesn't alter expression structure.
+   */
+  function resolveTemplateVarsInExpr(
+    expr: string,
+    run: WorkflowRun,
+    projectProfile?: Record<string, unknown>,
+  ): string {
+    if (!expr.includes('{{')) return expr
+    return resolveTemplateVars(expr, run, projectProfile)
+  }
+
+  /**
+   * Phase 25: Resolve {{ variable }} template syntax in pipeline YAML strings.
+   * Resolves from run.variables first, then project_profile dotted paths.
+   */
+  function resolveTemplateVars(
+    template: string,
+    run: WorkflowRun,
+    projectProfile?: Record<string, unknown>,
+  ): string {
+    // Match {{ key }}, {{ key | filter('arg') }}, and {{ key | filter(arg) }}
+    return template.replace(/\{\{\s*([\w./-]+)(?:\s*\|\s*(\w+)\(([^)]*)\))?\s*\}\}/g, (_m, key: string, filter?: string, filterArgs?: string) => {
+      // Resolve variable value (raw, may be array/object)
+      const vars = run.variables ?? {}
+      let rawVal: unknown = undefined
+
+      // Check run variables first (flat lookup)
+      if (key in vars) {
+        rawVal = vars[key]
+      }
+
+      // Check project profile for dotted paths
+      if (rawVal === undefined && projectProfile && key.includes('.')) {
+        rawVal = getNestedProfileValue(projectProfile, key)
+      }
+
+      // Check project profile for top-level keys
+      if (rawVal === undefined && projectProfile && key in projectProfile) {
+        rawVal = projectProfile[key]
+      }
+
+      // Apply filter if present
+      if (filter && rawVal !== undefined) {
+        const args = filterArgs ? filterArgs.split(',').map(a => a.trim().replace(/^['"]|['"]$/g, '')) : []
+        switch (filter) {
+          case 'join': {
+            const sep = args[0] ?? ' '
+            if (Array.isArray(rawVal)) return rawVal.join(sep)
+            return String(rawVal)
+          }
+          case 'default': {
+            const val = rawVal === undefined || rawVal === '' || rawVal === null ? args[0] ?? '' : rawVal
+            return String(val)
+          }
+          default:
+            return rawVal !== undefined ? String(rawVal) : ''
+        }
+      }
+
+      // No filter — apply default filter for 'default' case
+      if (filter === 'default' && rawVal === undefined) {
+        const args = filterArgs ? filterArgs.split(',').map(a => a.trim().replace(/^['"]|['"]$/g, '')) : []
+        return args[0] ?? ''
+      }
+
+      return rawVal !== undefined ? String(rawVal) : '' // Unresolved — empty string
+    })
+  }
+
+  /** Traverse nested object by dotted path (e.g. "model_routing.litellm.base_url") */
+  function getNestedProfileValue(obj: Record<string, unknown>, dotPath: string): unknown {
+    const parts = dotPath.split('.')
+    let current: unknown = obj
+    for (const part of parts) {
+      if (current && typeof current === 'object' && !Array.isArray(current) && part in (current as Record<string, unknown>)) {
+        current = (current as Record<string, unknown>)[part]
+      } else {
+        return undefined
+      }
+    }
+    return current
   }
 
   return { tick }

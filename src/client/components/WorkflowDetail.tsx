@@ -5,6 +5,10 @@ import { useWorkflowStore } from '../stores/workflowStore'
 import type { WorkflowRun, WorkflowStatus, WorkflowVariable } from '@shared/types'
 import PipelineDiagram from './PipelineDiagram'
 import WorkflowRunDialog from './WorkflowRunDialog'
+import TierBadge from './TierBadge'
+import SignalsTab from './SignalsTab'
+import AmendmentStatusPanel from './AmendmentStatusPanel'
+import TerminalTabs from './TerminalTabs'
 
 export interface WorkflowDetailProps {
   workflowId: string
@@ -63,6 +67,7 @@ export default function WorkflowDetail({ workflowId, onBack, onEdit, onNavigateT
   const activeRun = runs.find((r) => r.status === 'running') ?? runs[0] ?? null
 
   const [showRunDialog, setShowRunDialog] = useState(false)
+  const [runDetailTab, setRunDetailTab] = useState<'pipeline' | 'signals' | 'amendments' | 'terminals'>('pipeline')
 
   // Parse variables from YAML for the run dialog
   const workflowVariables: WorkflowVariable[] = (() => {
@@ -208,12 +213,58 @@ export default function WorkflowDetail({ workflowId, onBack, onEdit, onNavigateT
         </pre>
       </div>
 
-      {/* Pipeline diagram */}
+      {/* Run detail tabs (REQ-28 through REQ-31) */}
       {activeRun && (
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium text-gray-400">Pipeline</h3>
-          <div className="bg-gray-800 border border-gray-700 rounded p-2">
-            <PipelineDiagram run={activeRun} onNavigateToSession={onNavigateToSession} />
+          {/* Tab bar */}
+          <div className="flex items-center gap-1 border-b border-gray-700">
+            {(['pipeline', 'signals', 'amendments', 'terminals'] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => setRunDetailTab(tab)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors border-b-2 ${
+                  runDetailTab === tab
+                    ? 'text-white border-blue-400'
+                    : 'text-gray-400 border-transparent hover:text-gray-300'
+                }`}
+                aria-selected={runDetailTab === tab}
+                role="tab"
+              >
+                {tab === 'pipeline' ? 'Pipeline' : tab === 'signals' ? 'Signals' : tab === 'amendments' ? 'Amendments' : 'Terminals'}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="bg-gray-800 border border-gray-700 rounded p-2" role="tabpanel">
+            {runDetailTab === 'pipeline' && (
+              <PipelineDiagram run={activeRun} onNavigateToSession={onNavigateToSession} />
+            )}
+            {runDetailTab === 'signals' && (
+              <SignalsTab signals={activeRun.steps_state.flatMap(s => s.detectedSignals ?? [])} />
+            )}
+            {runDetailTab === 'amendments' && (
+              <AmendmentStatusPanel
+                runId={activeRun.id}
+                amendment={activeRun.pendingAmendment ?? null}
+                budget={activeRun.amendmentBudget ?? null}
+                isPausedEscalated={activeRun.status === 'failed' && activeRun.steps_state.some(s => s.status === 'paused_escalated')}
+                onApprove={() => {}}
+                onReject={() => {}}
+                onDefer={() => {}}
+                onOverrideAutoApproval={() => {}}
+                onExtendBudget={() => {}}
+              />
+            )}
+            {runDetailTab === 'terminals' && (
+              <TerminalTabs
+                sessions={activeRun.steps_state
+                  .filter(s => s.type === 'spawn_session' && (s.status === 'running' || s.status === 'completed' || s.status === 'failed'))
+                  .map(s => ({ stepName: s.name, status: s.status, taskId: s.taskId ?? null, startedAt: s.startedAt, output: '' }))}
+                onSelectTab={() => {}}
+              />
+            )}
           </div>
         </div>
       )}
@@ -292,11 +343,12 @@ function RunRow({
     <tr className="border-b border-gray-700/50">
       <td className="px-4 py-3 text-gray-300 font-mono text-xs">{run.id.slice(0, 8)}</td>
       <td className="px-4 py-3">
-        <span
-          className={`inline-block px-2 py-0.5 text-xs rounded border ${statusColor(run.status)}`}
-        >
-          {run.status}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`inline-block px-2 py-0.5 text-xs rounded border ${statusColor(run.status)}`}>
+            {run.status}
+          </span>
+          {run.tier && <TierBadge tier={run.tier} skippedSteps={run.steps_state.filter(s => s.status === 'skipped' && s.skippedReason === 'tier_filtered').map(s => s.name)} />}
+        </div>
       </td>
       <td className="px-4 py-3 text-gray-400 text-xs">{formatDate(run.started_at)}</td>
       <td className="px-4 py-3 text-gray-400 text-xs">{formatDate(run.completed_at)}</td>

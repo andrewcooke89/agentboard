@@ -1,0 +1,52 @@
+schema_version: "feature_spec_v1.0"
+title: "Roman Numeral Library"
+description: |
+  Implement a Ruby library that converts between integers and Roman numeral
+  strings. Supports standard Roman numerals (I, V, X, L, C, D, M) with
+  subtractive notation (IV=4, IX=9, XL=40, XC=90, CD=400, CM=900).
+  Valid range is 1–3999. Provides to_roman(n) and from_roman(s) methods.
+  Returns descriptive errors for invalid input.
+  No external dependencies beyond the Ruby standard library.
+
+scope:
+  included:
+    - lib/
+    - spec/
+  excluded:
+    - vendor/
+
+acceptance:
+  - type: behavioral
+    description: "to_roman(1) returns 'I'"
+  - type: behavioral
+    description: "to_roman(4) returns 'IV' (subtractive notation)"
+  - type: behavioral
+    description: "to_roman(1994) returns 'MCMXCIV'"
+  - type: behavioral
+    description: "to_roman(3999) returns 'MMMCMXCIX'"
+  - type: behavioral
+    description: "from_roman('XIV') returns 14"
+  - type: behavioral
+    description: "from_roman('MCMXCIV') returns 1994"
+  - type: behavioral
+    description: "from_roman('MMXXV') returns 2025"
+  - type: contract
+    description: "to_roman(0) raises an error (out of range)"
+  - type: contract
+    description: "to_roman(4000) raises an error (out of range)"
+  - type: contract
+    description: "from_roman('IIII') raises an error (invalid notation)"
+  - type: contract
+    description: "from_roman('') raises an error for empty input"
+  - type: invariant
+    description: "Round-trip: from_roman(to_roman(n)) == n for all n in 1..3999"
+  - type: invariant
+    description: "Case-insensitive: from_roman('xiv') returns 14"
+
+priority: medium
+tags:
+  - converter
+  - roman-numerals
+  - scenario-05
+  - tier-1
+  - moderate

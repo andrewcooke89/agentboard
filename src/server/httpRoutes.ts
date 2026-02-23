@@ -627,6 +627,160 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
     }
   }
 
+  // --- Phase 24: Telemetry API endpoints ---
+  app.get('/api/telemetry/runs/:runId', (c) => {
+    const runId = c.req.param('runId')
+    if (!runId || runId.length > 64) {
+      return c.json({ error: 'Invalid run ID' }, 400)
+    }
+
+    try {
+      const stmt = ctx.db.db.prepare('SELECT * FROM telemetry_runs WHERE run_id = $runId')
+      const runRow = stmt.get({ $runId: runId }) as Record<string, unknown> | undefined
+
+      if (!runRow) {
+        return c.json({ error: 'Telemetry not found for run' }, 404)
+      }
+
+      // Get step telemetry
+      const stepsStmt = ctx.db.db.prepare('SELECT * FROM telemetry_steps WHERE run_id = $runId ORDER BY started_at')
+      const stepRows = stepsStmt.all({ $runId: runId }) as Record<string, unknown>[]
+
+      return c.json({
+        run: {
+          run_id: String(runRow.run_id),
+          pipeline_type: String(runRow.pipeline_type ?? 'unknown'),
+          tier: Number(runRow.tier ?? 1),
+          total_tokens: Number(runRow.total_tokens ?? 0),
+          estimated_cost_usd: Number(runRow.estimated_cost_usd ?? 0),
+          wall_clock_ms: runRow.wall_clock_ms != null ? Number(runRow.wall_clock_ms) : null,
+          quality_score: runRow.quality_score != null ? Number(runRow.quality_score) : null,
+          started_at: Number(runRow.started_at ?? 0),
+          completed_at: runRow.completed_at != null ? Number(runRow.completed_at) : null,
+        },
+        steps: stepRows.map(row => ({
+          id: Number(row.id),
+          step_name: String(row.step_name ?? ''),
+          model: row.model != null ? String(row.model) : null,
+          input_tokens: Number(row.input_tokens ?? 0),
+          output_tokens: Number(row.output_tokens ?? 0),
+          duration_ms: row.duration_ms != null ? Number(row.duration_ms) : null,
+          status: String(row.status ?? 'completed'),
+          started_at: Number(row.started_at ?? 0),
+          completed_at: row.completed_at != null ? Number(row.completed_at) : null,
+        })),
+      })
+    } catch {
+      return c.json({ error: 'Failed to fetch telemetry' }, 500)
+    }
+  })
+
+  app.get('/api/telemetry/daily', (c) => {
+    const days = Math.min(Number(c.req.query('days')) || 7, 30)
+    const endDate = new Date().toISOString().split('T')[0]
+    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+
+    try {
+      const stmt = ctx.db.db.prepare(
+        'SELECT * FROM telemetry_daily WHERE date >= $startDate AND date <= $endDate ORDER BY date'
+      )
+      const rows = stmt.all({ $startDate: startDate, $endDate: endDate }) as Record<string, unknown>[]
+
+      return c.json({
+        days: rows.map(row => ({
+          date: String(row.date ?? ''),
+          total_runs: Number(row.total_runs ?? 0),
+          total_tokens: Number(row.total_tokens ?? 0),
+          total_cost_usd: Number(row.total_cost_usd ?? 0),
+          avg_wall_clock_ms: row.avg_wall_clock_ms != null ? Number(row.avg_wall_clock_ms) : null,
+          avg_quality_score: row.avg_quality_score != null ? Number(row.avg_quality_score) : null,
+        })),
+      })
+    } catch {
+      return c.json({ error: 'Failed to fetch daily aggregates' }, 500)
+    }
+  })
+
+  app.get('/api/telemetry/cost-summary', (c) => {
+    try {
+      // Cost by model
+      const byModelStmt = ctx.db.db.prepare(`
+        SELECT
+          COALESCE(model, 'unknown') as model,
+          COUNT(*) as runs,
+          SUM(input_tokens + output_tokens) as tokens,
+          SUM(input_tokens) as input_tokens,
+          SUM(output_tokens) as output_tokens
+        FROM telemetry_steps
+        GROUP BY model
+        ORDER BY tokens DESC
+      `)
+      const byModelRows = byModelStmt.all() as Array<{
+        model: string
+        runs: number
+        tokens: number
+        input_tokens: number
+        output_tokens: number
+      }>
+
+      // Cost by pipeline
+      const byPipelineStmt = ctx.db.db.prepare(`
+        SELECT
+          pipeline_type as pipeline,
+          COUNT(*) as runs,
+          SUM(total_tokens) as tokens,
+          SUM(estimated_cost_usd) as cost
+        FROM telemetry_runs
+        GROUP BY pipeline_type
+        ORDER BY cost DESC
+      `)
+      const byPipelineRows = byPipelineStmt.all() as Array<{
+        pipeline: string
+        runs: number
+        tokens: number
+        cost: number
+      }>
+
+      // Total summary
+      const totalStmt = ctx.db.db.prepare(`
+        SELECT
+          COUNT(*) as total_runs,
+          SUM(total_tokens) as total_tokens,
+          SUM(estimated_cost_usd) as total_cost
+        FROM telemetry_runs
+        WHERE completed_at IS NOT NULL
+      `)
+      const totalRow = totalStmt.get() as {
+        total_runs: number
+        total_tokens: number
+        total_cost: number
+      } | undefined
+
+      return c.json({
+        summary: {
+          total_runs: totalRow?.total_runs ?? 0,
+          total_tokens: totalRow?.total_tokens ?? 0,
+          total_cost_usd: totalRow?.total_cost ?? 0,
+        },
+        by_model: byModelRows.map(r => ({
+          model: r.model,
+          runs: r.runs,
+          tokens: r.tokens,
+          input_tokens: r.input_tokens,
+          output_tokens: r.output_tokens,
+        })),
+        by_pipeline: byPipelineRows.map(r => ({
+          pipeline: r.pipeline,
+          runs: r.runs,
+          tokens: r.tokens,
+          cost_usd: r.cost,
+        })),
+      })
+    } catch {
+      return c.json({ error: 'Failed to fetch cost summary' }, 500)
+    }
+  })
+
   app.post('/api/history/resume', async (c) => {
     if (!historyService?.enabled) {
       return c.json({ error: 'History not enabled' }, 404)

@@ -139,13 +139,71 @@ export function createPoolStore(db: SQLiteDatabase) {
       return (listQueuedStmt.all() as Record<string, unknown>[]).map(mapSlotRow)
     },
 
-    reconcileOrphanedSlots(): number {
-      const result = db
-        .prepare(
-          "UPDATE pool_slot_requests SET status = 'released', released_at = datetime('now') WHERE status IN ('active', 'queued')",
-        )
-        .run()
-      return result.changes
+    /**
+     * Reconcile orphaned slots by checking tmux session state.
+     *
+     * CF-03/REQ-29: Does NOT blindly release all slots. Instead:
+     * 1. For each active slot, checks if the associated tmux session is still alive.
+     * 2. Only releases slots where tmux session is dead (orphaned).
+     * 3. After releasing orphaned slots, re-processes queued entries in priority order
+     *    by promoting them to active if capacity is now available.
+     *
+     * @param checkTmuxSession - callback that checks if a tmux session is alive.
+     *   If not provided, falls back to releasing all (safe restart fallback).
+     *   Signature: (slotId: string, runId: string, stepName: string) => boolean
+     */
+    reconcileOrphanedSlots(
+      checkTmuxSession?: (slotId: string, runId: string, stepName: string) => boolean,
+    ): number {
+      if (!checkTmuxSession) {
+        // Fallback: no tmux checker provided, release all (safe restart behavior)
+        const result = db
+          .prepare(
+            "UPDATE pool_slot_requests SET status = 'released', released_at = datetime('now') WHERE status IN ('active', 'queued')",
+          )
+          .run()
+        return result.changes
+      }
+
+      // Check each active slot against tmux session state
+      const activeSlots = (listActiveStmt.all() as Record<string, unknown>[]).map(mapSlotRow)
+      let releasedCount = 0
+
+      for (const slot of activeSlots) {
+        const isAlive = checkTmuxSession(slot.id, slot.runId, slot.stepName)
+        if (!isAlive) {
+          updateSlotStatusStmt.run({
+            $id: slot.id,
+            $status: 'released',
+            $grantedAt: slot.grantedAt,
+            $releasedAt: new Date().toISOString(),
+          })
+          releasedCount++
+        }
+      }
+
+      // After releasing orphaned active slots, promote queued entries in priority order
+      // (highest tier first, then oldest request) if capacity is now available
+      if (releasedCount > 0) {
+        const config = getConfigStmt.get() as Record<string, unknown> | undefined
+        const maxSlots = config ? Number(config.max_slots ?? 2) : 2
+        let currentActive = (countActiveStmt.get() as { cnt: number }).cnt
+
+        while (currentActive < maxSlots) {
+          const next = nextQueuedStmt.get() as Record<string, unknown> | undefined
+          if (!next) break
+          const nextSlot = mapSlotRow(next)
+          updateSlotStatusStmt.run({
+            $id: nextSlot.id,
+            $status: 'active',
+            $grantedAt: new Date().toISOString(),
+            $releasedAt: null,
+          })
+          currentActive++
+        }
+      }
+
+      return releasedCount
     },
   }
 }

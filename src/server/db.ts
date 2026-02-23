@@ -556,51 +556,38 @@ export function reconcilePoolSlots(db: SQLiteDatabase): void {
     return
   }
 
-  // Check each active slot against tmux session state
+  // CF-03/REQ-29: Use poolStore.reconcileOrphanedSlots with a tmux session checker.
+  // This checks each active slot's tmux session before releasing, and promotes
+  // queued entries in priority order after releasing orphaned slots.
   const poolStore = createPoolStore(db)
-  const activeSlots = poolStore.listActiveSlots()
 
   // Query directly to avoid circular dependencies
   const getTaskStmt = db.prepare('SELECT * FROM tasks WHERE id = $id')
   const getRunStmt = db.prepare('SELECT * FROM workflow_runs WHERE id = $id')
 
-  for (const slot of activeSlots) {
-    let shouldRelease = true
-
+  poolStore.reconcileOrphanedSlots((_slotId, runId, stepName) => {
+    // Returns true if tmux session is alive, false if dead/orphaned
     try {
-      // Find the workflow run
-      const runRow = getRunStmt.get({ $id: slot.runId }) as Record<string, unknown> | undefined
-      if (runRow) {
-        // Parse steps_state JSON to find the step
-        const stepsStateStr = String(runRow.steps_state ?? '[]')
-        const stepsState = JSON.parse(stepsStateStr) as Array<{ name: string; taskId: string | null }>
+      const runRow = getRunStmt.get({ $id: runId }) as Record<string, unknown> | undefined
+      if (!runRow) return false
 
-        const step = stepsState.find((s) => s.name === slot.stepName)
-        if (step && step.taskId) {
-          // Get the task
-          const taskRow = getTaskStmt.get({ $id: step.taskId }) as Record<string, unknown> | undefined
-          if (taskRow && taskRow.tmux_window) {
-            const tmuxWindow = String(taskRow.tmux_window)
-            // Check if tmux session exists
-            const result = Bun.spawnSync(['tmux', 'has-session', '-t', tmuxWindow], {
-              stdout: 'pipe',
-              stderr: 'pipe',
-            })
-            if (result.exitCode === 0) {
-              shouldRelease = false // Session is alive, keep slot active
-            }
-          }
-        }
-      }
+      const stepsStateStr = String(runRow.steps_state ?? '[]')
+      const stepsState = JSON.parse(stepsStateStr) as Array<{ name: string; taskId: string | null }>
+
+      const step = stepsState.find((s) => s.name === stepName)
+      if (!step || !step.taskId) return false
+
+      const taskRow = getTaskStmt.get({ $id: step.taskId }) as Record<string, unknown> | undefined
+      if (!taskRow || !taskRow.tmux_window) return false
+
+      const tmuxWindow = String(taskRow.tmux_window)
+      const check = Bun.spawnSync(['tmux', 'has-session', '-t', tmuxWindow], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      return check.exitCode === 0
     } catch {
-      // On any error, release the slot (safe fallback)
-      shouldRelease = true
+      return false // On any error, treat as dead (safe fallback)
     }
-
-    if (shouldRelease) {
-      poolStore.updateSlotStatus(slot.id, 'released', { releasedAt: new Date().toISOString() })
-    }
-  }
-
-  // Queued slots are kept as queued - they'll be processed normally when engine restarts
+  })
 }

@@ -1,0 +1,336 @@
+# change-pipeline.yaml — First executable pipeline (Phase 9)
+#
+# End-to-end feature development pipeline: validate spec → review → decompose
+# → generate → implement → conformance → acceptance-test.
+#
+# Engine: DAG (auto-detected from parallel_group + depends_on)
+
+name: change-pipeline
+description: "End-to-end feature change pipeline with spec validation, decomposition, and implementation"
+
+system:
+  engine: dag
+  session_pool: true
+  tier_filter: true
+
+defaults:
+  tier: 1
+  timeoutSeconds: 3600
+  maxRetries: 1
+  constitution_sections:
+    - security
+    - architecture
+    - quality
+  signal_protocol: true
+  signal_dir: "{{ output_dir }}/signals"
+  working_dir: "{{ project_path }}"
+  env:
+    SPEC_PATH: "{{ spec_path }}"
+    OUTPUT_DIR: "{{ output_dir }}"
+    PROJECT_PATH: "{{ project_path }}"
+  amendment_budget:
+    max_amendments: 3
+    scope: spec_only
+  reviewers:
+    default_agent: spec-reviewer
+
+variables:
+  - name: spec_path
+    type: path
+    description: "Path to the feature specification YAML"
+    required: true
+  - name: project_path
+    type: path
+    description: "Root path of the target project"
+    required: true
+  - name: output_dir
+    type: path
+    description: "Directory for pipeline outputs"
+    required: true
+  - name: language
+    type: string
+    description: "Primary language of the project"
+    required: false
+    default: "typescript"
+  - name: framework
+    type: string
+    description: "Primary framework of the project"
+    required: false
+    default: ""
+
+steps:
+  # Stage 1: Validate the feature spec against schema and constitution
+  - name: validate-spec
+    type: spec_validate
+    spec_path: "{{ spec_path }}"
+    schema_path: "{{ project_path }}/.workflow/schemas/feature_spec_v1.yaml"
+    constitution_sections:
+      - security
+      - architecture
+      - quality
+    strict: false
+
+  # Stage 2: Review loop for spec refinement
+  - name: spec-review-loop
+    type: review_loop
+    depends_on:
+      - validate-spec
+    tier_override:
+      "2":
+        max_iterations: 5
+      "3":
+        max_iterations: 7
+    max_iterations: 3
+    on_max_iterations: escalate
+    on_concern:
+      timeout_minutes: 30
+      default_action: accept
+    producer:
+      name: spec-planner
+      type: spawn_session
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are the spec planner. Read the feature specification at {{ spec_path }}
+        and the validation report. Refine the spec based on reviewer feedback.
+
+        Use the orchestrator template at .claude/orchestrator-templates/spec-planning.md
+        for structured self-interrogation.
+
+        Output: Updated spec at {{ output_dir }}/refined-spec.yaml
+      signal_protocol: true
+      signal_dir: "{{ output_dir }}/signals"
+      result_file: "{{ output_dir }}/refined-spec.yaml"
+    reviewer:
+      name: spec-reviewer
+      type: spawn_session
+      projectPath: "{{ project_path }}"
+      prompt: |
+        Review the feature specification at {{ output_dir }}/refined-spec.yaml
+        against the constitution sections: security, architecture, quality.
+
+        Write your verdict to the verdict file.
+      signal_protocol: true
+      signal_dir: "{{ output_dir }}/signals"
+      verdict_field: verdict
+      feedback_field: feedback
+      result_file: "{{ output_dir }}/spec-review-verdict.yaml"
+
+  # Stage 3: Decompose spec into work units
+  - name: decompose
+    type: spawn_session
+    depends_on:
+      - spec-review-loop
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Decompose the approved feature spec into work units.
+
+      Use the orchestrator template at .claude/orchestrator-templates/decomposition.md
+
+      Inputs:
+        - Spec: {{ output_dir }}/refined-spec.yaml
+        - Project: {{ project_path }}
+
+      Output: {{ output_dir }}/decomposition/manifest.yaml + WU-*.yaml files
+    signal_protocol: true
+    signal_dir: "{{ output_dir }}/signals"
+    result_file: "{{ output_dir }}/decomposition/manifest.yaml"
+    timeoutSeconds: 1800
+
+  # Stage 4: Generation (parallel scaffold + consistency check)
+  - name: generation
+    type: parallel_group
+    depends_on:
+      - decompose
+    on_failure: fail_fast
+    steps:
+      - name: generate-scaffold
+        type: spawn_session
+        projectPath: "{{ project_path }}"
+        prompt: |
+          Generate code scaffold from the decomposition manifest.
+
+          Input: {{ output_dir }}/decomposition/manifest.yaml
+          Output: {{ output_dir }}/generation/scaffold-report.yaml
+        signal_protocol: true
+        signal_dir: "{{ output_dir }}/signals"
+        result_file: "{{ output_dir }}/generation/scaffold-report.yaml"
+        timeoutSeconds: 1800
+
+      - name: generation-consistency-check
+        type: native_step
+        depends_on:
+          - generate-scaffold
+        command: "echo 'Consistency check placeholder — verifies scaffold against manifest'"
+        working_dir: "{{ project_path }}"
+        timeoutSeconds: 300
+
+      # TDD red-phase verification (REQ-63, REQ-64)
+      - name: tdd-verify-red
+        type: native_step
+        tier_min: 2
+        depends_on:
+          - generate-scaffold
+          # - generate-tests  # Uncomment when test-writer available
+        command: |
+          # Run tests - expect them to FAIL (red phase)
+          # Adjust test command based on project language/framework
+          if [ -f "package.json" ]; then
+            npm test || true
+          elif [ -f "Cargo.toml" ]; then
+            cargo test || true
+          elif [ -f "pyproject.toml" ]; then
+            pytest || true
+          else
+            echo "Unknown test framework"
+            exit 1
+          fi
+
+          # Capture exit code
+          TEST_EXIT=$?
+
+          # Tests SHOULD fail in red phase
+          if [ $TEST_EXIT -eq 0 ]; then
+            echo "ERROR: Tests passed before implementation (trivially passing tests)"
+            exit 1
+          else
+            echo "PASS: Tests failed as expected in red phase"
+            exit 0
+          fi
+        working_dir: "{{ project_path }}"
+        timeoutSeconds: 600
+
+  # Stage 5: Implementation
+  - name: implement
+    type: spawn_session
+    depends_on:
+      - generation
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Implement the feature based on work units and scaffold.
+
+      Use the orchestrator template at .claude/orchestrator-templates/implementation.md
+
+      Input: {{ output_dir }}/decomposition/manifest.yaml
+      Output: {{ output_dir }}/implementation/
+    signal_protocol: true
+    signal_dir: "{{ output_dir }}/signals"
+    can_request_amendment: true
+    amendment_budget:
+      quality:
+        per_run: 3
+        per_work_unit: 2
+      reconciliation:
+        per_run: 8
+        per_work_unit: 5
+    amendment_config:
+      auto_review_types:
+        - gap
+        - correction
+        - reconciliation
+      human_required_types:
+        - fundamental
+        - scope_change
+      human_required_tiers:
+        - 0
+      same_section_twice: escalate
+      handler_timeout_seconds: 300
+    result_file: "{{ output_dir }}/implementation/implementation-report.yaml"
+    timeoutSeconds: 7200
+
+  # Stage 5b: Amendment verification (resolves any amendment signals from implement)
+  - name: verify-amendments
+    type: amendment_check
+    depends_on:
+      - implement
+    signal_dir: "{{ output_dir }}/signals"
+    signal_types:
+      - amendment_required
+    on_amendment:
+      handler: amendment-handler
+      resume_from_checkpoint: true
+    on_human_required:
+      action: escalate
+    on_exploration_required:
+      action: escalate
+      resume_step: implement
+    timeoutSeconds: 600
+
+  # TDD green-phase verification (REQ-65)
+  - name: tdd-verify-green
+    type: native_step
+    tier_min: 2
+    depends_on:
+      - verify-amendments
+    command: |
+      # Run tests - expect them to PASS (green phase)
+      if [ -f "package.json" ]; then
+        npm test
+      elif [ -f "Cargo.toml" ]; then
+        cargo test
+      elif [ -f "pyproject.toml" ]; then
+        pytest
+      else
+        echo "Unknown test framework"
+        exit 1
+      fi
+
+      # Capture exit code
+      TEST_EXIT=$?
+
+      # Tests SHOULD pass in green phase
+      if [ $TEST_EXIT -eq 0 ]; then
+        echo "PASS: Tests passed after implementation (green phase verified)"
+        exit 0
+      else
+        echo "FAIL: Tests still failing after implementation"
+        exit 1
+      fi
+    working_dir: "{{ project_path }}"
+    timeoutSeconds: 600
+
+  # Stage 6: Conformance verification
+  - name: conformance
+    type: spawn_session
+    depends_on:
+      - tdd-verify-green
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Verify implementation conformance against the approved spec.
+
+      Use the orchestrator template at .claude/orchestrator-templates/verification.md
+
+      Inputs:
+        - Spec: {{ output_dir }}/refined-spec.yaml
+        - Implementation: {{ output_dir }}/implementation/
+      Output: {{ output_dir }}/conformance/verification-report.yaml
+    signal_protocol: true
+    signal_dir: "{{ output_dir }}/signals"
+    result_file: "{{ output_dir }}/conformance/verification-report.yaml"
+    timeoutSeconds: 3600
+
+  # Stage 7: Acceptance testing (tier 2+)
+  - name: acceptance-test
+    type: spawn_session
+    depends_on:
+      - conformance
+    tier_min: 2
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Run acceptance tests for the implemented feature.
+
+      Input: {{ output_dir }}/conformance/verification-report.yaml
+      Output: {{ output_dir }}/acceptance/test-results.yaml
+    signal_protocol: true
+    signal_dir: "{{ output_dir }}/signals"
+    result_file: "{{ output_dir }}/acceptance/test-results.yaml"
+    timeoutSeconds: 3600
+
+  # Stage 8: Observe and learn (Phase 13 forward ref — commented out)
+  # - name: observe-and-learn
+  #   type: spawn_session
+  #   depends_on:
+  #     - acceptance-test
+  #   projectPath: "{{ project_path }}"
+  #   prompt: "Observe pipeline execution patterns and record learnings"
+  #   signal_protocol: true
+  #   signal_dir: "{{ output_dir }}/signals"

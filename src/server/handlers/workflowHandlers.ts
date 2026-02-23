@@ -7,6 +7,8 @@ import type { ServerContext } from '../serverContext'
 import { parseWorkflowYAML, validateVariables } from '../workflowSchema'
 import type { StepRunState } from '../../shared/types'
 import { sanitizeForLog } from '../validators'
+import { loadProjectProfile } from '../projectProfile'
+import { expandPerWorkUnit, type ExpansionContext } from '../perWorkUnitEngine'
 
 /** Kebab-case: lowercase letters, digits, and hyphens only. No path separators. */
 const KEBAB_CASE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -249,7 +251,7 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         // No body or invalid JSON — that's fine, variables are optional
       }
 
-      // Validate variables if the workflow defines any
+      // Validate declared variables
       let mergedVars: Record<string, string> | null = null
       if (parsed.workflow.variables.length > 0) {
         const { errors: varErrors, merged } = validateVariables(parsed.workflow.variables, providedVars)
@@ -259,9 +261,55 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         mergedVars = merged
       }
 
-      // Phase 5: Queue depth limit (REQ-24) — only when session_pool enabled (REQ-37)
+      // Phase 9: Load project_profile and merge into variables
+      // Priority: builtins < env (AGENTBOARD_*) < profile < pipeline vars < run-time vars
+      {
+        // Collect AGENTBOARD_* env vars
+        const envVars: Record<string, string> = {}
+        for (const [key, value] of Object.entries(process.env)) {
+          if (key.startsWith('AGENTBOARD_') && value !== undefined) {
+            envVars[key] = value
+          }
+        }
+
+        // Load project profile (if any project path is available)
+        let profileVars: Record<string, string> = {}
+        const projectPath = providedVars.project_path || process.env.AGENTBOARD_PROJECT_PATH
+        if (projectPath) {
+          profileVars = loadProjectProfile(projectPath)
+        }
+
+        // Merge with correct priority: env < profile < declared/provided vars
+        if (Object.keys(envVars).length > 0 || Object.keys(profileVars).length > 0) {
+          const base = { ...envVars, ...profileVars }
+          if (mergedVars) {
+            mergedVars = { ...base, ...mergedVars }
+          } else if (Object.keys(providedVars).length > 0) {
+            mergedVars = { ...base, ...providedVars }
+          } else if (Object.keys(base).length > 0) {
+            mergedVars = base
+          }
+        }
+
+        // Add builtins (lowest priority — only set if not already present)
+        if (mergedVars) {
+          if (!('output_dir' in mergedVars)) {
+            // output_dir will be set after run creation, but provide a placeholder
+          }
+        }
+      }
+
+      // Phase 5: Queue depth limit (REQ-24) -- only when session_pool enabled (REQ-37).
+      // CF-02 Clarification:
+      //   "Pool full" = all active slots occupied (steps queue waiting for a slot).
+      //   "Queue full" = the waiting queue itself has reached max depth (backpressure).
+      // This run-submission check is a FIRST LINE of defense. The authoritative
+      // queue depth enforcement is inside sessionPool.requestSlot() (CF-01), which
+      // rejects individual slot requests when the queue is at capacity.
+      // REQ-37: Legacy (non-pool) workflows bypass this entirely and use
+      // TASK_MAX_CONCURRENT instead.
       if (parsed.workflow.system?.session_pool && pool) {
-        const maxDepth = Number(process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH) || 50
+        const maxDepth = pool.getMaxQueueDepth()
         const poolStatus = pool.getStatus()
         if (poolStatus.queue.length >= maxDepth) {
           return c.json({
@@ -274,7 +322,83 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
       }
 
       const stepsState: StepRunState[] = []
+      // Use a single run output directory for both expansion context and persisted run state.
+      const runOutputDir = path.join(config.workflowDir, 'runs', `${workflow.name}-${Date.now()}`)
+
       for (const step of parsed.workflow.steps) {
+        // P1-2: Expand per_work_unit steps into sub-steps
+        if (step.per_work_unit) {
+          const expansionCtx: ExpansionContext = {
+            runId: 'pending', // Will be set after run creation
+            outputDir: runOutputDir,
+            defaultAgent: step.agent,
+            variables: mergedVars,
+          }
+          try {
+            const expandedSteps = expandPerWorkUnit(step, expansionCtx)
+            for (const expanded of expandedSteps) {
+              stepsState.push({
+                name: expanded.name,
+                type: expanded.step.type,
+                status: 'pending' as const,
+                taskId: null,
+                startedAt: null,
+                completedAt: null,
+                errorMessage: null,
+                retryCount: 0,
+                skippedReason: null,
+                resultFile: expanded.step.result_file ?? null,
+                resultCollected: false,
+                resultContent: null,
+                parentGroup: step.name, // Track parent step for per_work_unit
+                ...(expanded.step.tier_min != null ? { tier_min: expanded.step.tier_min } : {}),
+                ...(expanded.step.tier_max != null ? { tier_max: expanded.step.tier_max } : {}),
+              })
+            }
+            // Also add the parent step as a container (completed immediately)
+            stepsState.push({
+              name: step.name,
+              type: step.type,
+              status: 'pending' as const,
+              taskId: null,
+              startedAt: null,
+              completedAt: null,
+              errorMessage: null,
+              retryCount: 0,
+              skippedReason: null,
+              resultFile: step.result_file ?? null,
+              resultCollected: false,
+              resultContent: null,
+              isPerWorkUnitContainer: true,
+              ...(step.tier_min != null ? { tier_min: step.tier_min } : {}),
+              ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
+            })
+          } catch (expansionError) {
+            // If expansion fails, add the step as-is with an error marker
+            logger.warn('per_work_unit_expansion_failed', {
+              step: step.name,
+              error: String(expansionError),
+            })
+            stepsState.push({
+              name: step.name,
+              type: step.type,
+              status: 'pending' as const,
+              taskId: null,
+              startedAt: null,
+              completedAt: null,
+              errorMessage: `per_work_unit expansion failed: ${expansionError}`,
+              retryCount: 0,
+              skippedReason: null,
+              resultFile: step.result_file ?? null,
+              resultCollected: false,
+              resultContent: null,
+              ...(step.tier_min != null ? { tier_min: step.tier_min } : {}),
+              ...(step.tier_max != null ? { tier_max: step.tier_max } : {}),
+            })
+          }
+          continue
+        }
+
         stepsState.push({
           name: step.name,
           type: step.type,
@@ -322,7 +446,7 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         status: 'running',
         current_step_index: 0,
         steps_state: stepsState,
-        output_dir: path.join(config.workflowDir, 'runs', `${workflow.name}-${Date.now()}`),
+        output_dir: runOutputDir,
         started_at: new Date().toISOString(),
         completed_at: null,
         error_message: null,
@@ -348,6 +472,31 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         })
         // Don't fail the request — engine will create it if needed
       }
+
+      // Phase 10: Initialize amendment budgets for the run
+      const budgetConfig: { quality?: { per_run?: number }; reconciliation?: { per_run?: number } } = {}
+
+      const pipelineDefaults = parsed.workflow?.defaults ?? {}
+      if (pipelineDefaults.amendment_budget) {
+        const ab = pipelineDefaults.amendment_budget as Record<string, unknown>
+        if (ab.quality && typeof ab.quality === 'object') {
+          budgetConfig.quality = ab.quality as { per_run?: number }
+        }
+        if (ab.reconciliation && typeof ab.reconciliation === 'object') {
+          budgetConfig.reconciliation = ab.reconciliation as { per_run?: number }
+        }
+      }
+
+      for (const step of parsed.workflow.steps) {
+        if (step.amendment_budget) {
+          if (step.amendment_budget.quality?.per_work_unit !== undefined ||
+              step.amendment_budget.reconciliation?.per_work_unit !== undefined) {
+            workflowStore.initWorkUnitBudgets(run.id, step.name, step.amendment_budget)
+          }
+        }
+      }
+
+      workflowStore.initRunBudgets(run.id, budgetConfig)
 
       broadcast({ type: 'workflow-run-update', run })
       logger.info('workflow_run_triggered', { runId: run.id, workflowId: id, name: sanitizeForLog(workflow.name) })
@@ -507,6 +656,301 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         .filter(r => r.resultFile != null)
 
       return c.json({ runId, results })
+    })
+
+    // Phase 8: Review loop iterations endpoint
+    app.get('/api/workflow-runs/:runId/review-loops/:stepName/iterations', (c) => {
+      const { runId, stepName } = c.req.param()
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+      const iterations = workflowStore.getIterationsByStep(runId, stepName)
+      return c.json({ iterations })
+    })
+
+    // Phase 8 REQ-10: Human concern resolution endpoint
+    app.post('/api/workflow-runs/:runId/steps/:stepName/concern-response', async (c) => {
+      const { runId, stepName } = c.req.param()
+
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+
+      const stepIndex = run.steps_state.findIndex(s => s.name === stepName)
+      if (stepIndex === -1) return c.json({ error: 'Step not found' }, 404)
+
+      const stepState = run.steps_state[stepIndex]
+      if (!stepState.concernWaitingSince) {
+        return c.json({ error: 'Step is not waiting for concern resolution' }, 400)
+      }
+
+      let body: Record<string, unknown>
+      try {
+        body = await c.req.json()
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400)
+      }
+
+      const action = body.action
+      if (action !== 'accept' && action !== 'reject') {
+        return c.json({ error: 'action must be "accept" or "reject"' }, 400)
+      }
+
+      // Set concern resolution on the step state
+      const updatedSteps = [...run.steps_state]
+      updatedSteps[stepIndex] = { ...updatedSteps[stepIndex], concernResolution: action }
+      const updated = workflowStore.updateRun(runId, { steps_state: updatedSteps })
+
+      if (updated) {
+        broadcast({ type: 'workflow-run-update', run: updated })
+      }
+
+      logger.info('workflow_concern_response', {
+        runId,
+        stepName: sanitizeForLog(stepName),
+        action,
+      })
+
+      return c.json({ success: true })
+    })
+
+    // Phase 10: Human amendment resolution endpoint
+    app.post('/api/workflow-runs/:runId/signals/:signalId/resolve', async (c) => {
+      // SEC-2: Authentication check - verify Bearer token is present
+      const authorization = c.req.header('Authorization')
+      if (!authorization || !authorization.startsWith('Bearer ')) {
+        return c.json({
+          error: 'Unauthorized',
+          message: 'Missing or invalid Authorization header',
+          code: 'AUTH_001'
+        }, 401)
+      }
+
+      // SEC-2: Authorization check - verify caller has admin/human authority
+      // Check for X-User-Role header to distinguish human/admin from automated systems
+      const userRole = c.req.header('X-User-Role')
+      if (userRole && userRole !== 'human' && userRole !== 'admin') {
+        return c.json({
+          error: 'Forbidden',
+          message: 'Only human or admin users can resolve amendments',
+          code: 'AUTH_003'
+        }, 403)
+      }
+
+      const { runId, signalId } = c.req.param()
+
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+
+      const signals = workflowStore.getUnresolvedSignals(runId)
+      const signal = signals.find(s => s.id === signalId)
+      if (!signal) return c.json({ error: 'Unresolved signal not found' }, 404)
+
+      const stepState = run.steps_state.find(
+        s => s.status === 'paused_escalated' && s.amendmentPhase === 'awaiting_human'
+      )
+      if (!stepState) return c.json({ error: 'No escalated step found for this signal' }, 404)
+
+      let body: { action: string; reason?: string }
+      try {
+        body = await c.req.json()
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400)
+      }
+
+      const { action, reason } = body
+      if (!action || !['approve', 'reject', 'defer'].includes(action)) {
+        return c.json({ error: "action must be 'approve', 'reject', or 'defer'" }, 400)
+      }
+
+      workflowStore.resolveSignal(signalId, action, null)
+
+      if (stepState.amendmentSignalId) {
+        workflowStore.resolveAmendment(stepState.amendmentSignalId, action, 'human')
+      }
+
+      if (action === 'approve') {
+        stepState.status = 'paused_amendment'
+        stepState.amendmentPhase = 'handler_complete'
+      } else if (action === 'reject') {
+        stepState.status = 'paused_amendment'
+        stepState.amendmentPhase = 'handler_complete'
+      } else {
+        stepState.status = 'running'
+        stepState.amendmentPhase = null
+        stepState.amendmentHandlerTaskId = null
+      }
+
+      workflowStore.updateRun(runId, { steps_state: run.steps_state })
+
+      broadcast({
+        type: 'amendment_resolved',
+        runId,
+        stepName: stepState.name,
+        resolution: action,
+      })
+
+      logger.info('amendment_resolved_by_human', {
+        runId,
+        signalId,
+        stepName: stepState.name,
+        action,
+        reason: reason ?? '',
+      })
+
+      return c.json({ success: true, action, stepName: stepState.name })
+    })
+
+    // Phase 10: Budget override endpoint
+    app.post('/api/workflow-runs/:runId/budget-override', async (c) => {
+      const { runId } = c.req.param()
+
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+
+      let body: { category: string; new_max: number; work_unit?: string; reason?: string }
+      try {
+        body = await c.req.json()
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400)
+      }
+
+      const { category, new_max, work_unit, reason } = body
+      if (!category || !['quality', 'reconciliation'].includes(category)) {
+        return c.json({ error: "category must be 'quality' or 'reconciliation'" }, 400)
+      }
+      if (typeof new_max !== 'number' || new_max <= 0 || !Number.isInteger(new_max)) {
+        return c.json({ error: 'new_max must be a positive integer' }, 400)
+      }
+
+      // SEC-4: Enforce upper bound on budget overrides
+      const MAX_BUDGET_OVERRIDE = 1000
+      if (new_max > MAX_BUDGET_OVERRIDE) {
+        return c.json({
+          error: 'Budget override too large',
+          max_allowed: MAX_BUDGET_OVERRIDE,
+          requested: new_max,
+        }, 400)
+      }
+
+      // SEC-4: Log large overrides to audit trail
+      if (new_max > 100) {
+        logger.warn('large_budget_override', {
+          runId,
+          category,
+          new_max,
+          work_unit: work_unit ?? 'run-level',
+          reason: reason ?? '',
+        })
+      }
+
+      workflowStore.overrideBudget(runId, category, new_max, work_unit)
+
+      const escalatedStep = run.steps_state.find(
+        s => s.status === 'paused_escalated' &&
+             s.amendmentPhase === 'awaiting_human' &&
+             s.amendmentCategory === category
+      )
+      if (escalatedStep) {
+        escalatedStep.status = 'paused_amendment'
+        escalatedStep.amendmentPhase = 'detected'
+        workflowStore.updateRun(runId, { steps_state: run.steps_state })
+      }
+
+      broadcast({
+        type: 'budget_updated',
+        runId,
+        category,
+        used: 0,
+        max: new_max,
+      })
+
+      logger.info('amendment_budget_override', {
+        runId,
+        category,
+        newMax: new_max,
+        workUnit: work_unit ?? 'run-level',
+        reason: reason ?? '',
+      })
+
+      return c.json({ success: true, category, new_max })
+    })
+
+    // Phase 15: PATCH amendment-budget endpoint (REQ-22)
+    app.patch('/api/workflow-runs/:runId/amendment-budget', async (c) => {
+      const runId = c.req.param('runId')
+      if (!runId) return c.json({ error: 'Missing run ID' }, 400)
+
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+
+      let body: { category?: string; new_max?: number }
+      try {
+        body = await c.req.json()
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400)
+      }
+
+      const { category, new_max: newMax } = body
+      if (!category || (category !== 'quality' && category !== 'reconciliation')) {
+        return c.json({ error: 'category must be "quality" or "reconciliation"' }, 400)
+      }
+      if (typeof newMax !== 'number' || newMax <= 0 || !Number.isFinite(newMax)) {
+        return c.json({ error: 'new_max must be a positive number' }, 400)
+      }
+
+      try {
+        workflowStore.overrideBudget(runId, category, newMax)
+
+        // Resume any escalated step waiting on this budget category
+        const escalatedStep = run.steps_state.find(
+          s => s.status === 'paused_escalated' &&
+               s.amendmentPhase === 'awaiting_human' &&
+               s.amendmentCategory === category
+        )
+
+        if (escalatedStep) {
+          escalatedStep.status = 'paused_amendment'
+          escalatedStep.amendmentPhase = 'detected'
+          workflowStore.updateRun(run.id, { steps_state: run.steps_state })
+        }
+
+        logger.info('amendment_budget_extended', {
+          runId,
+          category,
+          newMax,
+          hadEscalatedStep: !!escalatedStep,
+        })
+
+        return c.json({
+          ok: true,
+          category,
+          new_max: newMax,
+          resumed_step: escalatedStep?.name ?? null,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return c.json({ error: msg }, 500)
+      }
+    })
+
+    // Phase 10: Amendment history endpoint
+    app.get('/api/workflow-runs/:runId/amendments', (c) => {
+      const { runId } = c.req.param()
+
+      const run = workflowStore.getRun(runId)
+      if (!run) return c.json({ error: 'Run not found' }, 404)
+
+      const amendments = workflowStore.getAmendmentsByRun(runId)
+
+      const qualityBudget = workflowStore.getBudget(runId, null, 'quality')
+      const reconBudget = workflowStore.getBudget(runId, null, 'reconciliation')
+
+      return c.json({
+        amendments,
+        budget: {
+          quality: qualityBudget ? { used: qualityBudget.used, max: qualityBudget.max_allowed } : null,
+          reconciliation: reconBudget ? { used: reconBudget.used, max: reconBudget.max_allowed } : null,
+        },
+      })
     })
   }
 

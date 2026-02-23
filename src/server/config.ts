@@ -109,13 +109,15 @@ const taskDefaultTimeoutSeconds = Number.isFinite(taskDefaultTimeoutSecondsRaw) 
 const taskRateLimitPerHourRaw = Number(process.env.TASK_RATE_LIMIT_PER_HOUR)
 const taskRateLimitPerHour = Number.isFinite(taskRateLimitPerHourRaw) && taskRateLimitPerHourRaw > 0
   ? Math.floor(taskRateLimitPerHourRaw)
-  : 30
+  : 1000
 const taskOutputDir = process.env.TASK_OUTPUT_DIR || path.join(homeDir, '.agentboard', 'task-outputs')
 
 const claudeConfigDir =
   process.env.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude')
 const codexHomeDir =
   process.env.CODEX_HOME || path.join(homeDir, '.codex')
+const modelEnvsPath = process.env.MODEL_ENVS_PATH
+  || path.join(homeDir, '.workflow', 'model-envs.json')
 
 // History configuration
 const historyEnabledRaw = process.env.AGENTBOARD_HISTORY_ENABLED
@@ -162,6 +164,15 @@ const sessionRetentionDays = Number.isFinite(sessionRetentionDaysRaw) && session
   ? Math.floor(sessionRetentionDaysRaw)
   : 30
 
+// Gemini API configuration (Phase 22)
+export const GEMINI_API_KEY = process.env.AGENTBOARD_GEMINI_API_KEY || ''
+export const GEMINI_RATE_LIMIT_TOKENS_PER_MINUTE = parseInt(process.env.AGENTBOARD_GEMINI_RATE_LIMIT || '60000', 10)
+
+// Review router model defaults (Phase 21)
+// LOW-001: Moved hardcoded model defaults from reviewRouter.ts to config
+export const DEFAULT_L1_MODEL = process.env.AGENTBOARD_L1_MODEL || 'glm'
+export const DEFAULT_L2_MODEL = process.env.AGENTBOARD_L2_MODEL || 'claude'
+
 export const config = {
   port: Number(process.env.PORT) || 4040,
   hostname: process.env.HOSTNAME || '0.0.0.0',
@@ -186,6 +197,7 @@ export const config = {
   logMatchProfile,
   claudeConfigDir,
   codexHomeDir,
+  modelEnvsPath,
   claudeResumeCmd: process.env.CLAUDE_RESUME_CMD || 'claude --resume {sessionId}',
   codexResumeCmd: process.env.CODEX_RESUME_CMD || 'codex resume {sessionId}',
   enterRefreshDelayMs,

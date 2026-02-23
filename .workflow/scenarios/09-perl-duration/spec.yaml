@@ -1,0 +1,55 @@
+schema_version: "feature_spec_v1.0"
+title: "Duration Parser and Formatter in Perl"
+description: |
+  Implement a Perl module (Duration.pm) that parses human-readable duration
+  strings into total seconds and formats seconds back into human-readable
+  strings. Supports days (d), hours (h), minutes (m), and seconds (s).
+  Parsing accepts formats like "2h 30m", "1d 12h 5s", "3600", "90m".
+  Formatting produces compact strings like "1h 30m" (omitting zero components).
+  Provides parse_duration, format_duration, add_durations, and compare_durations.
+  Returns undef/error for invalid input. No external CPAN dependencies.
+  Tests use Test::More (core module).
+
+scope:
+  included:
+    - lib/
+    - t/
+  excluded: []
+
+acceptance:
+  - type: behavioral
+    description: "parse_duration('2h 30m') returns 9000"
+  - type: behavioral
+    description: "parse_duration('1d') returns 86400"
+  - type: behavioral
+    description: "parse_duration('90m') returns 5400"
+  - type: behavioral
+    description: "parse_duration('3600') returns 3600 (bare number = seconds)"
+  - type: behavioral
+    description: "format_duration(9000) returns '2h 30m'"
+  - type: behavioral
+    description: "format_duration(90061) returns '1d 1h 1m 1s'"
+  - type: behavioral
+    description: "format_duration(0) returns '0s'"
+  - type: behavioral
+    description: "add_durations('1h', '30m') returns 5400"
+  - type: behavioral
+    description: "compare_durations('2h', '90m') returns 1 (2h > 90m)"
+  - type: contract
+    description: "parse_duration('') returns undef"
+  - type: contract
+    description: "parse_duration('abc') returns undef"
+  - type: contract
+    description: "format_duration(-1) returns undef (negative not allowed)"
+  - type: invariant
+    description: "Round-trip: format_duration(parse_duration(s)) reproduces equivalent duration"
+  - type: invariant
+    description: "Whitespace between components is flexible"
+
+priority: medium
+tags:
+  - parser
+  - duration
+  - scenario-09
+  - tier-1
+  - moderate
