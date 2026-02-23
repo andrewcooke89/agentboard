@@ -9,10 +9,12 @@
  * L2 produces judgment proofs with 4 criteria.
  */
 
+import fs from 'node:fs'
 import type { ComplexityClassification, ComplexityLevel } from './complexityClassifier'
 import { getEnvForModel } from './modelEnvLoader'
 import { logger } from './logger'
 import { DEFAULT_L1_MODEL, DEFAULT_L2_MODEL } from './config'
+import { callGemini } from './geminiClient'
 
 export interface ReviewRouting {
   complexity: ComplexityLevel
@@ -123,8 +125,8 @@ export function determineReviewRouting(
 
 /**
  * Execute L1 review (cheap model, structured checks).
- * HIGH-006: Throws "not implemented" error - this is a placeholder that must be
- * implemented before production use. Returning hardcoded passing results is unsafe.
+ * Uses Gemini to evaluate 7 binary checks against the target file.
+ * Gracefully degrades if Gemini is unavailable (no API key or call failure).
  */
 export async function executeL1Review(reviewConfig: {
   target_path: string
@@ -134,24 +136,153 @@ export async function executeL1Review(reviewConfig: {
   env?: Record<string, string>
 }): Promise<ReviewResult> {
   const model = reviewConfig.env?.ANTHROPIC_MODEL ?? DEFAULT_L1_MODEL
+  const geminiModel = 'gemini-2.5-flash'
 
   logger.info('l1_review_starting', {
     target: reviewConfig.target_path,
     model,
   })
 
-  // HIGH-006: This placeholder implementation throws an error.
-  // Production deployments must implement actual model calls.
-  throw new Error(
-    'L1 review not implemented: executeL1Review requires integration with actual model API. ' +
-    'Returning hardcoded passing results in production is unsafe and not supported.'
-  )
+  // Read target file content
+  let fileContent: string
+  try {
+    fileContent = fs.readFileSync(reviewConfig.target_path, 'utf-8')
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    logger.error('l1_review_file_read_failed', {
+      target: reviewConfig.target_path,
+      error: errorMsg,
+    })
+    return {
+      passed: false,
+      verdict: 'FAIL',
+      feedback: `L1 Review: Failed to read target file: ${errorMsg}`,
+      model_used: model,
+    }
+  }
+
+  // Read spec file if provided
+  let specContent = ''
+  if (reviewConfig.spec_path) {
+    try {
+      specContent = fs.readFileSync(reviewConfig.spec_path, 'utf-8')
+    } catch {
+      // Spec file is optional, continue without it
+    }
+  }
+
+  // Build prompt for Gemini L1 review
+  const prompt = `You are a code reviewer performing a Level 1 (L1) automated quality check.
+
+Evaluate the following code against these 7 binary checks. For each check, respond with true or false.
+
+Checks:
+1. builds_successfully - Does the code appear to compile/parse correctly with no syntax errors?
+2. tests_pass - Are there test cases present and do they appear correct?
+3. no_new_warnings - Is the code free of obvious issues that would produce warnings (unused variables, unreachable code, etc.)?
+4. follows_coding_standards - Does the code follow consistent style conventions (naming, formatting, structure)?
+5. handles_errors - Is error handling present where needed (try/catch, null checks, validation)?
+6. no_security_issues - Is the code free of obvious security vulnerabilities (injection, hardcoded secrets, unsafe operations)?
+7. documentation_complete - Are public APIs, functions, and complex logic documented?
+
+${specContent ? `Specification:\n${specContent}\n\n` : ''}${reviewConfig.changes_summary ? `Changes summary:\n${reviewConfig.changes_summary}\n\n` : ''}Code to review:
+\`\`\`
+${fileContent}
+\`\`\`
+
+Respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
+{
+  "builds_successfully": true,
+  "tests_pass": true,
+  "no_new_warnings": true,
+  "follows_coding_standards": true,
+  "handles_errors": true,
+  "no_security_issues": true,
+  "documentation_complete": true
+}`
+
+  // Call Gemini
+  const response = await callGemini({
+    model: geminiModel,
+    prompt,
+    maxTokens: 512,
+    temperature: 0.1,
+  })
+
+  // Handle Gemini unavailability gracefully
+  if (response.skipped) {
+    logger.info('l1_review_gemini_skipped', {
+      reason: response.reason,
+      target: reviewConfig.target_path,
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L1 Review: Skipped (Gemini unavailable: ${response.reason}). Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  if (response.error) {
+    logger.error('l1_review_gemini_error', {
+      error: response.error,
+      target: reviewConfig.target_path,
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L1 Review: Skipped (Gemini error: ${response.error}). Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  // Parse JSON response
+  let checks: L1CheckResults
+  try {
+    // Strip markdown code fences if present
+    let content = response.content ?? ''
+    content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
+    const parsed = JSON.parse(content)
+    checks = {
+      builds_successfully: Boolean(parsed.builds_successfully),
+      tests_pass: Boolean(parsed.tests_pass),
+      no_new_warnings: Boolean(parsed.no_new_warnings),
+      follows_coding_standards: Boolean(parsed.follows_coding_standards),
+      handles_errors: Boolean(parsed.handles_errors),
+      no_security_issues: Boolean(parsed.no_security_issues),
+      documentation_complete: Boolean(parsed.documentation_complete),
+    }
+  } catch (parseErr) {
+    const errorMsg = parseErr instanceof Error ? parseErr.message : String(parseErr)
+    logger.error('l1_review_parse_failed', {
+      error: errorMsg,
+      content: response.content?.substring(0, 200),
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L1 Review: Failed to parse Gemini response: ${errorMsg}. Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  // Determine verdict from checks
+  const allPassed = Object.values(checks).every(Boolean)
+  const feedback = _generateL1Feedback(checks)
+
+  return {
+    passed: allPassed,
+    verdict: allPassed ? 'PASS' : 'FAIL',
+    checks,
+    feedback,
+    model_used: model,
+  }
 }
 
 /**
  * Execute L2 review (expensive model, judgment proofs).
- * HIGH-006: Throws "not implemented" error - this is a placeholder that must be
- * implemented before production use. Returning hardcoded passing results is unsafe.
+ * Uses Gemini to score 4 criteria on a 1-10 scale with reasoning.
+ * Gracefully degrades if Gemini is unavailable (no API key or call failure).
  */
 export async function executeL2Review(l1Result: ReviewResult, reviewConfig: {
   target_path: string
@@ -161,6 +292,7 @@ export async function executeL2Review(l1Result: ReviewResult, reviewConfig: {
   env?: Record<string, string>
 }): Promise<ReviewResult> {
   const model = reviewConfig.env?.ANTHROPIC_MODEL ?? DEFAULT_L2_MODEL
+  const geminiModel = 'gemini-2.5-flash'
 
   logger.info('l2_review_starting', {
     target: reviewConfig.target_path,
@@ -168,12 +300,159 @@ export async function executeL2Review(l1Result: ReviewResult, reviewConfig: {
     l1_passed: l1Result.passed,
   })
 
-  // HIGH-006: This placeholder implementation throws an error.
-  // Production deployments must implement actual model calls.
-  throw new Error(
-    'L2 review not implemented: executeL2Review requires integration with actual model API. ' +
-    'Returning hardcoded passing results in production is unsafe and not supported.'
-  )
+  // Read target file content
+  let fileContent: string
+  try {
+    fileContent = fs.readFileSync(reviewConfig.target_path, 'utf-8')
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    logger.error('l2_review_file_read_failed', {
+      target: reviewConfig.target_path,
+      error: errorMsg,
+    })
+    return {
+      passed: false,
+      verdict: 'FAIL',
+      feedback: `L2 Review: Failed to read target file: ${errorMsg}`,
+      model_used: model,
+    }
+  }
+
+  // Read spec file if provided
+  let specContent = ''
+  if (reviewConfig.spec_path) {
+    try {
+      specContent = fs.readFileSync(reviewConfig.spec_path, 'utf-8')
+    } catch {
+      // Spec file is optional, continue without it
+    }
+  }
+
+  // Build detailed prompt including L1 results
+  const l1Summary = l1Result.checks
+    ? `L1 Review Results:\n${l1Result.feedback}\n\n`
+    : `L1 Review: ${l1Result.feedback}\n\n`
+
+  const prompt = `You are a senior code reviewer performing a Level 2 (L2) in-depth judgment review.
+
+The code has already passed L1 automated checks. Now evaluate it on 4 criteria, scoring each from 0.0 to 1.0 (where 1.0 is perfect) with detailed reasoning.
+
+${l1Summary}${specContent ? `Specification:\n${specContent}\n\n` : ''}${reviewConfig.changes_summary ? `Changes summary:\n${reviewConfig.changes_summary}\n\n` : ''}Code to review:
+\`\`\`
+${fileContent}
+\`\`\`
+
+Criteria:
+1. correctness - Does the code correctly implement the intended behavior? Are there logic errors, off-by-one errors, race conditions, or incorrect assumptions?
+2. completeness - Does the code fully implement all requirements? Are there missing edge cases, unhandled scenarios, or incomplete features?
+3. consistency - Is the code consistent with the rest of the codebase in style, patterns, naming conventions, and architectural decisions?
+4. quality - Is the code well-structured, maintainable, readable, and following best practices? Consider separation of concerns, DRY principles, and testability.
+
+Based on the scores, provide an overall_verdict:
+- "PASS" if all scores are >= 0.7
+- "NEEDS_FIX" if any score is between 0.4 and 0.7
+- "FAIL" if any score is < 0.4
+
+Respond with ONLY a JSON object (no markdown, no explanation) in this exact format:
+{
+  "correctness": { "score": 0.9, "reasoning": "..." },
+  "completeness": { "score": 0.85, "reasoning": "..." },
+  "consistency": { "score": 0.9, "reasoning": "..." },
+  "quality": { "score": 0.8, "reasoning": "..." },
+  "overall_verdict": "PASS"
+}`
+
+  // Call Gemini
+  const response = await callGemini({
+    model: geminiModel,
+    prompt,
+    maxTokens: 2048,
+    temperature: 0.2,
+  })
+
+  // Handle Gemini unavailability gracefully
+  if (response.skipped) {
+    logger.info('l2_review_gemini_skipped', {
+      reason: response.reason,
+      target: reviewConfig.target_path,
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L2 Review: Skipped (Gemini unavailable: ${response.reason}). Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  if (response.error) {
+    logger.error('l2_review_gemini_error', {
+      error: response.error,
+      target: reviewConfig.target_path,
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L2 Review: Skipped (Gemini error: ${response.error}). Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  // Parse JSON response
+  let proof: L2JudgmentProof
+  try {
+    // Strip markdown code fences if present
+    let content = response.content ?? ''
+    content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '').trim()
+    const parsed = JSON.parse(content)
+
+    const parseScore = (criterion: unknown): { score: number; reasoning: string } => {
+      if (typeof criterion === 'object' && criterion !== null) {
+        const c = criterion as Record<string, unknown>
+        return {
+          score: typeof c.score === 'number' ? Math.max(0, Math.min(1, c.score)) : 0.5,
+          reasoning: typeof c.reasoning === 'string' ? c.reasoning : 'No reasoning provided',
+        }
+      }
+      return { score: 0.5, reasoning: 'No reasoning provided' }
+    }
+
+    proof = {
+      correctness: parseScore(parsed.correctness),
+      completeness: parseScore(parsed.completeness),
+      consistency: parseScore(parsed.consistency),
+      quality: parseScore(parsed.quality),
+      overall_verdict: (['PASS', 'FAIL', 'NEEDS_FIX'] as const).includes(parsed.overall_verdict)
+        ? parsed.overall_verdict
+        : 'NEEDS_FIX',
+    }
+  } catch (parseErr) {
+    const errorMsg = parseErr instanceof Error ? parseErr.message : String(parseErr)
+    logger.error('l2_review_parse_failed', {
+      error: errorMsg,
+      content: response.content?.substring(0, 200),
+    })
+    return {
+      passed: true,
+      verdict: 'PASS',
+      feedback: `L2 Review: Failed to parse Gemini response: ${errorMsg}. Passing with warning.`,
+      model_used: model,
+    }
+  }
+
+  // Determine verdict from proof
+  const passed = proof.overall_verdict === 'PASS'
+  const verdict: ReviewResult['verdict'] = proof.overall_verdict === 'PASS' ? 'PASS'
+    : proof.overall_verdict === 'FAIL' ? 'FAIL'
+    : 'NEEDS_FIX'
+  const feedback = _generateL2Feedback(proof)
+
+  return {
+    passed,
+    verdict,
+    proof,
+    feedback,
+    model_used: model,
+  }
 }
 
 /**

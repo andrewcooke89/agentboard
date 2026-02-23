@@ -72,6 +72,7 @@ const VALID_STEP_TYPES: ReadonlySet<string> = new Set<WorkflowStepType>([
   'gemini_offload',
   'aggregator',
   'human_gate',
+  'review',
 ])
 
 const VALID_CONDITION_TYPES: ReadonlySet<string> = new Set([
@@ -1561,6 +1562,15 @@ function buildWorkflowStep(
           return check
         })
     }
+  }
+
+  // Phase 26: review step fields
+  if (hasStringField(step, 'target_path')) result.target_path = step.target_path as string
+  if (step.work_order && typeof step.work_order === 'object' && !Array.isArray(step.work_order)) {
+    result.work_order = step.work_order as Record<string, unknown>
+  }
+  if (step.review_config && typeof step.review_config === 'object' && !Array.isArray(step.review_config)) {
+    result.review_config = step.review_config as Record<string, unknown>
   }
 
   // Tier fields (common to all step types)

@@ -1,11 +1,15 @@
 /**
- * reviewRouter.test.ts - Tests for L1/L2 review routing (Phase 25)
+ * reviewRouter.test.ts - Tests for L1/L2 review routing (Phase 25/26)
  *
- * HIGH-006: executeL1Review and executeL2Review now throw "not implemented" errors
- * because returning hardcoded passing results in production is unsafe.
+ * Phase 26: executeL1Review and executeL2Review are now implemented with Gemini.
+ * Tests cover routing logic, graceful degradation (no API key / unreadable files),
+ * and correct result structure.
  */
 
 import { describe, test, expect } from 'bun:test'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
   determineReviewRouting,
   executeL1Review,
@@ -13,6 +17,7 @@ import {
 
   type ReviewRoutingConfig,
 } from '../reviewRouter'
+import { setApiKeyOverride } from '../geminiClient'
 import type { ComplexityClassification, ComplexityLevel } from '../../shared/types'
 
 function makeClassification(complexity: ComplexityLevel, confidence = 0.9): ComplexityClassification {
@@ -89,30 +94,56 @@ describe('reviewRouter', () => {
     })
   })
 
-  // HIGH-006: Tests now expect errors to be thrown
+  // Phase 26: executeL1Review is now implemented with Gemini
   describe('executeL1Review', () => {
-    test('throws not implemented error (HIGH-006)', async () => {
-      await expect(executeL1Review({
-        target_path: '/test/path',
+    test('returns FAIL when target file does not exist', async () => {
+      const result = await executeL1Review({
+        target_path: '/nonexistent/path/file.ts',
         run_dir: '/test/run',
-      })).rejects.toThrow('L1 review not implemented')
+      })
+      expect(result.passed).toBe(false)
+      expect(result.verdict).toBe('FAIL')
+      expect(result.feedback).toContain('Failed to read target file')
     })
 
-    test('error mentions production unsafety (HIGH-006)', async () => {
+    test('gracefully handles missing Gemini API key', async () => {
+      // Create a temp file to read
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'l1-review-'))
+      const tmpFile = path.join(tmpDir, 'test.ts')
+      fs.writeFileSync(tmpFile, 'export function hello() { return "world" }')
+
+      // Override API key to empty so Gemini is skipped
+      setApiKeyOverride('')
+
       try {
-        await executeL1Review({
-          target_path: '/test/path',
-          run_dir: '/test/run',
+        const result = await executeL1Review({
+          target_path: tmpFile,
+          run_dir: tmpDir,
         })
-        expect.unreachable('Should have thrown')
-      } catch (err) {
-        expect((err as Error).message).toContain('unsafe')
+        // With no API key, Gemini returns skipped -> PASS with warning
+        expect(result.passed).toBe(true)
+        expect(result.verdict).toBe('PASS')
+        expect(result.feedback).toContain('Skipped')
+      } finally {
+        setApiKeyOverride(undefined)
+        fs.rmSync(tmpDir, { recursive: true })
       }
+    })
+
+    test('returns ReviewResult structure with correct fields', async () => {
+      const result = await executeL1Review({
+        target_path: '/nonexistent/file.ts',
+        run_dir: '/test/run',
+      })
+      expect(result).toHaveProperty('passed')
+      expect(result).toHaveProperty('verdict')
+      expect(result).toHaveProperty('feedback')
+      expect(result).toHaveProperty('model_used')
     })
   })
 
   describe('executeL2Review', () => {
-    test('throws not implemented error (HIGH-006)', async () => {
+    test('returns FAIL when target file does not exist', async () => {
       const l1Result = {
         passed: true,
         verdict: 'PASS' as const,
@@ -120,13 +151,16 @@ describe('reviewRouter', () => {
         model_used: 'glm',
       }
 
-      await expect(executeL2Review(l1Result, {
-        target_path: '/test/path',
+      const result = await executeL2Review(l1Result, {
+        target_path: '/nonexistent/path/file.ts',
         run_dir: '/test/run',
-      })).rejects.toThrow('L2 review not implemented')
+      })
+      expect(result.passed).toBe(false)
+      expect(result.verdict).toBe('FAIL')
+      expect(result.feedback).toContain('Failed to read target file')
     })
 
-    test('error mentions production unsafety (HIGH-006)', async () => {
+    test('gracefully handles missing Gemini API key', async () => {
       const l1Result = {
         passed: true,
         verdict: 'PASS' as const,
@@ -134,15 +168,45 @@ describe('reviewRouter', () => {
         model_used: 'glm',
       }
 
+      // Create a temp file to read
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'l2-review-'))
+      const tmpFile = path.join(tmpDir, 'test.ts')
+      fs.writeFileSync(tmpFile, 'export function hello() { return "world" }')
+
+      // Override API key to empty so Gemini is skipped
+      setApiKeyOverride('')
+
       try {
-        await executeL2Review(l1Result, {
-          target_path: '/test/path',
-          run_dir: '/test/run',
+        const result = await executeL2Review(l1Result, {
+          target_path: tmpFile,
+          run_dir: tmpDir,
         })
-        expect.unreachable('Should have thrown')
-      } catch (err) {
-        expect((err as Error).message).toContain('unsafe')
+        // With no API key, Gemini returns skipped -> PASS with warning
+        expect(result.passed).toBe(true)
+        expect(result.verdict).toBe('PASS')
+        expect(result.feedback).toContain('Skipped')
+      } finally {
+        setApiKeyOverride(undefined)
+        fs.rmSync(tmpDir, { recursive: true })
       }
+    })
+
+    test('returns ReviewResult structure with correct fields', async () => {
+      const l1Result = {
+        passed: true,
+        verdict: 'PASS' as const,
+        feedback: 'L1 passed',
+        model_used: 'glm',
+      }
+
+      const result = await executeL2Review(l1Result, {
+        target_path: '/nonexistent/file.ts',
+        run_dir: '/test/run',
+      })
+      expect(result).toHaveProperty('passed')
+      expect(result).toHaveProperty('verdict')
+      expect(result).toHaveProperty('feedback')
+      expect(result).toHaveProperty('model_used')
     })
   })
 

@@ -207,7 +207,7 @@ export type SubscribeServerMessage = (listener: (message: ServerMessage) => void
 // ─── Workflow Engine Types (WO-001) ─────────────────────────────────────────
 
 // ST-001-01: Step type and workflow status enums
-export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output' | 'native_step' | 'parallel_group' | 'review_loop' | 'spec_validate' | 'amendment_check' | 'reconcile-spec' | 'gemini_offload' | 'aggregator' | 'human_gate'
+export type WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output' | 'native_step' | 'parallel_group' | 'review_loop' | 'spec_validate' | 'amendment_check' | 'reconcile-spec' | 'gemini_offload' | 'aggregator' | 'human_gate' | 'review'
 
 // Workflow variable definition (used in YAML variables section)
 export type WorkflowVariableType = 'string' | 'path'
@@ -338,6 +338,10 @@ export interface WorkflowStep {
       applies_to?: string
     }
   }
+  // Phase 26: review step fields
+  target_path?: string
+  work_order?: Record<string, unknown>
+  review_config?: Record<string, unknown>
   // Phase 21: Pipeline step fields (passthrough from pipeline YAMLs)
   agent?: string
   posture?: string

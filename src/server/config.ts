@@ -165,7 +165,7 @@ const sessionRetentionDays = Number.isFinite(sessionRetentionDaysRaw) && session
   : 30
 
 // Gemini API configuration (Phase 22)
-export const GEMINI_API_KEY = process.env.AGENTBOARD_GEMINI_API_KEY || ''
+export const GEMINI_API_KEY = process.env.AGENTBOARD_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''
 export const GEMINI_RATE_LIMIT_TOKENS_PER_MINUTE = parseInt(process.env.AGENTBOARD_GEMINI_RATE_LIMIT || '60000', 10)
 
 // Review router model defaults (Phase 21)

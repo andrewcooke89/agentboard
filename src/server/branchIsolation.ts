@@ -65,6 +65,13 @@ export function createBranchIsolationStore(db: SQLiteDatabase): BranchIsolationS
     CREATE INDEX IF NOT EXISTS idx_run_branches_status ON run_branches(status);
   `)
 
+  // Migration: add status column if table existed before it was added
+  try {
+    db.exec("ALTER TABLE run_branches ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+  } catch {
+    // Column already exists — expected
+  }
+
   const insertStmt = db.prepare(
     `INSERT INTO run_branches (run_id, worktree_path, branch_name, status, created_at, cleanup_after)
      VALUES ($runId, $worktreePath, $branchName, $status, $createdAt, $cleanupAfter)`

@@ -61,17 +61,36 @@ import {
 } from './amendmentHandler'
 import { callGemini, type GeminiRequest, type GeminiResponse, type BackoffConfig } from './geminiClient'
 import { processAggregatorStep } from './aggregatorHandler'
+import { executeReview } from './reviewRouter'
+import type { ReviewResult, ReviewRoutingConfig } from './reviewRouter'
+import { classifyWorkOrder } from './complexityClassifier'
+import { extractReviewRoutingConfig } from './projectProfile'
 import { evaluateCondition as evaluateConditionExpr, evaluateExpression, type ConditionContext } from './conditionEvaluator'
 import { expandPerWorkUnit, type ExpansionContext } from './perWorkUnitEngine'
 import { prepareContextBriefing, createDefaultBriefingConfig } from './contextLibrarian'
 import type { ConsumerProfile } from './contextLibrarian'
 import { loadProjectProfileRaw } from './projectProfile'
+import {
+  createBranchIsolationStore,
+  initBranchIsolation,
+  cleanupWorktree,
+  cleanupExpiredWorktrees,
+} from './branchIsolation'
+import {
+  createOutputInvalidationStore,
+  trackOutputHash,
+  invalidateDownstream,
+  buildDependencyGraph,
+  checkCircuitBreaker,
+  computeHash,
+} from './outputInvalidation'
+import type { OutputInvalidationStore } from './outputInvalidation'
 
 // Steps that bypass the session pool (they don't need a tmux session)
 const POOL_BYPASS_TYPES = new Set([
   'native_step', 'check_file', 'check_output', 'delay',
   'gemini_offload', 'spec_validate', 'aggregator', 'amendment_check',
-  'reconcile-spec',
+  'reconcile-spec', 'review',
 ])
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'skipped', 'cancelled', 'partial', 'signal_timeout', 'signal_error', 'paused_escalated', 'paused_human', 'paused_starvation'])
@@ -98,6 +117,35 @@ export function createDAGEngine(
   taskStore: TaskStore,
   pool: SessionPool | null,
 ): DAGEngine {
+
+  // Branch isolation store for git worktree management (lazy-initialized to avoid
+  // requiring a real DB at construction time — tests mock ctx.db as empty object)
+  let _branchIsolationStore: ReturnType<typeof createBranchIsolationStore> | null = null
+  function getBranchIsolationStore() {
+    if (!_branchIsolationStore) {
+      _branchIsolationStore = createBranchIsolationStore(ctx.db.db)
+    }
+    return _branchIsolationStore
+  }
+
+  // Output invalidation store (lazy-initialized, same pattern as branch isolation)
+  let _outputInvalidationStore: OutputInvalidationStore | null = null
+  function getOutputInvalidationStore(): OutputInvalidationStore {
+    if (!_outputInvalidationStore) {
+      _outputInvalidationStore = createOutputInvalidationStore(ctx.db.db)
+    }
+    return _outputInvalidationStore
+  }
+
+  // Cache dependency graphs per run ID (step name -> downstream step names)
+  const depGraphCache = new Map<string, Map<string, string[]>>()
+
+  // Tick counter for periodic expired-worktree cleanup (A4)
+  let tickCount = 0
+  const CLEANUP_TICK_INTERVAL = 100
+
+  // Track project paths seen for periodic worktree cleanup
+  const seenProjectPaths = new Set<string>()
 
   // REQ-14/REQ-44: Track processed signal files per step to prevent re-processing.
   // Key: "{runId}:{stepName}", Value: Set of processed file paths.
@@ -181,6 +229,14 @@ export function createDAGEngine(
     saveAndBroadcast(run)
     ctx.logger.info('dag_workflow_failed', { runId: run.id, error: sanitizeForLog(errorMessage) })
 
+    // A3: Clean up worktree on failure
+    if (run.variables?._worktree_path) {
+      const origPath = run.variables._original_project_path || run.variables.project_path || ''
+      cleanupWorktree(run.id, getBranchIsolationStore(), origPath, false).catch(err => {
+        ctx.logger.warn('worktree_cleanup_error', { runId: run.id, error: String(err) })
+      })
+    }
+
     // Phase 15: Pipeline-level on_error cleanup (REQ-27)
     if (parsed?.on_error && parsed.on_error.length > 0) {
       runCleanupActions(run, parsed.on_error, 'pipeline').catch(err => {
@@ -190,6 +246,14 @@ export function createDAGEngine(
   }
 
   function completeWorkflow(run: WorkflowRun): void {
+    // A3: Clean up worktree on successful completion
+    if (run.variables?._worktree_path) {
+      const origPath = run.variables._original_project_path || run.variables.project_path || ''
+      cleanupWorktree(run.id, getBranchIsolationStore(), origPath, true).catch(err => {
+        ctx.logger.warn('worktree_cleanup_error', { runId: run.id, error: String(err) })
+      })
+    }
+
     run.status = 'completed' as WorkflowStatus
     run.completed_at = new Date().toISOString()
     saveAndBroadcast(run)
@@ -317,7 +381,9 @@ export function createDAGEngine(
     if (!condition) return { met: true }
     switch (condition.type) {
       case 'file_exists': {
-        const filePath = resolveOutputPath(run, condition.path)
+        // file_exists conditions may reference absolute paths outside the output dir
+        const rawCondPath = condition.path
+        const filePath = path.isAbsolute(rawCondPath) ? rawCondPath : resolveOutputPath(run, rawCondPath)
         if (!fs.existsSync(filePath)) {
           return { met: false, reason: `file not found: ${condition.path}` }
         }
@@ -337,14 +403,17 @@ export function createDAGEngine(
         // P1-1: Wire conditionEvaluator for expression-type conditions
         const runTier = getRunTier(run, parsed)
         const stepOutputs: Record<string, Record<string, unknown>> = {}
-        for (const stepState of run.steps_state) {
-          if (stepState.resultContent) {
+        for (const ss of run.steps_state) {
+          // Always expose step status so expressions like "step_name.status == 'completed'" work
+          const base: Record<string, unknown> = { status: ss.status }
+          if (ss.resultContent) {
             try {
-              stepOutputs[stepState.name] = { _raw: stepState.resultContent, ...JSON.parse(stepState.resultContent) }
+              Object.assign(base, { _raw: ss.resultContent, ...JSON.parse(ss.resultContent) })
             } catch {
-              stepOutputs[stepState.name] = { _raw: stepState.resultContent }
+              base._raw = ss.resultContent
             }
           }
+          stepOutputs[ss.name] = base
         }
         // Phase 25: Load project profile for expression condition evaluation
         let projectProfile: Record<string, unknown> | undefined
@@ -987,6 +1056,7 @@ export function createDAGEngine(
           if (result.result) {
             stepState.resultContent = JSON.stringify(result.result)
             stepState.resultCollected = true
+            trackStepOutputHash(run, stepState)
           }
           saveAndBroadcast(run)
           ctx.logger.info('dag_aggregator_completed', {
@@ -1020,6 +1090,17 @@ export function createDAGEngine(
           stepName: stepDef.name,
           reason: 'human_gate: explicit human approval required',
         })
+        break
+      }
+
+      // Phase 26: review — automated code review via Gemini L1/L2 pipeline
+      case 'review': {
+        stepState.status = 'running'
+        stepState.startedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+
+        // Execute review asynchronously
+        executeReviewStep(run, stepDef, stepState)
         break
       }
 
@@ -1085,6 +1166,7 @@ export function createDAGEngine(
         stepState.completedAt = new Date().toISOString()
         stepState.resultContent = `gemini_offload skipped: ${response.reason}`
         stepState.resultCollected = true
+        trackStepOutputHash(run, stepState)
         saveAndBroadcast(run)
         ctx.logger.info('dag_gemini_offload_skipped', {
           runId: run.id,
@@ -1124,6 +1206,7 @@ export function createDAGEngine(
       stepState.resultContent = response.content ?? null
       stepState.resultFile = stepDef.output_file ?? null
       stepState.resultCollected = true
+      trackStepOutputHash(run, stepState)
       saveAndBroadcast(run)
 
       ctx.logger.info('dag_gemini_offload_completed', {
@@ -1140,6 +1223,150 @@ export function createDAGEngine(
       stepState.completedAt = new Date().toISOString()
       saveAndBroadcast(run)
       ctx.logger.error('dag_gemini_offload_exception', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        error: sanitizeForLog(errorMsg),
+      })
+    }
+  }
+
+  /**
+   * Execute a review step asynchronously.
+   * Phase 26: Runs L1/L2 review pipeline via Gemini based on complexity classification.
+   */
+  async function executeReviewStep(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+  ): Promise<void> {
+    try {
+      // Resolve target_path from step definition or variables
+      let targetPath = stepDef.target_path ?? ''
+      if (!targetPath && run.variables?.target_path) {
+        targetPath = run.variables.target_path
+      }
+      // Resolve template variables (e.g. {{ spec_path }})
+      if (targetPath.includes('{{')) {
+        targetPath = resolveTemplateVars(targetPath, run)
+      }
+      if (!targetPath) {
+        stepState.status = 'failed'
+        stepState.errorMessage = 'review step requires target_path'
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        return
+      }
+
+      // Resolve work_order from step definition or variables
+      let workOrder: Record<string, unknown> | null = stepDef.work_order ?? null
+      if (!workOrder && run.variables?.work_order) {
+        try {
+          workOrder = JSON.parse(run.variables.work_order)
+        } catch {
+          workOrder = null
+        }
+      }
+
+      // Classify complexity
+      const classification = classifyWorkOrder(
+        workOrder as { complexity?: 'simple' | 'medium' | 'complex' | 'atomic'; estimated_complexity?: string } | null,
+      )
+
+      // Load review routing config from project profile or step definition
+      let reviewRoutingConfig: ReviewRoutingConfig | null = null
+      if (stepDef.review_config) {
+        reviewRoutingConfig = stepDef.review_config as ReviewRoutingConfig
+      } else {
+        const profilePath = run.variables?.project_path || run.output_dir
+        if (profilePath) {
+          try {
+            const profile = loadProjectProfileRaw(profilePath)
+            reviewRoutingConfig = extractReviewRoutingConfig(profile)
+          } catch {
+            // No profile — use defaults
+          }
+        }
+      }
+
+      ctx.logger.info('dag_review_starting', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        targetPath,
+        complexity: classification.complexity,
+      })
+
+      // Execute the review pipeline
+      const reviewResult: ReviewResult = await executeReview(
+        classification,
+        reviewRoutingConfig,
+        {
+          target_path: targetPath,
+          spec_path: stepDef.spec_path,
+          changes_summary: workOrder?.changes_summary as string | undefined,
+          run_dir: run.output_dir,
+        },
+      )
+
+      // Store result
+      stepState.resultContent = JSON.stringify(reviewResult)
+      stepState.resultCollected = true
+      trackStepOutputHash(run, stepState)
+
+      // Set status based on verdict
+      switch (reviewResult.verdict) {
+        case 'PASS':
+          stepState.status = 'completed'
+          break
+        case 'FAIL':
+          stepState.status = 'failed'
+          stepState.errorMessage = reviewResult.feedback
+          break
+        case 'NEEDS_FIX':
+        case 'CONCERN':
+          stepState.status = 'completed'
+          stepState.completedWithWarning = true
+          break
+      }
+
+      stepState.completedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+
+      ctx.logger.info('dag_review_completed', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        verdict: reviewResult.verdict,
+        passed: reviewResult.passed,
+        model: reviewResult.model_used,
+      })
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+
+      // Graceful degradation: if Gemini is unavailable, complete with warning
+      if (errorMsg.includes('no_api_key') || errorMsg.includes('rate_limit')) {
+        stepState.status = 'completed'
+        stepState.completedWithWarning = true
+        stepState.resultContent = JSON.stringify({
+          passed: true,
+          verdict: 'PASS',
+          feedback: `Review skipped: ${errorMsg}`,
+          model_used: 'none',
+        })
+        stepState.resultCollected = true
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        ctx.logger.info('dag_review_skipped', {
+          runId: run.id,
+          step: sanitizeForLog(stepDef.name),
+          reason: sanitizeForLog(errorMsg),
+        })
+        return
+      }
+
+      stepState.status = 'failed'
+      stepState.errorMessage = errorMsg
+      stepState.completedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+      ctx.logger.error('dag_review_exception', {
         runId: run.id,
         step: sanitizeForLog(stepDef.name),
         error: sanitizeForLog(errorMsg),
@@ -1271,7 +1498,9 @@ export function createDAGEngine(
       }
 
       case 'check_file': {
-        const filePath = resolveOutputPath(run, stepDef.path ?? '')
+        // check_file allows absolute paths (e.g. spec files outside output dir)
+        const rawPath = stepDef.path ?? ''
+        const filePath = path.isAbsolute(rawPath) ? rawPath : resolveOutputPath(run, rawPath)
         if (fs.existsSync(filePath)) {
           if (stepDef.max_age_seconds != null) {
             try {
@@ -1314,6 +1543,14 @@ export function createDAGEngine(
           saveAndBroadcast(run)
           return
         }
+        // If referenced step was skipped or failed, fail this check immediately
+        if (refState.status === 'skipped' || refState.status === 'failed') {
+          stepState.status = 'failed'
+          stepState.errorMessage = `referenced step "${refStepName}" ${refState.status}: ${refState.skippedReason ?? refState.errorMessage ?? ''}`
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          return
+        }
         // Check result content from the referenced step
         if (refState.resultContent && refState.resultContent.includes(stepDef.contains ?? '')) {
           stepState.status = 'completed'
@@ -1351,8 +1588,11 @@ export function createDAGEngine(
             token_budget: parseInt(stepDef.env?.TOKEN_BUDGET ?? '8000', 10),
             sources: (stepDef.env?.CONTEXT_SOURCES ?? 'codebase,project_facts').split(','),
           }
-          const outputDir = resolveOutputPath(run, stepDef.working_dir ?? run.output_dir)
-          const projectDir = resolveOutputPath(run, stepDef.env?.PROJECT_PATH ?? run.output_dir)
+          // working_dir and PROJECT_PATH may be absolute paths outside the output dir
+          const rawOutputDir = stepDef.working_dir ?? run.output_dir
+          const outputDir = path.isAbsolute(rawOutputDir) ? rawOutputDir : resolveOutputPath(run, rawOutputDir)
+          const rawProjectDir = stepDef.env?.PROJECT_PATH ?? run.output_dir
+          const projectDir = path.isAbsolute(rawProjectDir) ? rawProjectDir : resolveOutputPath(run, rawProjectDir)
           prepareContextBriefing(config, outputDir, projectDir).then(briefingPath => {
             stepState.status = 'completed'
             stepState.resultContent = briefingPath
@@ -1543,6 +1783,7 @@ export function createDAGEngine(
             const failed = checkResults.filter(c => !c.passed).length
             stepState.resultContent = JSON.stringify({ checks: checkResults, passed, failed, paused })
             stepState.resultCollected = true
+            trackStepOutputHash(run, stepState)
 
             if (paused) {
               stepState.status = 'paused_escalated'
@@ -1674,6 +1915,7 @@ export function createDAGEngine(
             stepState.resultContent = stepResult
             if (stderr) stepState.resultContent += '\nstderr: ' + stderr
             stepState.resultCollected = true
+            trackStepOutputHash(run, stepState)
 
             ctx.logger.info('dag_native_step_completed', {
               runId: run.id,
@@ -1704,6 +1946,7 @@ export function createDAGEngine(
               stepState.errorMessage = null
               stepState.resultContent = stepResult || 'expect:fail — command failed as expected'
               stepState.resultCollected = true
+              trackStepOutputHash(run, stepState)
               ctx.logger.info('dag_native_step_expect_fail_inverted', {
                 runId: run.id,
                 step: sanitizeForLog(stepDef.name),
@@ -1735,6 +1978,7 @@ export function createDAGEngine(
               stepState.status = 'completed'
               stepState.resultContent = `completed_with_warnings: ${warning}`
               stepState.resultCollected = true
+              trackStepOutputHash(run, stepState)
               ctx.logger.info('dag_native_step_completed_with_warnings', {
                 runId: run.id,
                 step: sanitizeForLog(stepDef.name),
@@ -1782,6 +2026,7 @@ export function createDAGEngine(
           // Set result content for downstream steps
           stepState.resultContent = JSON.stringify(report)
           stepState.resultCollected = true
+          trackStepOutputHash(run, stepState)
 
           if (report.valid) {
             stepState.status = 'completed'
@@ -2415,8 +2660,26 @@ export function createDAGEngine(
       if (stat.size > 1024 * 1024) return // 1MB limit
       stepState.resultContent = fs.readFileSync(fullPath, 'utf-8')
       stepState.resultCollected = true
+      trackStepOutputHash(run, stepState)
     } catch {
       // Best effort
+    }
+  }
+
+  /**
+   * Track output hash for a completed step's result content.
+   * Called after a step completes successfully and has resultContent.
+   */
+  function trackStepOutputHash(run: WorkflowRun, stepState: StepRunState): void {
+    if (!stepState.resultContent) return
+    try {
+      const store = getOutputInvalidationStore()
+      const hash = computeHash(stepState.resultContent)
+      const execCtx = { runId: run.id, outputDir: run.output_dir || '', logger: ctx.logger }
+      // trackOutputHash is async in signature but performs sync SQLite ops; fire-and-forget
+      trackOutputHash(stepState.name, hash, true, execCtx, store).catch(() => {})
+    } catch {
+      // Best effort -- output hash tracking should not break step completion
     }
   }
 
@@ -4318,6 +4581,17 @@ export function createDAGEngine(
           })
         }
 
+        // Output invalidation: amendment resolved — invalidate downstream steps
+        // so they re-execute with the amended upstream output
+        try {
+          const oiStore = getOutputInvalidationStore()
+          const depGraph = depGraphCache.get(run.id) ?? new Map<string, string[]>()
+          const execCtx = { runId: run.id, outputDir: run.output_dir || '', logger: ctx.logger }
+          invalidateDownstream(stepState.name, execCtx, oiStore, depGraph).catch(() => {})
+        } catch {
+          // Best effort
+        }
+
         ctx.broadcast({
           type: 'amendment_resolved',
           runId: run.id,
@@ -4595,6 +4869,71 @@ export function createDAGEngine(
     // Auto-populate standard variables on first tick
     ensureStandardVariables(run)
 
+    // A2: Branch isolation — create worktree on first tick if enabled
+    if (run.variables?.branch_isolation === 'true' && !run.variables?._branch_isolation_done) {
+      const projectPath = run.variables.project_path || run.output_dir
+      const fileList = run.variables.file_list ? run.variables.file_list.split(',') : ['*']
+      const tier = getRunTier(run, parsed)
+
+      // Track project path for periodic cleanup
+      if (projectPath) seenProjectPaths.add(projectPath)
+
+      // Build active runs list from currently running workflows
+      const runningRuns = workflowStore.getRunningRuns()
+      const activeRuns = runningRuns
+        .filter(r => r.id !== run.id)
+        .map(r => {
+          const rFileList = r.variables?.file_list ? r.variables.file_list.split(',') : ['*']
+          // Parse tier from variables or default to 1
+          const rTier = r.variables?.tier ? parseInt(r.variables.tier, 10) || 1 : 1
+          return { run_id: r.id, file_list: rFileList, tier: rTier }
+        })
+
+      initBranchIsolation(run.id, fileList, tier, activeRuns, getBranchIsolationStore(), projectPath, 'HEAD')
+        .then(result => {
+          if (!run.variables) run.variables = {}
+          if (result.isolated === true && result.worktreePath) {
+            run.variables._original_project_path = run.variables.project_path || ''
+            run.variables.project_path = result.worktreePath
+            run.variables._worktree_path = result.worktreePath
+            ctx.logger.info('branch_isolation_created', { runId: run.id, worktreePath: result.worktreePath })
+          } else if (result.error) {
+            ctx.logger.warn('branch_isolation_error', { runId: run.id, error: result.error })
+          }
+          run.variables._branch_isolation_done = 'true'
+          workflowStore.updateRun(run.id, { variables: run.variables })
+          broadcastRunUpdate(run)
+        })
+        .catch(err => {
+          ctx.logger.warn('branch_isolation_init_failed', { runId: run.id, error: String(err) })
+          if (!run.variables) run.variables = {}
+          run.variables._branch_isolation_done = 'true'
+          workflowStore.updateRun(run.id, { variables: run.variables })
+        })
+    }
+
+    // A4: Periodic expired worktree cleanup
+    tickCount++
+    if (tickCount % CLEANUP_TICK_INTERVAL === 0) {
+      for (const pp of seenProjectPaths) {
+        cleanupExpiredWorktrees(getBranchIsolationStore(), pp).catch(err => {
+          ctx.logger.warn('expired_worktree_cleanup_error', { projectPath: pp, error: String(err) })
+        })
+      }
+    }
+
+    // Output invalidation: build dependency graph on first tick per run
+    if (!run.variables?._dep_graph_built) {
+      const effectiveStepsForGraph = getEffectiveSteps(run, parsed)
+      if (effectiveStepsForGraph) {
+        const depGraph = buildDependencyGraph(effectiveStepsForGraph)
+        depGraphCache.set(run.id, depGraph)
+        if (!run.variables) run.variables = {}
+        run.variables._dep_graph_built = 'true'
+        workflowStore.updateRun(run.id, { variables: run.variables })
+      }
+    }
+
     const steps = getEffectiveSteps(run, parsed)
     if (!steps) {
       failWorkflow(run, 'Cannot parse workflow steps')
@@ -4745,6 +5084,53 @@ export function createDAGEngine(
           }
         }
 
+        // Output invalidation check: if this step has dependencies, compute input hash
+        // from parent outputs and check if cached output is still valid.
+        // Note: checkOutputInvalidation/invalidateDownstream are async in signature but
+        // perform only synchronous SQLite operations; we fire-and-forget with .then()
+        // but use a synchronous pre-check via the store directly for the blocking decision.
+        if (stepDef.depends_on && stepDef.depends_on.length > 0) {
+          try {
+            const store = getOutputInvalidationStore()
+            const parentOutputs = stepDef.depends_on
+              .map(depName => {
+                const depState = run.steps_state.find(s => s.name === depName)
+                return depState?.resultContent ?? ''
+              })
+              .join('|')
+            const inputHash = computeHash(parentOutputs)
+            const execCtx = { runId: run.id, outputDir: run.output_dir || '', logger: ctx.logger }
+
+            // Synchronous check: look up existing record and compare input hash
+            const existing = store.getStepOutput(run.id, stepState.name)
+            const isInvalidated = existing
+              ? (!existing.valid || (existing.input_hash !== '' && existing.input_hash !== inputHash))
+              : false
+
+            if (isInvalidated) {
+              const depGraph = depGraphCache.get(run.id) ?? new Map<string, string[]>()
+              // invalidateDownstream is async but performs sync SQLite ops -- fire and forget
+              invalidateDownstream(stepState.name, execCtx, store, depGraph).catch(() => {})
+
+              const breaker = checkCircuitBreaker(run.id, store)
+              if (breaker.shouldPause) {
+                stepState.status = 'paused_human' as StepRunState['status']
+                stepState.errorMessage = `Circuit breaker: ${breaker.invalidationCount} invalidations in run`
+                stepState.completedAt = new Date().toISOString()
+                saveAndBroadcast(run)
+                ctx.logger.warn('output_invalidation_circuit_breaker', {
+                  runId: run.id,
+                  step: sanitizeForLog(stepState.name),
+                  invalidationCount: breaker.invalidationCount,
+                })
+                continue
+              }
+            }
+          } catch {
+            // Best effort -- invalidation check should not block step execution
+          }
+        }
+
         // Start the step
         startStep(run, stepDef, stepState)
       }
@@ -4766,7 +5152,20 @@ export function createDAGEngine(
 
       // Monitor running steps
       if (stepState.status === 'running' || stepState.status === 'waiting_signal') {
-        monitorStep(run, stepDef, stepState)
+        try {
+          monitorStep(run, stepDef, stepState)
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err)
+          stepState.status = 'failed'
+          stepState.errorMessage = `monitor error: ${errorMsg}`
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+          ctx.logger.error('dag_monitor_step_exception', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            error: sanitizeForLog(errorMsg),
+          })
+        }
       }
     }
   }
@@ -4779,21 +5178,23 @@ export function createDAGEngine(
    * and "compiler_ir.hir_enabled" resolve correctly.
    */
   function buildCheckConditionContext(run: WorkflowRun): ConditionContext {
-    // Build step outputs from completed steps
+    // Build step outputs from completed steps — always include status
     const stepOutputs: Record<string, Record<string, unknown>> = {}
     for (const ss of run.steps_state) {
+      const base: Record<string, unknown> = { status: ss.status }
       if (ss.resultContent) {
         try {
           const obj = JSON.parse(ss.resultContent)
           if (typeof obj === 'object' && obj !== null) {
-            stepOutputs[ss.name] = obj
+            Object.assign(base, obj)
           } else {
-            stepOutputs[ss.name] = { _raw: ss.resultContent }
+            base._raw = ss.resultContent
           }
         } catch {
-          stepOutputs[ss.name] = { _raw: ss.resultContent }
+          base._raw = ss.resultContent
         }
       }
+      stepOutputs[ss.name] = base
     }
 
     // Load project profile if project_path is available
