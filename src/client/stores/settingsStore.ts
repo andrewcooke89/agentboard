@@ -175,6 +175,35 @@ interface SettingsState {
   setSessionGroupMode: (mode: SessionGroupMode) => void
   collapsedProjects: string[]
   toggleProjectCollapsed: (projectPath: string) => void
+  // Cron settings
+  cronPollInterval: number
+  setCronPollInterval: (interval: number) => void
+  cronAvatarStyle: string
+  setCronAvatarStyle: (style: string) => void
+  cronSudoGracePeriod: number
+  setCronSudoGracePeriod: (period: number) => void
+  cronShowSystemJobs: boolean
+  setCronShowSystemJobs: (enabled: boolean) => void
+  cronShowUserJobs: boolean
+  setCronShowUserJobs: (enabled: boolean) => void
+  cronDefaultSort: string
+  setCronDefaultSort: (sort: string) => void
+  cronListWidth: number
+  setCronListWidth: (width: number) => void
+  cronNotificationsEnabled: boolean
+  setCronNotificationsEnabled: (enabled: boolean) => void
+  cronDesktopNotifications: boolean
+  setCronDesktopNotifications: (enabled: boolean) => void
+  cronNotifyOnFailure: boolean
+  setCronNotifyOnFailure: (enabled: boolean) => void
+  cronNotifyOnMissedRun: boolean
+  setCronNotifyOnMissedRun: (enabled: boolean) => void
+  cronNotifyOnManualRun: boolean
+  setCronNotifyOnManualRun: (enabled: boolean) => void
+  cronTimelineDefaultVisible: boolean
+  setCronTimelineDefaultVisible: (enabled: boolean) => void
+  cronTimelineDefaultRange: string
+  setCronTimelineDefaultRange: (range: string) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -297,11 +326,40 @@ export const useSettingsStore = create<SettingsState>()(
           : [...state.collapsedProjects, projectPath]
         return { collapsedProjects: collapsed }
       }),
+      // Cron settings
+      cronPollInterval: 5000,
+      setCronPollInterval: (interval) => set({ cronPollInterval: Math.max(2000, Math.min(30000, interval)) }),
+      cronAvatarStyle: 'bottts',
+      setCronAvatarStyle: (style) => set({ cronAvatarStyle: style }),
+      cronSudoGracePeriod: 300000,
+      setCronSudoGracePeriod: (period) => set({ cronSudoGracePeriod: period }),
+      cronShowSystemJobs: true,
+      setCronShowSystemJobs: (enabled) => set({ cronShowSystemJobs: enabled }),
+      cronShowUserJobs: true,
+      setCronShowUserJobs: (enabled) => set({ cronShowUserJobs: enabled }),
+      cronDefaultSort: 'name',
+      setCronDefaultSort: (sort) => set({ cronDefaultSort: sort }),
+      cronListWidth: 320,
+      setCronListWidth: (width) => set({ cronListWidth: width }),
+      cronNotificationsEnabled: true,
+      setCronNotificationsEnabled: (enabled) => set({ cronNotificationsEnabled: enabled }),
+      cronDesktopNotifications: false,
+      setCronDesktopNotifications: (enabled) => set({ cronDesktopNotifications: enabled }),
+      cronNotifyOnFailure: true,
+      setCronNotifyOnFailure: (enabled) => set({ cronNotifyOnFailure: enabled }),
+      cronNotifyOnMissedRun: true,
+      setCronNotifyOnMissedRun: (enabled) => set({ cronNotifyOnMissedRun: enabled }),
+      cronNotifyOnManualRun: false,
+      setCronNotifyOnManualRun: (enabled) => set({ cronNotifyOnManualRun: enabled }),
+      cronTimelineDefaultVisible: false,
+      setCronTimelineDefaultVisible: (enabled) => set({ cronTimelineDefaultVisible: enabled }),
+      cronTimelineDefaultRange: '24h',
+      setCronTimelineDefaultRange: (range) => set({ cronTimelineDefaultRange: range }),
     }),
     {
       name: 'agentboard-settings',
       storage: createJSONStorage(() => safeStorage),
-      version: 1,
+      version: 2,
       partialize: (state) => {
         // Exclude manualSessionOrder from persistence (session-only state)
         const { manualSessionOrder: _, ...rest } = state

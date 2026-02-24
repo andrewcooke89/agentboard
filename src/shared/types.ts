@@ -115,6 +115,18 @@ export type ServerMessage =
   | { type: 'branch_created'; runId: string; branchName: string }
   | { type: 'cleanup_started'; runId: string; stepName: string; level: 'step' | 'pipeline' }
   | { type: 'cleanup_completed'; runId: string; stepName: string; level: 'step' | 'pipeline'; success: boolean }
+  // Cron manager messages
+  | { type: 'cron-jobs'; jobs: CronJob[]; systemdAvailable: boolean }
+  | { type: 'cron-job-update'; job: CronJob }
+  | { type: 'cron-job-removed'; jobId: string }
+  | { type: 'cron-job-detail'; job: CronJobDetail }
+  | { type: 'cron-operation-result'; jobId: string; operation: string; ok: boolean; error?: string }
+  | { type: 'cron-sudo-required'; jobId: string; operation: string; prompt: string }
+  | { type: 'cron-run-started'; jobId: string; runId: string }
+  | { type: 'cron-run-output'; jobId: string; runId: string; data: string }
+  | { type: 'cron-run-completed'; jobId: string; runId: string; exitCode: number; duration: number }
+  | { type: 'cron-bulk-operation-progress'; operation: string; progress: BulkProgress }
+  | { type: 'cron-notification'; level: 'info' | 'warning' | 'error'; message: string; jobId?: string }
 
 export interface ResumeError {
   code: 'NOT_FOUND' | 'ALREADY_ACTIVE' | 'RESUME_FAILED'
@@ -153,6 +165,23 @@ export type ClientMessage =
   | { type: 'workflow-run-resume'; runId: string }
   | { type: 'workflow-run-cancel'; runId: string }
   | { type: 'workflow-step-action'; runId: string; stepName: string; action: string }
+  // Cron manager messages
+  | { type: 'cron-job-select'; jobId: string }
+  | { type: 'cron-job-run-now'; jobId: string }
+  | { type: 'cron-job-pause'; jobId: string }
+  | { type: 'cron-job-resume'; jobId: string }
+  | { type: 'cron-job-edit-frequency'; jobId: string; schedule: string }
+  | { type: 'cron-job-delete'; jobId: string }
+  | { type: 'cron-job-create'; mode: 'cron' | 'systemd'; config: CronCreateConfig | SystemdCreateConfig }
+  | { type: 'cron-bulk-pause'; jobIds: string[] }
+  | { type: 'cron-bulk-resume'; jobIds: string[] }
+  | { type: 'cron-bulk-delete'; jobIds: string[] }
+  | { type: 'cron-job-set-tags'; jobId: string; tags: string[] }
+  | { type: 'cron-job-set-managed'; jobId: string; isManaged: boolean }
+  | { type: 'cron-job-link-session'; jobId: string; sessionId: string | null }
+  | { type: 'cron-sudo-auth'; jobId: string; operation: string; sudoCredential: string }
+  | { type: 'cron-job-logs'; jobId: string; lines?: number }
+  | { type: 'cron-job-history'; jobId: string; limit?: number }
 
 // Task queue types
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -702,4 +731,103 @@ export interface WorkUnitWithComplexity extends WorkUnit {
   complexity?: ComplexityLevel
   complexity_confidence?: number
   model_assigned?: string
+}
+
+// ─── Cron & Systemd Timer Types ─────────────────────────────────────────────
+
+export type CronJobSource = 'user-crontab' | 'system-crontab' | 'systemd-user' | 'systemd-system'
+
+export type CronJobStatus = 'active' | 'paused' | 'disabled' | 'error' | 'unknown'
+
+export type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown'
+
+/**
+ * A discovered cron job or systemd timer.
+ *
+ * ID derivation contract: the `id` is a stable hash derived from
+ * source + name + command. Schedule is intentionally excluded so that
+ * editing the schedule does NOT change the job's identity.
+ *
+ * requiresSudo is always `true` for 'system-crontab' and 'systemd-system'
+ * sources, since those require root/sudo to modify.
+ */
+export interface CronJob {
+  /** Stable hash of source + name + command. Does NOT include schedule. */
+  id: string
+  name: string
+  source: CronJobSource
+  /** Raw cron expression or systemd OnCalendar value */
+  schedule: string
+  /** Human-readable schedule description (e.g. "Every day at 3:00 AM") */
+  scheduleHuman: string
+  command: string
+  scriptPath?: string
+  projectGroup?: string
+  status: CronJobStatus
+  health: HealthStatus
+  healthReason?: string
+  lastRun?: string
+  nextRun?: string
+  nextRuns?: string[]
+  lastExitCode?: number
+  consecutiveFailures: number
+  avgDuration?: number
+  lastRunDuration?: number
+  user?: string
+  /** True for system-crontab and systemd-system sources */
+  requiresSudo: boolean
+  avatarUrl?: string
+  /** Path to the systemd unit file, if applicable */
+  unitFile?: string
+  description?: string
+  tags: string[]
+  /** Whether this job is managed/tracked by agentboard */
+  isManagedByAgentboard: boolean
+  linkedSessionId?: string
+}
+
+/** Extended job detail including script content and full history */
+export interface CronJobDetail extends CronJob {
+  scriptContent?: string
+  scriptLanguage?: string
+  /** Parsed systemd [Timer] section key-value pairs */
+  timerConfig?: Record<string, string>
+  /** Parsed systemd [Service] section key-value pairs */
+  serviceConfig?: Record<string, string>
+  /** Raw crontab line, if source is user-crontab or system-crontab */
+  crontabLine?: string
+  runHistory: JobRunRecord[]
+  recentLogs: string[]
+}
+
+export interface JobRunRecord {
+  timestamp: string
+  endTimestamp?: string
+  duration?: number
+  exitCode?: number
+  trigger: 'scheduled' | 'manual'
+  logSnippet?: string
+}
+
+export interface CronCreateConfig {
+  command: string
+  schedule: string
+  comment?: string
+  tags?: string[]
+}
+
+export interface SystemdCreateConfig {
+  serviceName: string
+  command: string
+  schedule: string
+  description?: string
+  workingDirectory?: string
+  scope: 'user' | 'system'
+  tags?: string[]
+}
+
+export interface BulkProgress {
+  completed: number
+  total: number
+  failures: Array<{ jobId: string; jobName: string; error: string }>
 }

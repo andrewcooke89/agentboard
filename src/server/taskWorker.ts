@@ -26,11 +26,17 @@ function ensureOutputDir(dir: string): void {
 
 function tmuxWindowExists(windowTarget: string): boolean {
   try {
-    const result = Bun.spawnSync(['tmux', 'has-session', '-t', windowTarget], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    return result.exitCode === 0
+    // Use list-windows with an exact-match filter instead of display-message
+    // or has-session, both of which do prefix matching and can return false
+    // positives when similarly-named windows exist.
+    const expectedName = windowTarget.includes(':') ? windowTarget.split(':').pop()! : windowTarget
+    const result = Bun.spawnSync(
+      ['tmux', 'list-windows', '-t', windowTarget.split(':')[0], '-F', '#{window_name}'],
+      { stdout: 'pipe', stderr: 'pipe' },
+    )
+    if (result.exitCode !== 0) return false
+    const names = result.stdout.toString().trim().split('\n')
+    return names.includes(expectedName)
   } catch {
     return false
   }
@@ -126,8 +132,20 @@ export function createTaskWorker(
         continue
       }
 
-      // Check if tmux window still exists
-      if (!tmuxWindowExists(task.tmuxWindow)) {
+      // Check if task finished via sentinel .done file BEFORE checking if the
+      // tmux window still exists. The window may have closed (e.g. exec sh
+      // exited after a server restart or the user typed exit) even though the
+      // task completed successfully and touch already created the sentinel.
+      // Checking .done first ensures we never misclassify a completed task as
+      // failed just because the window disappeared after the pipeline finished.
+      // (pane_current_command is unreliable — on macOS /bin/sh is bash,
+      // so it always reports 'bash' even while the pipeline is still running)
+      const donePath = doneFilePath(outputDir, task.id)
+      const taskFinished = fs.existsSync(donePath)
+
+      // Only check window liveness when .done is absent — if the window
+      // disappeared before the task could finish, that's a real failure.
+      if (!taskFinished && !tmuxWindowExists(task.tmuxWindow)) {
         const updated = taskStore.updateTask(task.id, {
           status: 'failed',
           errorMessage: 'tmux_window_disappeared',
@@ -141,12 +159,6 @@ export function createTaskWorker(
         }
         continue
       }
-
-      // Check if task finished via sentinel .done file
-      // (pane_current_command is unreliable — on macOS /bin/sh is bash,
-      // so it always reports 'bash' even while the pipeline is still running)
-      const donePath = doneFilePath(outputDir, task.id)
-      const taskFinished = fs.existsSync(donePath)
 
       if (taskFinished) {
         // Read output from tee'd file
