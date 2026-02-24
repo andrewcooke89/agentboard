@@ -34,13 +34,8 @@ import { createWorkflowFileWatcher } from './workflowFileWatcher'
 import type { WorkflowEngine } from './workflowEngine'
 import type { WorkflowFileWatcher } from './workflowFileWatcher'
 import { parseWorkflowYAML } from './workflowSchema'
-import type { StepRunState, CronJob } from '../shared/types'
+import type { StepRunState } from '../shared/types'
 import { HistoryService } from './HistoryService'
-import { CronManager } from './cronManager'
-import { CronHistoryService } from './cronHistoryService'
-import { CronLogService } from './cronLogService'
-import { initCronTables } from './db'
-import { createCronHandlers } from './handlers/cronHandlers'
 
 // --- Startup checks ---
 checkPortAvailable(config.port, logger)
@@ -92,14 +87,6 @@ const logPoller = new LogPoller(db, registry, {
   matchWorker: config.logMatchWorker,
 })
 const sessionRefreshWorker = new SessionRefreshWorkerClient()
-
-// --- Cron manager ---
-const cronPrefsStore = initCronTables(db.db)
-// getJob forwarding ref: populated after cronHandlers is created below
-let _cronJobLookup: ((id: string) => CronJob | undefined) = () => undefined
-const cronManager = new CronManager(db, cronPrefsStore)
-const cronHistoryService = new CronHistoryService(cronPrefsStore, (id) => _cronJobLookup(id))
-const cronLogService = new CronLogService((id) => _cronJobLookup(id))
 
 // --- Task queue ---
 const taskStore = initTaskStore(db.db)
@@ -228,18 +215,6 @@ sessionCleanupInterval = setInterval(() => {
     })
   }
 }, cleanupIntervalMs)
-
-// --- Cron WebSocket handlers (WU-007) ---
-const cronHandlers = createCronHandlers(ctx, {
-  cronManager,
-  historyService: cronHistoryService,
-  logService: cronLogService,
-  prefsStore: cronPrefsStore,
-})
-// Wire getJob forwarding ref. cronManager.getAllJobs() reads the manager's
-// internal map; cronHandlers also maintains its own jobCache. The services
-// fall back gracefully when getJob returns undefined.
-_cronJobLookup = (id: string) => cronManager.getAllJobs().find(j => j.id === id)
 
 // --- Workflow WebSocket handlers (WO-008/WO-009) ---
 // Adapts real WorkflowStore to the simplified WorkflowStoreApi interface
@@ -372,23 +347,6 @@ const wsHandlers = {
     onWorkflowRunResume: workflowHandlers.handleWorkflowRunResume,
     onWorkflowRunCancel: workflowHandlers.handleWorkflowRunCancel,
   }),
-  // Cron manager handlers (WU-007)
-  onCronJobSelect: cronHandlers.handleCronJobSelect,
-  onCronJobRunNow: cronHandlers.handleCronRunNow,
-  onCronJobPause: cronHandlers.handleCronPause,
-  onCronJobResume: cronHandlers.handleCronResume,
-  onCronJobEditFrequency: cronHandlers.handleCronEditFrequency,
-  onCronJobDelete: cronHandlers.handleCronDelete,
-  onCronJobCreate: cronHandlers.handleCronCreate,
-  onCronBulkPause: cronHandlers.handleCronBulkPause,
-  onCronBulkResume: cronHandlers.handleCronBulkResume,
-  onCronBulkDelete: cronHandlers.handleCronBulkDelete,
-  onCronJobHistory: cronHandlers.handleCronHistory,
-  onCronJobLogs: cronHandlers.handleCronLogs,
-  onCronSudoAuth: (ws: ServerWebSocket<WSData>, msg: Extract<import('../shared/types').ClientMessage, { type: 'cron-sudo-auth' }>) => cronHandlers.handleCronSudoAuth(ws, msg, tlsEnabled),
-  onCronJobSetTags: cronHandlers.handleCronSetTags,
-  onCronJobLinkSession: cronHandlers.handleCronLinkSession,
-  onCronJobSetManaged: cronHandlers.handleCronSetManaged,
 }
 
 // --- Server ---
@@ -425,7 +383,6 @@ Bun.serve<WSData>({
   websocket: {
     open(ws) {
       sockets.add(ws)
-      cronHandlers.onClientConnected(ws)
       // If no auth configured (dev mode), send initial data immediately
       // Otherwise, wait for auth message before sending session data
       if (!config.authToken) {
@@ -460,7 +417,6 @@ Bun.serve<WSData>({
     },
     close(ws) {
       terminalHandlers.cleanupTerminals(ws)
-      cronHandlers.onClientDisconnected(ws)
       sockets.delete(ws)
     },
   },
@@ -484,7 +440,6 @@ function cleanupAllTerminals() {
   if (workflowCleanupInterval) clearInterval(workflowCleanupInterval)
   if (sessionCleanupInterval) clearInterval(sessionCleanupInterval)
 
-  cronManager.destroy()
   taskWorker.stop()
   for (const ws of sockets) {
     terminalHandlers.cleanupTerminals(ws)
