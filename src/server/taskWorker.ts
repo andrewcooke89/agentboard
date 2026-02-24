@@ -26,11 +26,18 @@ function ensureOutputDir(dir: string): void {
 
 function tmuxWindowExists(windowTarget: string): boolean {
   try {
-    const result = Bun.spawnSync(['tmux', 'has-session', '-t', windowTarget], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    return result.exitCode === 0
+    // Use list-windows with exact name matching to avoid tmux prefix-match bug.
+    // tmux has-session and display-message both do prefix matching, returning
+    // false positives for similarly-named windows.
+    const sessionName = windowTarget.includes(':') ? windowTarget.split(':')[0] : windowTarget
+    const expectedName = windowTarget.includes(':') ? windowTarget.split(':').pop()! : windowTarget
+    const result = Bun.spawnSync(
+      ['tmux', 'list-windows', '-t', sessionName, '-F', '#{window_name}'],
+      { stdout: 'pipe', stderr: 'pipe' },
+    )
+    if (result.exitCode !== 0) return false
+    const names = result.stdout.toString().trim().split('\n')
+    return names.includes(expectedName)
   } catch {
     return false
   }
