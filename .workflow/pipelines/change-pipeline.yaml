@@ -173,27 +173,29 @@ steps:
           # - generate-tests  # Uncomment when test-writer available
         command: |
           # Run tests - expect them to FAIL (red phase)
-          # Adjust test command based on project language/framework
+          # Capture exit code properly (no || true which swallows it)
+          set +e
           if [ -f "package.json" ]; then
-            npm test || true
+            bun test 2>&1
+            TEST_EXIT=$?
           elif [ -f "Cargo.toml" ]; then
-            cargo test || true
+            cargo test 2>&1
+            TEST_EXIT=$?
           elif [ -f "pyproject.toml" ]; then
-            pytest || true
+            pytest 2>&1
+            TEST_EXIT=$?
           else
             echo "Unknown test framework"
             exit 1
           fi
+          set -e
 
-          # Capture exit code
-          TEST_EXIT=$?
-
-          # Tests SHOULD fail in red phase
+          # Tests SHOULD fail in red phase (new feature tests not yet implemented)
           if [ $TEST_EXIT -eq 0 ]; then
             echo "ERROR: Tests passed before implementation (trivially passing tests)"
             exit 1
           else
-            echo "PASS: Tests failed as expected in red phase"
+            echo "PASS: Tests failed as expected in red phase (exit code: $TEST_EXIT)"
             exit 0
           fi
         working_dir: "{{ project_path }}"
@@ -263,26 +265,28 @@ steps:
       - verify-amendments
     command: |
       # Run tests - expect them to PASS (green phase)
+      set +e
       if [ -f "package.json" ]; then
-        npm test
+        bun test 2>&1
+        TEST_EXIT=$?
       elif [ -f "Cargo.toml" ]; then
-        cargo test
+        cargo test 2>&1
+        TEST_EXIT=$?
       elif [ -f "pyproject.toml" ]; then
-        pytest
+        pytest 2>&1
+        TEST_EXIT=$?
       else
         echo "Unknown test framework"
         exit 1
       fi
-
-      # Capture exit code
-      TEST_EXIT=$?
+      set -e
 
       # Tests SHOULD pass in green phase
       if [ $TEST_EXIT -eq 0 ]; then
         echo "PASS: Tests passed after implementation (green phase verified)"
         exit 0
       else
-        echo "FAIL: Tests still failing after implementation"
+        echo "FAIL: Tests still failing after implementation (exit code: $TEST_EXIT)"
         exit 1
       fi
     working_dir: "{{ project_path }}"
