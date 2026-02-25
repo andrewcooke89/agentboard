@@ -1460,6 +1460,14 @@ function buildWorkflowStep(
   // Optional common fields
   if (hasStringField(step, 'output_path')) result.output_path = step.output_path as string
   if (hasStringField(step, 'result_file')) result.result_file = step.result_file as string
+  if (step.enforce_verdict && typeof step.enforce_verdict === 'object' && !Array.isArray(step.enforce_verdict)) {
+    const ev = step.enforce_verdict as Record<string, unknown>
+    result.enforce_verdict = {
+      field: hasStringField(ev, 'field') ? ev.field as string : 'overall_verdict',
+      allowed: Array.isArray(ev.allowed) ? (ev.allowed as unknown[]).map(a => String(a)) : ['pass'],
+      fail_message: hasStringField(ev, 'fail_message') ? ev.fail_message as string : undefined,
+    }
+  }
   if ('timeoutSeconds' in step) result.timeoutSeconds = Number(step.timeoutSeconds)
   if ('maxRetries' in step) result.maxRetries = Number(step.maxRetries)
 
