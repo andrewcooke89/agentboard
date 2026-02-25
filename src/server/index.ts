@@ -36,6 +36,10 @@ import type { WorkflowFileWatcher } from './workflowFileWatcher'
 import { parseWorkflowYAML } from './workflowSchema'
 import type { StepRunState } from '../shared/types'
 import { HistoryService } from './HistoryService'
+import { CronManager } from './cronManager'
+import { CronHistoryService } from './cronHistoryService'
+import { CronLogService } from './cronLogService'
+import { createCronHandlers } from './handlers/cronHandlers'
 
 // --- Startup checks ---
 checkPortAvailable(config.port, logger)
@@ -106,6 +110,11 @@ const historyService = new HistoryService({
   countsTtlMs: config.historyCountsTtlMs,
   resumeTimeoutMs: config.historyResumeTimeoutMs,
 })
+
+// --- Cron Manager ---
+const cronManager = new CronManager()
+const cronHistoryService = new CronHistoryService(db.db)
+const cronLogService = new CronLogService(db.db)
 
 // --- Context wiring ---
 function broadcast(msg: import('../shared/types').ServerMessage) {
@@ -283,6 +292,9 @@ const workflowHandlers = config.workflowEngineEnabled
     })
   : null
 
+// --- Cron handlers (WU-002) ---
+const cronHandlers = createCronHandlers(ctx, cronManager, cronHistoryService, cronLogService)
+
 // --- HTTP routes ---
 const tlsEnabled = !!(config.tlsCert && config.tlsKey)
 registerHttpRoutes(app, ctx, tlsEnabled, historyService)
@@ -307,6 +319,9 @@ logger.info('startup_state', {
     name: w.name,
   })),
 })
+
+// Detect systemd availability for cron manager
+cronManager.detectSystemd().catch(() => {})
 
 // --- Initial data load ---
 refreshOrchestrator.refreshSessionsSync({ verifyAssociations: true })
@@ -347,6 +362,24 @@ const wsHandlers = {
     onWorkflowRunResume: workflowHandlers.handleWorkflowRunResume,
     onWorkflowRunCancel: workflowHandlers.handleWorkflowRunCancel,
   }),
+  // Cron Manager handlers (WU-002)
+  onCronJobSelect: cronHandlers.handleCronJobSelect.bind(cronHandlers),
+  onCronJobRunNow: cronHandlers.handleCronJobRunNow.bind(cronHandlers),
+  onCronJobPause: cronHandlers.handleCronJobPause.bind(cronHandlers),
+  onCronJobResume: cronHandlers.handleCronJobResume.bind(cronHandlers),
+  onCronJobEditFrequency: cronHandlers.handleCronJobEditFrequency.bind(cronHandlers),
+  onCronJobDelete: cronHandlers.handleCronJobDelete.bind(cronHandlers),
+  onCronJobCreate: (ws: ServerWebSocket<WSData>, mode: string, cfg: unknown) =>
+    cronHandlers.handleCronJobCreate(ws, mode as 'cron' | 'systemd', cfg),
+  onCronBulkPause: cronHandlers.handleCronBulkPause.bind(cronHandlers),
+  onCronBulkResume: cronHandlers.handleCronBulkResume.bind(cronHandlers),
+  onCronBulkDelete: cronHandlers.handleCronBulkDelete.bind(cronHandlers),
+  onCronJobSetTags: cronHandlers.handleCronJobSetTags.bind(cronHandlers),
+  onCronJobSetManaged: cronHandlers.handleCronJobSetManaged.bind(cronHandlers),
+  onCronJobLinkSession: cronHandlers.handleCronJobLinkSession.bind(cronHandlers),
+  onCronSudoAuth: cronHandlers.handleCronSudoAuth.bind(cronHandlers),
+  onCronJobLogs: cronHandlers.handleCronJobLogs.bind(cronHandlers),
+  onCronJobHistory: cronHandlers.handleCronJobHistory.bind(cronHandlers),
 }
 
 // --- Server ---
@@ -396,6 +429,7 @@ Bun.serve<WSData>({
         send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
         send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
         terminalHandlers.initializePersistentTerminal(ws)
+        cronHandlers.onClientConnect(ws)
       }
     },
     message(ws, message) {
@@ -413,9 +447,11 @@ Bun.serve<WSData>({
         send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
         send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
         terminalHandlers.initializePersistentTerminal(ws)
+        cronHandlers.onClientConnect(ws)
       }
     },
     close(ws) {
+      cronHandlers.onClientDisconnect(ws)
       terminalHandlers.cleanupTerminals(ws)
       sockets.delete(ws)
     },
@@ -445,6 +481,8 @@ function cleanupAllTerminals() {
     terminalHandlers.cleanupTerminals(ws)
   }
   logPoller.stop()
+  cronManager.stopPolling()
+  cronManager.clearSudoCredential()
   db.close()
 }
 

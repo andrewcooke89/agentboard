@@ -175,6 +175,35 @@ interface SettingsState {
   setSessionGroupMode: (mode: SessionGroupMode) => void
   collapsedProjects: string[]
   toggleProjectCollapsed: (projectPath: string) => void
+  // Cron Manager settings (WU-002)
+  cronPollInterval: number
+  setCronPollInterval: (v: number) => void
+  cronAvatarStyle: string
+  setCronAvatarStyle: (v: string) => void
+  cronSudoGracePeriod: number
+  setCronSudoGracePeriod: (v: number) => void
+  cronShowSystemJobs: boolean
+  setCronShowSystemJobs: (v: boolean) => void
+  cronShowUserJobs: boolean
+  setCronShowUserJobs: (v: boolean) => void
+  cronDefaultTimelineVisible: boolean
+  setCronDefaultTimelineVisible: (v: boolean) => void
+  cronDefaultTimelineRange: string
+  setCronDefaultTimelineRange: (v: string) => void
+  cronNotifyFailure: boolean
+  setCronNotifyFailure: (v: boolean) => void
+  cronNotifyMissedRun: boolean
+  setCronNotifyMissedRun: (v: boolean) => void
+  cronNotifyManualRun: boolean
+  setCronNotifyManualRun: (v: boolean) => void
+  cronDesktopNotifications: boolean
+  setCronDesktopNotifications: (v: boolean) => void
+  cronAutoTagSuggestions: boolean
+  setCronAutoTagSuggestions: (v: boolean) => void
+  cronMaxHistoryDays: number
+  setCronMaxHistoryDays: (v: number) => void
+  cronMaxHistoryPerJob: number
+  setCronMaxHistoryPerJob: (v: number) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -297,6 +326,35 @@ export const useSettingsStore = create<SettingsState>()(
           : [...state.collapsedProjects, projectPath]
         return { collapsedProjects: collapsed }
       }),
+      // Cron Manager settings (WU-002)
+      cronPollInterval: 5,
+      setCronPollInterval: (v) => set({ cronPollInterval: v }),
+      cronAvatarStyle: 'bottts',
+      setCronAvatarStyle: (v) => set({ cronAvatarStyle: v }),
+      cronSudoGracePeriod: 300,
+      setCronSudoGracePeriod: (v) => set({ cronSudoGracePeriod: v }),
+      cronShowSystemJobs: true,
+      setCronShowSystemJobs: (v) => set({ cronShowSystemJobs: v }),
+      cronShowUserJobs: true,
+      setCronShowUserJobs: (v) => set({ cronShowUserJobs: v }),
+      cronDefaultTimelineVisible: false,
+      setCronDefaultTimelineVisible: (v) => set({ cronDefaultTimelineVisible: v }),
+      cronDefaultTimelineRange: '24h',
+      setCronDefaultTimelineRange: (v) => set({ cronDefaultTimelineRange: v }),
+      cronNotifyFailure: true,
+      setCronNotifyFailure: (v) => set({ cronNotifyFailure: v }),
+      cronNotifyMissedRun: true,
+      setCronNotifyMissedRun: (v) => set({ cronNotifyMissedRun: v }),
+      cronNotifyManualRun: true,
+      setCronNotifyManualRun: (v) => set({ cronNotifyManualRun: v }),
+      cronDesktopNotifications: false,
+      setCronDesktopNotifications: (v) => set({ cronDesktopNotifications: v }),
+      cronAutoTagSuggestions: true,
+      setCronAutoTagSuggestions: (v) => set({ cronAutoTagSuggestions: v }),
+      cronMaxHistoryDays: 90,
+      setCronMaxHistoryDays: (v) => set({ cronMaxHistoryDays: v }),
+      cronMaxHistoryPerJob: 500,
+      setCronMaxHistoryPerJob: (v) => set({ cronMaxHistoryPerJob: v }),
     }),
     {
       name: 'agentboard-settings',

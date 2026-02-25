@@ -31,6 +31,25 @@ export interface WsHandlers {
   onWorkflowRun?: (ws: ServerWebSocket<WSData>, message: Extract<ClientMessage, { type: 'workflow-run' }>) => void
   onWorkflowRunResume?: (ws: ServerWebSocket<WSData>, message: Extract<ClientMessage, { type: 'workflow-run-resume' }>) => void
   onWorkflowRunCancel?: (ws: ServerWebSocket<WSData>, message: Extract<ClientMessage, { type: 'workflow-run-cancel' }>) => void
+  // Cron Manager handlers (WU-002)
+  onCronJobSelect?: (ws: ServerWebSocket<WSData>, jobId: string) => void
+  onCronJobRunNow?: (ws: ServerWebSocket<WSData>, jobId: string) => void
+  onCronJobPause?: (ws: ServerWebSocket<WSData>, jobId: string) => void
+  onCronJobResume?: (ws: ServerWebSocket<WSData>, jobId: string) => void
+  onCronJobEditFrequency?: (ws: ServerWebSocket<WSData>, jobId: string, newSchedule: string) => void
+  onCronJobDelete?: (ws: ServerWebSocket<WSData>, jobId: string) => void
+  onCronJobCreate?: (ws: ServerWebSocket<WSData>, mode: string, config: unknown) => void
+  onCronBulkPause?: (ws: ServerWebSocket<WSData>, jobIds: string[]) => void
+  onCronBulkResume?: (ws: ServerWebSocket<WSData>, jobIds: string[]) => void
+  onCronBulkDelete?: (ws: ServerWebSocket<WSData>, jobIds: string[]) => void
+  onCronJobSetTags?: (ws: ServerWebSocket<WSData>, jobId: string, tags: string[]) => void
+  onCronJobSetManaged?: (ws: ServerWebSocket<WSData>, jobId: string, managed: boolean) => void
+  onCronJobLinkSession?: (ws: ServerWebSocket<WSData>, jobId: string, sessionId: string | null) => void
+  onCronSudoAuth?: (ws: ServerWebSocket<WSData>, sudoCredential: string) => void
+  onCronJobLogs?: (ws: ServerWebSocket<WSData>, jobId: string, lines: number, offset?: number) => void
+  onCronJobHistory?: (ws: ServerWebSocket<WSData>, jobId: string, limit: number, before?: string) => void
+  onCronClientConnect?: (ws: ServerWebSocket<WSData>) => void
+  onCronClientDisconnect?: (ws: ServerWebSocket<WSData>) => void
 }
 
 export function broadcast(
@@ -159,6 +178,55 @@ export function handleMessage(
       return
     case 'workflow-run-cancel':
       handlers.onWorkflowRunCancel?.(ws, message)
+      return
+    // Cron Manager messages (WU-002)
+    case 'cron-job-select':
+      handlers.onCronJobSelect?.(ws, message.jobId)
+      return
+    case 'cron-job-run-now':
+      handlers.onCronJobRunNow?.(ws, message.jobId)
+      return
+    case 'cron-job-pause':
+      handlers.onCronJobPause?.(ws, message.jobId)
+      return
+    case 'cron-job-resume':
+      handlers.onCronJobResume?.(ws, message.jobId)
+      return
+    case 'cron-job-edit-frequency':
+      handlers.onCronJobEditFrequency?.(ws, message.jobId, message.newSchedule)
+      return
+    case 'cron-job-delete':
+      handlers.onCronJobDelete?.(ws, message.jobId)
+      return
+    case 'cron-job-create':
+      handlers.onCronJobCreate?.(ws, message.mode, message.config)
+      return
+    case 'cron-bulk-pause':
+      handlers.onCronBulkPause?.(ws, message.jobIds)
+      return
+    case 'cron-bulk-resume':
+      handlers.onCronBulkResume?.(ws, message.jobIds)
+      return
+    case 'cron-bulk-delete':
+      handlers.onCronBulkDelete?.(ws, message.jobIds)
+      return
+    case 'cron-job-set-tags':
+      handlers.onCronJobSetTags?.(ws, message.jobId, message.tags)
+      return
+    case 'cron-job-set-managed':
+      handlers.onCronJobSetManaged?.(ws, message.jobId, message.managed)
+      return
+    case 'cron-job-link-session':
+      handlers.onCronJobLinkSession?.(ws, message.jobId, message.sessionId)
+      return
+    case 'cron-sudo-auth':
+      handlers.onCronSudoAuth?.(ws, message.sudoCredential)
+      return
+    case 'cron-job-logs':
+      handlers.onCronJobLogs?.(ws, message.jobId, message.lines, message.offset)
+      return
+    case 'cron-job-history':
+      handlers.onCronJobHistory?.(ws, message.jobId, message.limit, message.before)
       return
     default:
       sendFn(ws, { type: 'error', message: 'Unknown message type' })

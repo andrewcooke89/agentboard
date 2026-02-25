@@ -933,6 +933,9 @@ export function createDAGEngine(
         if (stepDef.model) {
           metadataObj.model = stepDef.model
         }
+        if (stepDef.command) {
+          metadataObj.command = stepDef.command
+        }
         taskStore.updateTask(task.id, { metadata: JSON.stringify(metadataObj) })
 
         stepState.status = 'running'
@@ -2663,6 +2666,31 @@ export function createDAGEngine(
       trackStepOutputHash(run, stepState)
     } catch {
       // Best effort
+    }
+
+    // Verdict enforcement: gate on result file content
+    if (stepDef.enforce_verdict && stepState.resultContent) {
+      try {
+        const parsed = yaml.load(stepState.resultContent)
+        if (parsed && typeof parsed === 'object') {
+          const verdictField = stepDef.enforce_verdict.field || 'overall_verdict'
+          const verdict = (parsed as Record<string, unknown>)[verdictField]
+          const allowed = stepDef.enforce_verdict.allowed || ['pass']
+          if (verdict && typeof verdict === 'string' && !allowed.includes(verdict)) {
+            const failMsg = (stepDef.enforce_verdict.fail_message || `Verdict '${verdict}' not in allowed set [${allowed.join(', ')}]`)
+              .replace(/\{\{\s*verdict\s*\}\}/g, verdict)
+            stepState.status = 'failed'
+            stepState.errorMessage = failMsg
+            stepState.completedAt = new Date().toISOString()
+            releasePoolSlotIfHeld(stepState, run)
+            saveAndBroadcast(run)
+            return
+          }
+        }
+      } catch {
+        // If YAML parsing fails, don't block — just log
+        ctx.logger.warn('enforce_verdict_parse_error', { step: stepDef.name, runId: run.id })
+      }
     }
   }
 

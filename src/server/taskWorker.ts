@@ -355,6 +355,7 @@ export function createTaskWorker(
     // Resolve model env vars
     const metadata = task.metadata ? JSON.parse(task.metadata) : {}
     const modelId = metadata.model || 'claude'
+    const customCommand = metadata.command || null
     const modelEnvs = getEnvForModel(modelId)
 
     // Build env prefix for tmux command
@@ -371,11 +372,21 @@ export function createTaskWorker(
 
     // Use proper shell escaping for project path (prevents shell injection)
     const escapedPath = escapeForDoubleQuotedShell(task.projectPath)
-    const claudeCmd = `cd "${escapedPath}" && { ${envCmd}claude -p "$(cat ${promptFile})" --dangerously-skip-permissions 2>&1; echo "===TASK_EXIT_CODE=$?==="; } | tee "${escapedOutputPath}"; touch "${escapedDonePath}"; exec sh`
+
+    let shellCmd: string
+    if (customCommand) {
+      // Custom command mode: run the specified command with env vars
+      // The command receives context via environment variables
+      const taskEnvVars = `TASK_ID='${task.id}' PROMPT_FILE='${promptFile}' TASK_OUTPUT_DIR='${escapeForDoubleQuotedShell(outputDir)}'`
+      shellCmd = `cd "${escapedPath}" && { ${taskEnvVars} ${customCommand} 2>&1; echo "===TASK_EXIT_CODE=$?==="; } | tee "${escapedOutputPath}"; touch "${escapedDonePath}"; exec sh`
+    } else {
+      // Default: Claude mode (existing behavior)
+      shellCmd = `cd "${escapedPath}" && { ${envCmd}claude -p "$(cat ${promptFile})" --dangerously-skip-permissions 2>&1; echo "===TASK_EXIT_CODE=$?==="; } | tee "${escapedOutputPath}"; touch "${escapedDonePath}"; exec sh`
+    }
 
     try {
       const result = Bun.spawnSync(
-        ['tmux', 'new-window', '-t', tmuxSession, '-n', windowName, 'sh', '-c', claudeCmd],
+        ['tmux', 'new-window', '-t', tmuxSession, '-n', windowName, 'sh', '-c', shellCmd],
         { stdout: 'pipe', stderr: 'pipe' }
       )
 

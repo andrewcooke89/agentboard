@@ -10,6 +10,7 @@ import WorkflowList from './components/WorkflowList'
 import WorkflowDetail from './components/WorkflowDetail'
 import WorkflowEditor from './components/WorkflowEditor'
 import WorkflowPanel from './components/WorkflowPanel'
+import { CronManager } from './components/cron/CronManager'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastViewport, toastManager } from './components/Toast'
 import { useSessionStore } from './stores/sessionStore'
@@ -34,6 +35,7 @@ import type { Task } from '@shared/types'
 import PoolStatusIndicator from './components/PoolStatusIndicator'
 import PendingReviewDashboard from './components/PendingReviewDashboard'
 import { usePoolStore } from './stores/poolStore'
+import { useCronStore } from './stores/cronStore'
 
 interface ServerInfo {
   port: number
@@ -46,7 +48,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
-  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews'>('sessions')
+  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews' | 'cron-manager'>('sessions')
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false)
   const [dismissedPermissionBanners, setDismissedPermissionBanners] = useState<Set<string>>(new Set())
@@ -450,6 +452,41 @@ export default function App() {
           })
         }
       }
+      // Cron manager messages
+      if (message.type === 'cron-jobs') {
+        useCronStore.getState().handleCronJobs(message.jobs, message.systemdAvailable)
+      }
+      if (message.type === 'cron-job-update') {
+        useCronStore.getState().handleCronJobUpdate(message.job)
+      }
+      if (message.type === 'cron-job-removed') {
+        useCronStore.getState().handleCronJobRemoved(message.jobId)
+      }
+      if (message.type === 'cron-job-detail') {
+        useCronStore.getState().handleCronJobDetail(message.detail)
+      }
+      if (message.type === 'cron-operation-result') {
+        useCronStore.getState().handleCronOperationResult(message.jobId, message.operation, message.success, message.error)
+      }
+      if (message.type === 'cron-sudo-required') {
+        useCronStore.getState().showSudoPrompt(message.jobId, message.operation)
+      }
+      if (message.type === 'cron-run-started') {
+        useCronStore.getState().handleCronRunStarted(message.jobId, message.runId)
+      }
+      if (message.type === 'cron-run-output') {
+        useCronStore.getState().handleCronRunOutput(message.jobId, message.runId, message.chunk)
+      }
+      if (message.type === 'cron-run-completed') {
+        useCronStore.getState().handleCronRunCompleted(message.jobId, message.runId, message.exitCode, message.duration)
+      }
+      if (message.type === 'cron-bulk-operation-progress') {
+        useCronStore.getState().handleCronBulkProgress(message.completed, message.total, message.failures)
+      }
+      if (message.type === 'cron-notification') {
+        useCronStore.getState().handleCronNotification(message.jobId, message.event, message.message, message.severity)
+      }
+
       // Phase 15: Step paused (REQ-32)
       if (message.type === 'step_paused') {
         // Update step status to paused
@@ -633,6 +670,13 @@ export default function App() {
         setWorkflowPanelOpen((prev) => !prev)
         return
       }
+
+      // Toggle cron manager: [mod]+Shift+C
+      if (isShortcut && event.shiftKey && code === 'KeyC') {
+        event.preventDefault()
+        setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')
+        return
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -692,6 +736,19 @@ export default function App() {
   const navigateToWorkflowRun = useCallback((workflowId: string) => {
     setActiveWorkflowId(workflowId)
     setActiveView('workflow-detail')
+  }, [])
+
+  const navigateToCronManager = useCallback((sessionId: string) => {
+    // Filter cron manager to show only jobs linked to this session
+    const { setFilterMode, setSearchQuery } = useCronStore.getState()
+    setFilterMode('all')
+    setSearchQuery('')
+    // Switch to cron-manager view; the session link is visible via job detail
+    setActiveView('cron-manager')
+    // Optionally select the first linked job
+    const { jobs, setSelectedJob } = useCronStore.getState()
+    const linked = jobs.find((j) => j.linkedSessionId === sessionId)
+    if (linked) setSelectedJob(linked.id)
   }, [])
 
   // Apply theme to document
@@ -830,9 +887,11 @@ export default function App() {
           onToggleHistory={() => setShowHistory(!showHistory)}
           historyActive={showHistory}
           onToggleWorkflows={() => setActiveView((prev) => (prev === 'workflow-list' ? 'sessions' : 'workflow-list'))}
-          workflowsActive={activeView !== 'sessions'}
+          workflowsActive={activeView !== 'sessions' && activeView !== 'cron-manager'}
           onToggleWorkflowPanel={() => setWorkflowPanelOpen((prev) => !prev)}
           workflowPanelActive={workflowPanelOpen}
+          onToggleCronManager={() => setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')}
+          cronManagerActive={activeView === 'cron-manager'}
         />
         <PoolStatusIndicator poolStatus={poolStatus} />
         <SessionList
@@ -848,6 +907,7 @@ export default function App() {
           loading={!hasLoaded}
           error={connectionError || serverError}
           onNavigateToWorkflow={navigateToWorkflowRun}
+          onNavigateToCronManager={navigateToCronManager}
         />
         {showHistory && (
           <div className="border-t border-border shrink-0" style={{ maxHeight: '40%', overflow: 'auto' }}>
@@ -920,6 +980,13 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
           <ErrorBoundary>
             <PendingReviewDashboard items={pendingReviewItems} onResolve={handleResolveReview} />
+          </ErrorBoundary>
+        </div>
+      )}
+      {activeView === 'cron-manager' && (
+        <div className="flex-1 overflow-hidden bg-[var(--bg-primary)]">
+          <ErrorBoundary>
+            <CronManager />
           </ErrorBoundary>
         </div>
       )}

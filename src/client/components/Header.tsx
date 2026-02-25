@@ -23,6 +23,8 @@ interface HeaderProps {
   workflowsActive?: boolean
   onToggleWorkflowPanel?: () => void
   workflowPanelActive?: boolean
+  onToggleCronManager?: () => void
+  cronManagerActive?: boolean
 }
 
 const statusDot: Record<ConnectionStatus, string> = {
@@ -47,6 +49,8 @@ export default function Header({
   workflowsActive,
   onToggleWorkflowPanel,
   workflowPanelActive,
+  onToggleCronManager,
+  cronManagerActive,
 }: HeaderProps) {
   const [copied, setCopied] = useState(false)
   const shortcutModifier = useSettingsStore((state) => state.shortcutModifier)
@@ -114,6 +118,23 @@ export default function Header({
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 17.5a3.5 3.5 0 1 0 7 0 3.5 3.5 0 0 0-7 0" />
+            </svg>
+          </button>
+        )}
+        {onToggleCronManager && (
+          <button
+            onClick={onToggleCronManager}
+            className={`flex h-7 items-center gap-1 px-1.5 rounded border transition-all active:scale-95 ${
+              cronManagerActive
+                ? 'border-accent/50 bg-accent/10 text-accent'
+                : 'border-border text-secondary hover:bg-hover hover:text-primary'
+            }`}
+            title={`Cron Manager (${modDisplay}\u21E7C)`}
+            aria-label="Toggle cron manager view"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12,6 12,12 16,14" />
             </svg>
           </button>
         )}

@@ -94,6 +94,35 @@ export default function SettingsModal({
   const setNotifyOnIdle = useSettingsStore((state) => state.setNotifyOnIdle)
   const sessionGroupMode = useSettingsStore((state) => state.sessionGroupMode)
   const setSessionGroupMode = useSettingsStore((state) => state.setSessionGroupMode)
+  // Cron Manager settings
+  const cronPollInterval = useSettingsStore((state) => state.cronPollInterval)
+  const setCronPollInterval = useSettingsStore((state) => state.setCronPollInterval)
+  const cronAvatarStyle = useSettingsStore((state) => state.cronAvatarStyle)
+  const setCronAvatarStyle = useSettingsStore((state) => state.setCronAvatarStyle)
+  const cronSudoGracePeriod = useSettingsStore((state) => state.cronSudoGracePeriod)
+  const setCronSudoGracePeriod = useSettingsStore((state) => state.setCronSudoGracePeriod)
+  const cronShowSystemJobs = useSettingsStore((state) => state.cronShowSystemJobs)
+  const setCronShowSystemJobs = useSettingsStore((state) => state.setCronShowSystemJobs)
+  const cronShowUserJobs = useSettingsStore((state) => state.cronShowUserJobs)
+  const setCronShowUserJobs = useSettingsStore((state) => state.setCronShowUserJobs)
+  const cronDefaultTimelineVisible = useSettingsStore((state) => state.cronDefaultTimelineVisible)
+  const setCronDefaultTimelineVisible = useSettingsStore((state) => state.setCronDefaultTimelineVisible)
+  const cronDefaultTimelineRange = useSettingsStore((state) => state.cronDefaultTimelineRange)
+  const setCronDefaultTimelineRange = useSettingsStore((state) => state.setCronDefaultTimelineRange)
+  const cronNotifyFailure = useSettingsStore((state) => state.cronNotifyFailure)
+  const setCronNotifyFailure = useSettingsStore((state) => state.setCronNotifyFailure)
+  const cronNotifyMissedRun = useSettingsStore((state) => state.cronNotifyMissedRun)
+  const setCronNotifyMissedRun = useSettingsStore((state) => state.setCronNotifyMissedRun)
+  const cronNotifyManualRun = useSettingsStore((state) => state.cronNotifyManualRun)
+  const setCronNotifyManualRun = useSettingsStore((state) => state.setCronNotifyManualRun)
+  const cronDesktopNotifications = useSettingsStore((state) => state.cronDesktopNotifications)
+  const setCronDesktopNotifications = useSettingsStore((state) => state.setCronDesktopNotifications)
+  const cronAutoTagSuggestions = useSettingsStore((state) => state.cronAutoTagSuggestions)
+  const setCronAutoTagSuggestions = useSettingsStore((state) => state.setCronAutoTagSuggestions)
+  const cronMaxHistoryDays = useSettingsStore((state) => state.cronMaxHistoryDays)
+  const setCronMaxHistoryDays = useSettingsStore((state) => state.setCronMaxHistoryDays)
+  const cronMaxHistoryPerJob = useSettingsStore((state) => state.cronMaxHistoryPerJob)
+  const setCronMaxHistoryPerJob = useSettingsStore((state) => state.setCronMaxHistoryPerJob)
 
   const [draftDir, setDraftDir] = useState(defaultProjectDir)
   const [newPresetPath, setNewPresetPath] = useState('')
@@ -126,6 +155,21 @@ export default function SettingsModal({
   const [draftNotifyOnPermission, setDraftNotifyOnPermission] = useState(notifyOnPermission)
   const [draftNotifyOnIdle, setDraftNotifyOnIdle] = useState(notifyOnIdle)
   const [draftSessionGroupMode, setDraftSessionGroupMode] = useState(sessionGroupMode)
+  // Cron Manager draft state
+  const [draftCronPollInterval, setDraftCronPollInterval] = useState(cronPollInterval)
+  const [draftCronAvatarStyle, setDraftCronAvatarStyle] = useState(cronAvatarStyle)
+  const [draftCronSudoGracePeriod, setDraftCronSudoGracePeriod] = useState(cronSudoGracePeriod)
+  const [draftCronShowSystemJobs, setDraftCronShowSystemJobs] = useState(cronShowSystemJobs)
+  const [draftCronShowUserJobs, setDraftCronShowUserJobs] = useState(cronShowUserJobs)
+  const [draftCronDefaultTimelineVisible, setDraftCronDefaultTimelineVisible] = useState(cronDefaultTimelineVisible)
+  const [draftCronDefaultTimelineRange, setDraftCronDefaultTimelineRange] = useState(cronDefaultTimelineRange)
+  const [draftCronNotifyFailure, setDraftCronNotifyFailure] = useState(cronNotifyFailure)
+  const [draftCronNotifyMissedRun, setDraftCronNotifyMissedRun] = useState(cronNotifyMissedRun)
+  const [draftCronNotifyManualRun, setDraftCronNotifyManualRun] = useState(cronNotifyManualRun)
+  const [draftCronDesktopNotifications, setDraftCronDesktopNotifications] = useState(cronDesktopNotifications)
+  const [draftCronAutoTagSuggestions, setDraftCronAutoTagSuggestions] = useState(cronAutoTagSuggestions)
+  const [draftCronMaxHistoryDays, setDraftCronMaxHistoryDays] = useState(cronMaxHistoryDays)
+  const [draftCronMaxHistoryPerJob, setDraftCronMaxHistoryPerJob] = useState(cronMaxHistoryPerJob)
 
   // New preset form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -163,6 +207,20 @@ export default function SettingsModal({
       setDraftNotifyOnPermission(notifyOnPermission)
       setDraftNotifyOnIdle(notifyOnIdle)
       setDraftSessionGroupMode(sessionGroupMode)
+      setDraftCronPollInterval(cronPollInterval)
+      setDraftCronAvatarStyle(cronAvatarStyle)
+      setDraftCronSudoGracePeriod(cronSudoGracePeriod)
+      setDraftCronShowSystemJobs(cronShowSystemJobs)
+      setDraftCronShowUserJobs(cronShowUserJobs)
+      setDraftCronDefaultTimelineVisible(cronDefaultTimelineVisible)
+      setDraftCronDefaultTimelineRange(cronDefaultTimelineRange)
+      setDraftCronNotifyFailure(cronNotifyFailure)
+      setDraftCronNotifyMissedRun(cronNotifyMissedRun)
+      setDraftCronNotifyManualRun(cronNotifyManualRun)
+      setDraftCronDesktopNotifications(cronDesktopNotifications)
+      setDraftCronAutoTagSuggestions(cronAutoTagSuggestions)
+      setDraftCronMaxHistoryDays(cronMaxHistoryDays)
+      setDraftCronMaxHistoryPerJob(cronMaxHistoryPerJob)
       setShowAddForm(false)
       setNewLabel('')
       setNewBaseCommand('')
@@ -219,6 +277,20 @@ export default function SettingsModal({
     notifyOnPermission,
     notifyOnIdle,
     sessionGroupMode,
+    cronPollInterval,
+    cronAvatarStyle,
+    cronSudoGracePeriod,
+    cronShowSystemJobs,
+    cronShowUserJobs,
+    cronDefaultTimelineVisible,
+    cronDefaultTimelineRange,
+    cronNotifyFailure,
+    cronNotifyMissedRun,
+    cronNotifyManualRun,
+    cronDesktopNotifications,
+    cronAutoTagSuggestions,
+    cronMaxHistoryDays,
+    cronMaxHistoryPerJob,
     isOpen,
   ])
 
@@ -267,6 +339,20 @@ export default function SettingsModal({
     setNotifyOnPermission(draftNotifyOnPermission)
     setNotifyOnIdle(draftNotifyOnIdle)
     setSessionGroupMode(draftSessionGroupMode)
+    setCronPollInterval(draftCronPollInterval)
+    setCronAvatarStyle(draftCronAvatarStyle)
+    setCronSudoGracePeriod(draftCronSudoGracePeriod)
+    setCronShowSystemJobs(draftCronShowSystemJobs)
+    setCronShowUserJobs(draftCronShowUserJobs)
+    setCronDefaultTimelineVisible(draftCronDefaultTimelineVisible)
+    setCronDefaultTimelineRange(draftCronDefaultTimelineRange)
+    setCronNotifyFailure(draftCronNotifyFailure)
+    setCronNotifyMissedRun(draftCronNotifyMissedRun)
+    setCronNotifyManualRun(draftCronNotifyManualRun)
+    setCronDesktopNotifications(draftCronDesktopNotifications)
+    setCronAutoTagSuggestions(draftCronAutoTagSuggestions)
+    setCronMaxHistoryDays(draftCronMaxHistoryDays)
+    setCronMaxHistoryPerJob(draftCronMaxHistoryPerJob)
     onClose({ webglChanged })
   }
 
@@ -934,6 +1020,206 @@ export default function SettingsModal({
                 checked={draftTheme === 'dark'}
                 onCheckedChange={(checked) => setDraftTheme(checked ? 'dark' : 'light')}
               />
+            </div>
+          </div>
+
+          {/* Cron Manager Section */}
+          <div className="border-t border-border pt-4 space-y-3">
+            <label className="mb-1 block text-xs text-secondary">Cron Manager</label>
+
+            {/* Poll Interval */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Poll Interval</div>
+                <div className="text-[10px] text-muted">How often to refresh job status (2–30s)</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="2"
+                  max="30"
+                  step="1"
+                  value={draftCronPollInterval}
+                  onChange={(e) => setDraftCronPollInterval(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-8 text-right">{draftCronPollInterval}s</span>
+              </div>
+            </div>
+
+            {/* Avatar Style */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Avatar Style</div>
+                <div className="text-[10px] text-muted">Dicebear style for job avatars</div>
+              </div>
+              <select
+                value={draftCronAvatarStyle}
+                onChange={(e) => setDraftCronAvatarStyle(e.target.value)}
+                className="input text-xs py-1 px-2 w-auto"
+              >
+                {['bottts', 'identicon', 'thumbs', 'avataaars', 'micah', 'pixel-art'].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sudo Grace Period */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Sudo Grace Period</div>
+                <div className="text-[10px] text-muted">How long sudo credentials are cached (seconds)</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="60"
+                  max="3600"
+                  step="60"
+                  value={draftCronSudoGracePeriod}
+                  onChange={(e) => setDraftCronSudoGracePeriod(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-12 text-right">{draftCronSudoGracePeriod}s</span>
+              </div>
+            </div>
+
+            {/* Show system/user job toggles */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Show System Jobs</div>
+                <div className="text-[10px] text-muted">Include system-level cron jobs</div>
+              </div>
+              <Switch checked={draftCronShowSystemJobs} onCheckedChange={setDraftCronShowSystemJobs} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Show User Jobs</div>
+                <div className="text-[10px] text-muted">Include user-level cron jobs</div>
+              </div>
+              <Switch checked={draftCronShowUserJobs} onCheckedChange={setDraftCronShowUserJobs} />
+            </div>
+
+            {/* Default Timeline */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Timeline Visible by Default</div>
+                <div className="text-[10px] text-muted">Show schedule timeline on open</div>
+              </div>
+              <Switch checked={draftCronDefaultTimelineVisible} onCheckedChange={setDraftCronDefaultTimelineVisible} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Default Timeline Range</div>
+                <div className="text-[10px] text-muted">24h view or 7-day view</div>
+              </div>
+              <div className="flex gap-1">
+                {(['24h', '7d'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setDraftCronDefaultTimelineRange(r)}
+                    className={`btn text-xs px-2 py-0.5 ${draftCronDefaultTimelineRange === r ? 'btn-primary' : ''}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Notification categories */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Failure</div>
+                <div className="text-[10px] text-muted">Alert when a cron job fails</div>
+              </div>
+              <Switch checked={draftCronNotifyFailure} onCheckedChange={setDraftCronNotifyFailure} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Missed Run</div>
+                <div className="text-[10px] text-muted">Alert when a scheduled run is missed</div>
+              </div>
+              <Switch checked={draftCronNotifyMissedRun} onCheckedChange={setDraftCronNotifyMissedRun} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Manual Run</div>
+                <div className="text-[10px] text-muted">Alert when a manually triggered run completes</div>
+              </div>
+              <Switch checked={draftCronNotifyManualRun} onCheckedChange={setDraftCronNotifyManualRun} />
+            </div>
+
+            {/* Desktop Notifications */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Desktop Notifications</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notifications for cron events (max 1 per job per 5 min)
+                  {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <Switch
+                checked={draftCronDesktopNotifications}
+                onCheckedChange={async (checked) => {
+                  if (checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+                    const perm = await requestNotificationPermission()
+                    if (perm !== 'granted') return
+                  }
+                  setDraftCronDesktopNotifications(checked)
+                }}
+              />
+            </div>
+
+            {/* Auto-tag suggestions */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Auto-tag Suggestions</div>
+                <div className="text-[10px] text-muted">Suggest tags based on command patterns</div>
+              </div>
+              <Switch checked={draftCronAutoTagSuggestions} onCheckedChange={setDraftCronAutoTagSuggestions} />
+            </div>
+
+            {/* Max History Days */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Max History Days</div>
+                <div className="text-[10px] text-muted">How many days of run history to retain</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="7"
+                  max="365"
+                  step="7"
+                  value={draftCronMaxHistoryDays}
+                  onChange={(e) => setDraftCronMaxHistoryDays(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-10 text-right">{draftCronMaxHistoryDays}d</span>
+              </div>
+            </div>
+
+            {/* Max History Per Job */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Max History Per Job</div>
+                <div className="text-[10px] text-muted">Maximum run history entries per job</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="50"
+                  max="2000"
+                  step="50"
+                  value={draftCronMaxHistoryPerJob}
+                  onChange={(e) => setDraftCronMaxHistoryPerJob(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-12 text-right">{draftCronMaxHistoryPerJob}</span>
+              </div>
             </div>
           </div>
 

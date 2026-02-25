@@ -35,6 +35,7 @@ import { useCounterBump } from '../hooks/useCounterBump'
 import { useExitCleanup } from '../hooks/useExitCleanup'
 import { useTaskStore } from '../stores/taskStore'
 import { useWorkflowStore } from '../stores/workflowStore'
+import { useCronStore } from '../stores/cronStore'
 import AgentIcon from './AgentIcon'
 import InactiveSessionItem from './InactiveSessionItem'
 import ProjectBadge from './ProjectBadge'
@@ -54,6 +55,7 @@ interface SessionListProps {
   onDuplicate?: (sessionId: string) => void
   onSetPinned?: (sessionId: string, isPinned: boolean) => void
   onNavigateToWorkflow?: (workflowId: string) => void
+  onNavigateToCronManager?: (sessionId: string) => void
 }
 
 const statusBarClass: Record<Session['status'], string> = {
@@ -86,6 +88,7 @@ export default function SessionList({
   onDuplicate,
   onSetPinned,
   onNavigateToWorkflow,
+  onNavigateToCronManager,
 }: SessionListProps) {
   useTimestampRefresh(sessions.length > 0)
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
@@ -627,6 +630,7 @@ export default function SessionList({
                           onDuplicate={onDuplicate ? () => onDuplicate(session.id) : undefined}
                           onSetPinned={onSetPinned && session.agentSessionId ? (isPinned) => onSetPinned(session.agentSessionId!.trim(), isPinned) : undefined}
                           onNavigateToWorkflow={onNavigateToWorkflow}
+                          onNavigateToCronManager={onNavigateToCronManager}
                         />
                       </motion.div>
                     ))}
@@ -681,6 +685,7 @@ export default function SessionList({
                         onDuplicate={onDuplicate ? () => onDuplicate(session.id) : undefined}
                         onSetPinned={onSetPinned && session.agentSessionId ? (isPinned) => onSetPinned(session.agentSessionId!.trim(), isPinned) : undefined}
                         onNavigateToWorkflow={onNavigateToWorkflow}
+                        onNavigateToCronManager={onNavigateToCronManager}
                       />
                     )
                   })}
@@ -786,6 +791,7 @@ interface SortableSessionItemProps {
   onDuplicate?: () => void
   onSetPinned?: (isPinned: boolean) => void
   onNavigateToWorkflow?: (workflowId: string) => void
+  onNavigateToCronManager?: (sessionId: string) => void
 }
 
 const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>(function SortableSessionItem({
@@ -808,6 +814,7 @@ const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>
   onDuplicate,
   onSetPinned,
   onNavigateToWorkflow,
+  onNavigateToCronManager,
 }, ref) {
   const {
     attributes,
@@ -890,6 +897,7 @@ const SortableSessionItem = forwardRef<HTMLDivElement, SortableSessionItemProps>
         onDuplicate={onDuplicate}
         onSetPinned={onSetPinned}
         onNavigateToWorkflow={onNavigateToWorkflow}
+        onNavigateToCronManager={onNavigateToCronManager}
       />
       {dropIndicator === 'below' && (
         <div className="absolute -bottom-px left-3 right-3 h-0.5 border-t-2 border-dashed border-accent" />
@@ -916,6 +924,7 @@ interface SessionRowProps {
   onDuplicate?: () => void
   onSetPinned?: (isPinned: boolean) => void
   onNavigateToWorkflow?: (workflowId: string) => void
+  onNavigateToCronManager?: (sessionId: string) => void
 }
 
 function SessionRow({
@@ -934,6 +943,7 @@ function SessionRow({
   onDuplicate,
   onSetPinned,
   onNavigateToWorkflow,
+  onNavigateToCronManager,
 }: SessionRowProps) {
   const lastActivity = formatRelativeTime(session.lastActivity)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -966,6 +976,14 @@ function SessionRow({
     } catch { /* ignore parse errors */ }
     return null
   })()
+  // Check if any cron job is linked to this session
+  const hasLinkedCronJobs = (() => {
+    const cronJobs = useCronStore.getState().jobs
+    const agentId = session.agentSessionId?.trim()
+    if (!agentId) return false
+    return cronJobs.some((j) => j.linkedSessionId === agentId)
+  })()
+
   const needsInput = session.status === 'permission'
   const agentSessionId = session.agentSessionId?.trim()
   const sessionIdPrefix =
@@ -1143,8 +1161,8 @@ function SessionRow({
           )}
         </div>
 
-        {/* Line 2: Project badge + workflow badge + last user message (up to 2 lines total) */}
-        {(showDirectory || showMessage || workflowInfo) && (
+        {/* Line 2: Project badge + workflow badge + cron badge + last user message (up to 2 lines total) */}
+        {(showDirectory || showMessage || workflowInfo || hasLinkedCronJobs) && (
           <div className="flex flex-wrap items-center gap-1 pl-[1.375rem]">
             {showDirectory && (
               <ProjectBadge name={directoryLeaf!} fullPath={session.projectPath} />
@@ -1160,6 +1178,19 @@ function SessionRow({
                 role={onNavigateToWorkflow && workflowInfo.workflowId ? 'button' : undefined}
               >
                 &#x1f504; {workflowInfo.stepName}
+              </span>
+            )}
+            {hasLinkedCronJobs && (
+              <span
+                className={`text-[10px] px-1.5 rounded-full bg-emerald-500/20 text-emerald-300 inline-flex items-center gap-0.5${onNavigateToCronManager ? ' cursor-pointer hover:bg-emerald-500/30 transition-colors' : ''}`}
+                title="Has linked cron jobs — click to view in Cron Manager"
+                onClick={onNavigateToCronManager ? (e) => {
+                  e.stopPropagation()
+                  onNavigateToCronManager(session.agentSessionId!.trim())
+                } : undefined}
+                role={onNavigateToCronManager ? 'button' : undefined}
+              >
+                &#x1f551; cron
               </span>
             )}
             {showMessage && (

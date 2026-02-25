@@ -57,6 +57,11 @@ variables:
     description: "Primary framework of the project"
     required: false
     default: ""
+  - name: tier
+    type: string
+    description: "Run tier level (1=default, 2=TDD+acceptance, 3=full)"
+    required: false
+    default: "1"
 
 steps:
   # Stage 1: Validate the feature spec against schema and constitution
@@ -108,7 +113,8 @@ steps:
         Review the feature specification at {{ output_dir }}/refined-spec.yaml
         against the constitution sections: security, architecture, quality.
 
-        Write your verdict to the verdict file.
+        Write your verdict as a YAML file to: {{ output_dir }}/spec-review-verdict.yaml
+        The file MUST contain a 'verdict' field (PASS, FAIL, or NEEDS_FIX) and a 'feedback' field.
       signal_protocol: true
       signal_dir: "{{ output_dir }}/signals"
       verdict_field: verdict
@@ -201,43 +207,23 @@ steps:
         working_dir: "{{ project_path }}"
         timeoutSeconds: 600
 
-  # Stage 5: Implementation
+  # Stage 5: Per-WU TDD Implementation (deterministic orchestrator)
   - name: implement
     type: spawn_session
     depends_on:
       - generation
     projectPath: "{{ project_path }}"
-    prompt: |
-      Implement the feature based on work units and scaffold.
-
-      Use the orchestrator template at .claude/orchestrator-templates/implementation.md
-
-      Input: {{ output_dir }}/decomposition/manifest.yaml
-      Output: {{ output_dir }}/implementation/
+    command: "bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}'"
+    prompt: "Per-WU TDD orchestrator — deterministic implementation pipeline"
     signal_protocol: true
     signal_dir: "{{ output_dir }}/signals"
-    can_request_amendment: true
-    amendment_budget:
-      quality:
-        per_run: 3
-        per_work_unit: 2
-      reconciliation:
-        per_run: 8
-        per_work_unit: 5
-    amendment_config:
-      auto_review_types:
-        - gap
-        - correction
-        - reconciliation
-      human_required_types:
-        - fundamental
-        - scope_change
-      human_required_tiers:
-        - 0
-      same_section_twice: escalate
-      handler_timeout_seconds: 300
     result_file: "{{ output_dir }}/implementation/implementation-report.yaml"
-    timeoutSeconds: 7200
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+      fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass'"
+    timeoutSeconds: 14400
 
   # Stage 5b: Amendment verification (resolves any amendment signals from implement)
   - name: verify-amendments
@@ -286,7 +272,7 @@ steps:
         echo "PASS: Tests passed after implementation (green phase verified)"
         exit 0
       else
-        echo "FAIL: Tests still failing after implementation (exit code: $TEST_EXIT)"
+        echo "FAIL: Tests still failing after implementation"
         exit 1
       fi
     working_dir: "{{ project_path }}"
@@ -310,6 +296,11 @@ steps:
     signal_protocol: true
     signal_dir: "{{ output_dir }}/signals"
     result_file: "{{ output_dir }}/conformance/verification-report.yaml"
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+      fail_message: "Conformance verdict was '{{ verdict }}', expected 'pass'"
     timeoutSeconds: 3600
 
   # Stage 7: Acceptance testing (tier 2+)
@@ -327,6 +318,11 @@ steps:
     signal_protocol: true
     signal_dir: "{{ output_dir }}/signals"
     result_file: "{{ output_dir }}/acceptance/test-results.yaml"
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+      fail_message: "Acceptance verdict was '{{ verdict }}', expected 'pass'"
     timeoutSeconds: 3600
 
   # Stage 8: Observe and learn (Phase 13 forward ref — commented out)

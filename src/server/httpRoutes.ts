@@ -376,6 +376,48 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
     return c.json({ tasks, stats })
   })
 
+  app.post('/api/tasks', async (c) => {
+    let body: Record<string, unknown>
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400)
+    }
+
+    const projectPath = body.projectPath ? String(body.projectPath).trim() : ''
+    const prompt = body.prompt ? String(body.prompt).trim() : ''
+
+    if (!projectPath) return c.json({ error: 'projectPath is required' }, 400)
+    if (!prompt) return c.json({ error: 'prompt is required' }, 400)
+    if (projectPath.length > MAX_FIELD_LENGTH) return c.json({ error: 'projectPath too long' }, 400)
+    if (prompt.length > 100_000) return c.json({ error: 'prompt too long' }, 400)
+
+    const priority = body.priority !== undefined ? Number(body.priority) : 5
+    const timeoutSeconds = body.timeoutSeconds !== undefined ? Number(body.timeoutSeconds) : 1800
+    const maxRetries = body.maxRetries !== undefined ? Number(body.maxRetries) : 0
+
+    const task = ctx.taskStore.createTask({
+      projectPath,
+      prompt,
+      templateId: null,
+      priority,
+      status: 'queued',
+      maxRetries,
+      timeoutSeconds,
+      parentTaskId: null,
+      followUpPrompt: null,
+      metadata: null,
+    })
+
+    let updatedTask = task
+    if (body.metadata && typeof body.metadata === 'object') {
+      updatedTask = ctx.taskStore.updateTask(task.id, { metadata: JSON.stringify(body.metadata) }) ?? task
+    }
+
+    ctx.broadcast({ type: 'task-created', task: updatedTask })
+    return c.json(updatedTask, 201)
+  })
+
   app.get('/api/tasks/:id', (c) => {
     const id = c.req.param('id')
     if (!isValidTaskId(id)) return c.json({ error: 'Invalid task ID' }, 400)
