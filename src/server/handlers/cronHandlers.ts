@@ -64,6 +64,7 @@ export function createCronHandlers(
 ): CronHandlers {
   let clientCount = 0
   let pollingStarted = false
+  const activeManualRuns = new Set<string>()
 
   // Register the onJobsChanged callback once at creation time
   cronManager.onJobsChanged((added, removed, updated) => {
@@ -260,6 +261,13 @@ export function createCronHandlers(
   // ─── handleCronJobRunNow ──────────────────────────────────────────────────
 
   async function handleCronJobRunNow(ws: ServerWebSocket<WSData>, jobId: string): Promise<void> {
+    // Concurrent-run guard: prevent duplicate manual runs of the same job
+    if (activeManualRuns.has(jobId)) {
+      ctx.send(ws, { type: 'error', message: `Job ${jobId} is already running` })
+      return
+    }
+    activeManualRuns.add(jobId)
+
     const runId = Date.now().toString(36)
     const startTime = Date.now()
     const logChunks: string[] = []
@@ -282,6 +290,8 @@ export function createCronHandlers(
         }
         ctx.send(ws, { type: 'cron-run-output', jobId, runId, chunk: `Error: ${msg}\n` })
         exitCode = 1
+      } finally {
+        activeManualRuns.delete(jobId)
       }
 
       const duration = Date.now() - startTime
@@ -299,6 +309,7 @@ export function createCronHandlers(
       })
     })().catch((err: unknown) => {
       console.error('[CronHandlers] runJobNow background error:', err)
+      activeManualRuns.delete(jobId)
     })
   }
 

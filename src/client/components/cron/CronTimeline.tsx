@@ -1,6 +1,7 @@
 // WU-017: Schedule Timeline — CronTimeline
 
 import { useState, useMemo } from 'react'
+import { motion } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 import type { CronJob } from '@shared/types'
 
@@ -127,7 +128,12 @@ export function CronTimeline() {
           ))}
         </div>
       </div>
-      <div className="flex items-end gap-px h-16">
+      <motion.div
+        className="flex items-end gap-px h-16"
+        initial="hidden"
+        animate="visible"
+        variants={{ visible: { transition: { staggerChildren: 0.02 } } }}
+      >
         {buckets.map((bucket, i) => {
           const height = bucket.jobs.length
             ? Math.max(4, (bucket.jobs.length / maxJobs) * 100)
@@ -143,9 +149,10 @@ export function CronTimeline() {
                 : 'bg-[var(--bg-tertiary)]'
 
           return (
-            <div
+            <motion.div
               key={i}
               className="flex-1 flex flex-col items-center relative"
+              variants={{ hidden: { opacity: 0, y: 8 }, visible: { opacity: 1, y: 0 } }}
               onMouseEnter={() => setHoveredBucket(i)}
               onMouseLeave={() => setHoveredBucket(null)}
             >
@@ -174,10 +181,10 @@ export function CronTimeline() {
                   )}
                 </div>
               )}
-            </div>
+            </motion.div>
           )
         })}
-      </div>
+      </motion.div>
     </div>
   )
 }

@@ -1,6 +1,7 @@
 // WU-009: App Integration & CronManager Shell
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 import { useWebSocket } from '../../hooks/useWebSocket'
 import { CronJobList } from './CronJobList'
@@ -103,7 +104,31 @@ export function CronManager() {
           className="w-1 cursor-col-resize bg-[var(--border)] hover:bg-blue-500 flex-shrink-0"
         />
         <div className="flex-1 overflow-hidden">
-          {selectedJobId ? <CronJobDetail /> : <CronEmptyState onCreateJob={handleOpenCreateModal} />}
+          <AnimatePresence mode="wait">
+            {selectedJobId ? (
+              <motion.div
+                key="detail"
+                className="h-full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <CronJobDetail />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="empty"
+                className="h-full"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <CronEmptyState onCreateJob={handleOpenCreateModal} />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 

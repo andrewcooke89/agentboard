@@ -91,6 +91,10 @@ interface CronActions {
   clearSelection: () => void
   toggleBulkSelectMode: () => void
 
+  // Optimistic updates
+  setJobManaged: (jobId: string, managed: boolean) => void
+  setJobLinkedSession: (jobId: string, sessionId: string | null) => void
+
   // Sudo prompt
   showSudoPrompt: (jobId: string, operation: string) => void
   hideSudoPrompt: () => void
@@ -378,6 +382,22 @@ export const useCronStore = create<CronStore>()(
         sudoPromptJobId: null,
         sudoPromptOperation: null,
       }),
+
+      // ── Optimistic Updates ─────────────────────────────────────────────────
+
+      setJobManaged: (jobId, managed) => {
+        const jobs = get().jobs.map((j) =>
+          j.id === jobId ? { ...j, isManagedByAgentboard: managed } : j
+        )
+        set({ jobs })
+      },
+
+      setJobLinkedSession: (jobId, sessionId) => {
+        const jobs = get().jobs.map((j) =>
+          j.id === jobId ? { ...j, linkedSessionId: sessionId } : j
+        )
+        set({ jobs })
+      },
 
       // ── Derived Selectors ──────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 // WU-011: Detail Pane Shell — CronJobDetail
 
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 import { CronHealthBadge } from './CronHealthBadge'
 import { CronTagInput } from './CronTagInput'
@@ -35,7 +36,7 @@ const SOURCE_LABELS: Record<string, string> = {
 const TABS = ['overview', 'history', 'logs', 'script'] as const
 
 export function CronJobDetail() {
-  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs } = useCronStore()
+  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs, setJobManaged } = useCronStore()
   const job = jobs.find((j) => j.id === selectedJobId)
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -103,11 +104,21 @@ export function CronJobDetail() {
                   🔒
                 </span>
               )}
-              {job.isManagedByAgentboard && (
-                <span className="text-blue-400" title="Managed by Agentboard">
-                  ⚙
-                </span>
-              )}
+              <button
+                onClick={() => {
+                  setJobManaged(job.id, !job.isManagedByAgentboard)
+                  const ws = (window as unknown as { __cronWsSend?: (msg: unknown) => void }).__cronWsSend
+                  if (ws) ws({ type: 'cron-job-set-managed', jobId: job.id, managed: !job.isManagedByAgentboard })
+                }}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                  job.isManagedByAgentboard
+                    ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
+                    : 'bg-[var(--bg-tertiary)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                }`}
+                title={job.isManagedByAgentboard ? 'Managed by Agentboard — click to unmanage' : 'Not managed — click to manage'}
+              >
+                ⚙ {job.isManagedByAgentboard ? 'Managed' : 'Unmanaged'}
+              </button>
             </div>
           </div>
           <CronSessionLink jobId={job.id} linkedSessionId={job.linkedSessionId} />
@@ -120,9 +131,11 @@ export function CronJobDetail() {
       <CronJobControls onDelete={() => setShowDeleteConfirm(true)} />
 
       {/* Run Now output panel */}
-      {showOutput && (
-        <CronRunNowOutput jobId={job.id} onDismiss={handleDismissOutput} />
-      )}
+      <AnimatePresence>
+        {showOutput && (
+          <CronRunNowOutput jobId={job.id} onDismiss={handleDismissOutput} />
+        )}
+      </AnimatePresence>
 
       {/* Tab bar */}
       <div className="flex border-b border-[var(--border)] shrink-0">
@@ -143,10 +156,21 @@ export function CronJobDetail() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'overview' && <CronOverviewTab />}
-        {activeTab === 'history' && <CronHistoryTab />}
-        {activeTab === 'logs' && <CronLogsTab />}
-        {activeTab === 'script' && <CronScriptTab />}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            className="h-full"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.15 }}
+          >
+            {activeTab === 'overview' && <CronOverviewTab />}
+            {activeTab === 'history' && <CronHistoryTab />}
+            {activeTab === 'logs' && <CronLogsTab />}
+            {activeTab === 'script' && <CronScriptTab />}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {/* Delete confirmation modal */}

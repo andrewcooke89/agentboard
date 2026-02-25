@@ -202,7 +202,16 @@ export function createDAGEngine(
   }
 
   function resolveOutputPath(run: WorkflowRun, relPath: string): string {
-    const resolved = path.resolve(run.output_dir, relPath)
+    // Template-resolve the path first (e.g. {{ output_dir }}/file.yaml)
+    const templateResolved = resolveTemplateVars(relPath, run)
+
+    // If the resolved path is absolute, use it directly (user-specified output_dir)
+    if (path.isAbsolute(templateResolved)) {
+      return templateResolved
+    }
+
+    // Relative paths resolve against run.output_dir with traversal check
+    const resolved = path.resolve(run.output_dir, templateResolved)
     const normalizedBase = path.resolve(run.output_dir)
     if (!resolved.startsWith(normalizedBase)) {
       throw new Error(`Path traversal detected: ${relPath} escapes output directory`)
@@ -2652,7 +2661,8 @@ export function createDAGEngine(
   /** Collect structured result file from a completed step */
   function collectStepResult(run: WorkflowRun, stepDef: WorkflowStep, stepState: StepRunState): void {
     if (!stepDef.result_file) return
-    stepState.resultFile = stepDef.result_file
+    // Template-resolve the display path stored in step state
+    stepState.resultFile = resolveTemplateVars(stepDef.result_file, run)
     stepState.resultCollected = false
     stepState.resultContent = null
 

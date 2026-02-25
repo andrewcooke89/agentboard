@@ -178,6 +178,7 @@ const taskHandlers = createTaskHandlers(ctx, taskStore)
 let workflowFileWatcher: WorkflowFileWatcher | null = null
 let workflowCleanupInterval: ReturnType<typeof setInterval> | null = null
 let sessionCleanupInterval: ReturnType<typeof setInterval> | null = null
+let cronCleanupInterval: ReturnType<typeof setInterval> | null = null
 
 if (config.workflowEngineEnabled) {
   // Start file watcher — scans workflow YAML dir and watches for changes
@@ -294,6 +295,27 @@ const workflowHandlers = config.workflowEngineEnabled
 
 // --- Cron handlers (WU-002) ---
 const cronHandlers = createCronHandlers(ctx, cronManager, cronHistoryService, cronLogService)
+
+// --- Cron cleanup scheduling (REQ-98, REQ-101) ---
+// Deferred initial cleanup: wait for first poll to populate jobCache
+const cronCleanupDelayMs = 30_000
+setTimeout(() => {
+  if (cronManager.jobCache.size > 0) {
+    cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+    cronManager.pruneRunHistory()
+    logger.info('cron_cleanup_initial', { jobCount: cronManager.jobCache.size })
+  }
+}, cronCleanupDelayMs)
+
+// Periodic cleanup every 24h (same cadence as workflow/session cleanup)
+const cronCleanupIntervalMs = 24 * 60 * 60 * 1000
+cronCleanupInterval = setInterval(() => {
+  if (cronManager.jobCache.size > 0) {
+    cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+    cronManager.pruneRunHistory()
+    logger.info('cron_cleanup', { jobCount: cronManager.jobCache.size })
+  }
+}, cronCleanupIntervalMs)
 
 // --- HTTP routes ---
 const tlsEnabled = !!(config.tlsCert && config.tlsKey)
@@ -475,6 +497,7 @@ function cleanupAllTerminals() {
   if (workflowFileWatcher) workflowFileWatcher.stop()
   if (workflowCleanupInterval) clearInterval(workflowCleanupInterval)
   if (sessionCleanupInterval) clearInterval(sessionCleanupInterval)
+  if (cronCleanupInterval) clearInterval(cronCleanupInterval)
 
   taskWorker.stop()
   for (const ws of sockets) {

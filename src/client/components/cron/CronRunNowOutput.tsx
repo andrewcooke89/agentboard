@@ -1,6 +1,7 @@
 // WU-014: Script Tab & Job Controls — CronRunNowOutput
 
 import React, { useEffect, useRef } from 'react'
+import { motion } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 
 // ─── CronRunNowOutput ─────────────────────────────────────────────────────────
@@ -55,7 +56,14 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
   const displayText = outputText.replace(/__EXIT:-?\d+:[\d.]+__\n?/g, '')
 
   return (
-    <div className="border-t border-[var(--border)] bg-black/30 shrink-0" style={{ maxHeight: 220 }}>
+    <motion.div
+      className="border-t border-[var(--border)] bg-black/30 shrink-0"
+      style={{ maxHeight: 220 }}
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.2 }}
+    >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] text-xs">
         <span className="font-semibold text-[var(--fg-primary)]">Run Output</span>
@@ -102,7 +110,7 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
         {displayText || <span className="text-[var(--fg-muted)] italic">Waiting for output…</span>}
         {isRunning && <span className="animate-pulse text-[var(--fg-muted)]">▊</span>}
       </div>
-    </div>
+    </motion.div>
   )
 }
 

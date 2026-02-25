@@ -1,5 +1,6 @@
 // WU-009: App Integration & CronManager Shell — Empty State
 
+import { motion } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 
 export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
@@ -11,7 +12,12 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
 
   if (jobs.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-[var(--fg-muted)]">
+      <motion.div
+        className="flex flex-col items-center justify-center h-full text-[var(--fg-muted)]"
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.3 }}
+      >
         <div className="text-4xl mb-4">⏰</div>
         <div className="text-lg font-medium mb-2">No Cron Jobs Found</div>
         <div className="text-sm mb-6">No cron jobs or systemd timers discovered on this system.</div>
@@ -20,13 +26,18 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
             Create Job
           </button>
         )}
-      </div>
+      </motion.div>
     )
   }
 
   // Dashboard view with stats
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 p-8">
+    <motion.div
+      className="flex flex-col items-center justify-center h-full gap-6 p-8"
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.3 }}
+    >
       <div className="text-lg font-medium text-[var(--fg-primary)]">Cron Manager</div>
       <div className="grid grid-cols-4 gap-4 w-full max-w-lg">
         <StatCard label="Total" value={jobs.length} />
@@ -38,7 +49,7 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
         <div className="text-sm text-yellow-500">{unhealthy} unhealthy job{unhealthy !== 1 ? 's' : ''}</div>
       )}
       <div className="text-sm text-[var(--fg-muted)]">Select a job from the list to view details</div>
-    </div>
+    </motion.div>
   )
 }
 

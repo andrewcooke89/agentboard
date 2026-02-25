@@ -1,6 +1,7 @@
 // WU-010: List Pane Core — CronJobList
 
 import { useState, useCallback, useEffect, useRef } from 'react'
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
 import { CronJobRow } from './CronJobRow'
 import { CronBulkActions } from './CronBulkActions'
@@ -24,6 +25,7 @@ const FILTER_OPTIONS = [
 export function CronJobList() {
   const { setSearchQuery, setSortMode, setFilterMode, toggleGroupCollapse, setSelectedJob,
           sortMode, filterMode, collapsedGroups, selectedJobId, searchQuery, groupedJobs, filteredJobs } = useCronStore()
+  const prefersReducedMotion = useReducedMotion()
   const [localSearch, setLocalSearch] = useState(searchQuery)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
   const listRef = useRef<HTMLDivElement>(null)
@@ -107,9 +109,21 @@ export function CronJobList() {
                 <span>{group}</span>
                 <span className="ml-auto text-[var(--fg-muted)]">{jobs.length}</span>
               </button>
-              {!collapsed && jobs.map(job => (
-                <CronJobRow key={job.id} job={job} />
-              ))}
+              {!collapsed && (
+                <AnimatePresence initial={false}>
+                  {jobs.map(job => (
+                    <motion.div
+                      key={job.id}
+                      initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      <CronJobRow job={job} />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
             </div>
           )
         })}
