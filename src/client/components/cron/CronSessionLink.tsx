@@ -66,13 +66,13 @@ export function CronSessionLink({ jobId, linkedSessionId }: CronSessionLinkProps
           title={`Navigate to session ${linkedSessionId}`}
         >
           <span className="text-blue-400">🔗</span>
-          <span className="text-[var(--fg-muted)] truncate max-w-[120px] hover:text-blue-400">
+          <span className="text-[var(--text-muted)] truncate max-w-[120px] hover:text-blue-400">
             {displayLabel}
           </span>
         </button>
         <button
           onClick={handleUnlink}
-          className="text-[var(--fg-muted)] hover:text-red-400"
+          className="text-[var(--text-muted)] hover:text-red-400"
           title="Unlink session"
         >
           &times;
@@ -85,26 +85,26 @@ export function CronSessionLink({ jobId, linkedSessionId }: CronSessionLinkProps
     <div className="relative shrink-0" ref={dropdownRef}>
       <button
         onClick={() => setShowDropdown(!showDropdown)}
-        className="text-xs text-[var(--fg-muted)] hover:text-[var(--fg-primary)] px-2 py-1 rounded border border-[var(--border)]"
+        className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-2 py-1 rounded border border-[var(--border)]"
       >
         Link Session
       </button>
       {showDropdown && (
-        <div className="absolute right-0 top-full mt-1 w-56 bg-[var(--bg-primary)] border border-[var(--border)] rounded shadow-lg z-10 max-h-48 overflow-y-auto">
+        <div className="absolute right-0 top-full mt-1 w-56 bg-[var(--bg-elevated)] border border-[var(--border)] rounded shadow-lg z-10 max-h-48 overflow-y-auto">
           {sessions.length === 0 ? (
-            <div className="p-2 text-xs text-[var(--fg-muted)]">No sessions available</div>
+            <div className="p-2 text-xs text-[var(--text-muted)]">No sessions available</div>
           ) : (
             sessions.map((session) => (
               <button
                 key={session.id}
                 onClick={() => handleLinkSession(session.id)}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-secondary)] flex items-center gap-2"
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-surface)] flex items-center gap-2"
               >
-                <span className="text-[var(--fg-primary)] truncate">
+                <span className="text-[var(--text-primary)] truncate">
                   {session.name || session.id.slice(0, 8)}
                 </span>
                 {session.projectPath && (
-                  <span className="text-[var(--fg-muted)] truncate text-[10px]">
+                  <span className="text-[var(--text-muted)] truncate text-[10px]">
                     {session.projectPath.split('/').pop()}
                   </span>
                 )}

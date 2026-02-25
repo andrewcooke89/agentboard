@@ -102,7 +102,7 @@ export function CronTimeline() {
 
   if (jobs.length === 0) {
     return (
-      <div className="p-4 text-center text-sm text-[var(--fg-muted)]">
+      <div className="p-4 text-center text-sm text-[var(--text-muted)]">
         No jobs to display
       </div>
     )
@@ -111,7 +111,7 @@ export function CronTimeline() {
   return (
     <div className="border-b border-[var(--border)] p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-medium text-[var(--fg-muted)]">Schedule Timeline</span>
+        <span className="text-xs font-medium text-[var(--text-muted)]">Schedule Timeline</span>
         <div className="flex gap-1">
           {(['24h', '7d'] as TimeRange[]).map((r) => (
             <button
@@ -120,7 +120,7 @@ export function CronTimeline() {
               className={`text-xs px-2 py-0.5 rounded ${
                 range === r
                   ? 'bg-blue-600 text-white'
-                  : 'bg-[var(--bg-secondary)] text-[var(--fg-muted)]'
+                  : 'bg-[var(--bg-surface)] text-[var(--text-muted)]'
               }`}
             >
               {r}
@@ -146,7 +146,7 @@ export function CronTimeline() {
               ? 'bg-yellow-500'
               : bucket.jobs.length
                 ? 'bg-green-500'
-                : 'bg-[var(--bg-tertiary)]'
+                : 'bg-[var(--bg-hover)]'
 
           return (
             <motion.div
@@ -160,22 +160,22 @@ export function CronTimeline() {
                 className={`w-full rounded-t ${color} transition-all`}
                 style={{ height: `${height}%` }}
               />
-              <span className="text-[9px] text-[var(--fg-muted)] mt-0.5 truncate w-full text-center">
+              <span className="text-[9px] text-[var(--text-muted)] mt-0.5 truncate w-full text-center">
                 {bucket.label}
               </span>
               {hoveredBucket === i && bucket.jobs.length > 0 && (
-                <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-[var(--bg-primary)] border border-[var(--border)] rounded shadow-lg p-2 z-30 whitespace-nowrap">
+                <div className="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-[var(--bg-elevated)] border border-[var(--border)] rounded shadow-lg p-2 z-30 whitespace-nowrap">
                   {bucket.jobs.slice(0, 10).map((j) => (
                     <button
                       key={j.id}
                       onClick={() => setSelectedJob(j.id)}
-                      className="block text-xs text-[var(--fg-primary)] hover:text-blue-400"
+                      className="block text-xs text-[var(--text-primary)] hover:text-blue-400"
                     >
                       {j.name}
                     </button>
                   ))}
                   {bucket.jobs.length > 10 && (
-                    <div className="text-xs text-[var(--fg-muted)]">
+                    <div className="text-xs text-[var(--text-muted)]">
                       +{bucket.jobs.length - 10} more
                     </div>
                   )}

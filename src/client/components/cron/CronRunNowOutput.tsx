@@ -66,7 +66,7 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] text-xs">
-        <span className="font-semibold text-[var(--fg-primary)]">Run Output</span>
+        <span className="font-semibold text-[var(--text-primary)]">Run Output</span>
 
         {isRunning && (
           <span className="flex items-center gap-1 text-yellow-400">
@@ -85,7 +85,7 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
               exit {exitCode}
             </span>
             {duration !== null && (
-              <span className="text-[var(--fg-muted)]">{duration.toFixed(2)}s</span>
+              <span className="text-[var(--text-muted)]">{duration.toFixed(2)}s</span>
             )}
           </>
         )}
@@ -93,7 +93,7 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
         {!isRunning && (
           <button
             onClick={onDismiss}
-            className="ml-auto text-[var(--fg-muted)] hover:text-[var(--fg-primary)] text-sm leading-none"
+            className="ml-auto text-[var(--text-muted)] hover:text-[var(--text-primary)] text-sm leading-none"
             title="Dismiss"
           >
             ✕
@@ -107,8 +107,8 @@ export function CronRunNowOutput({ jobId, onDismiss }: CronRunNowOutputProps): R
         className="overflow-y-auto font-mono text-xs p-3 leading-5 whitespace-pre-wrap break-all"
         style={{ maxHeight: 170 }}
       >
-        {displayText || <span className="text-[var(--fg-muted)] italic">Waiting for output…</span>}
-        {isRunning && <span className="animate-pulse text-[var(--fg-muted)]">▊</span>}
+        {displayText || <span className="text-[var(--text-muted)] italic">Waiting for output…</span>}
+        {isRunning && <span className="animate-pulse text-[var(--text-muted)]">▊</span>}
       </div>
     </motion.div>
   )

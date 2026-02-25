@@ -984,7 +984,7 @@ export default function App() {
         </div>
       )}
       {activeView === 'cron-manager' && (
-        <div className="flex-1 overflow-hidden bg-[var(--bg-primary)]">
+        <div className="flex-1 overflow-hidden bg-[var(--bg-base)]">
           <ErrorBoundary>
             <CronManager />
           </ErrorBoundary>

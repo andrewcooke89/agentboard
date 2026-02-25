@@ -25,6 +25,16 @@ export function CronManager() {
   const containerRef = useRef<HTMLDivElement>(null)
   const { sendMessage } = useWebSocket()
 
+  // Expose sendMessage on window so child components (CronJobControls,
+  // CronJobDetail, CronTagInput, CronSessionLink, CronHistoryTab) can send
+  // WS messages without prop drilling.
+  useEffect(() => {
+    ;(window as unknown as Record<string, unknown>).__cronWsSend = sendMessage
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__cronWsSend
+    }
+  }, [sendMessage])
+
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     dragging.current = true
@@ -64,14 +74,11 @@ export function CronManager() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header bar with Timeline toggle and Create button */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--border)] shrink-0">
-        <span className="text-xs font-medium text-[var(--fg-muted)] uppercase tracking-wider">
-          Cron Manager
-        </span>
+      <div className="flex items-center justify-end px-3 py-1.5 border-b border-[var(--border)] bg-[var(--bg-elevated)] shrink-0">
         <div className="flex items-center gap-2">
           <button
             onClick={handleOpenCreateModal}
-            className="text-xs px-2 py-0.5 rounded bg-[var(--bg-secondary)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
+            className="text-xs px-2 py-0.5 rounded bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
           >
             + Create
           </button>
@@ -80,7 +87,7 @@ export function CronManager() {
             className={`text-xs px-2 py-0.5 rounded ${
               timelineVisible
                 ? 'bg-blue-600 text-white'
-                : 'bg-[var(--bg-secondary)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
           >
             Timeline

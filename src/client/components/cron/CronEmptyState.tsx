@@ -13,7 +13,7 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
   if (jobs.length === 0) {
     return (
       <motion.div
-        className="flex flex-col items-center justify-center h-full text-[var(--fg-muted)]"
+        className="flex flex-col items-center justify-center h-full text-[var(--text-muted)]"
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.3 }}
@@ -38,7 +38,7 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.3 }}
     >
-      <div className="text-lg font-medium text-[var(--fg-primary)]">Cron Manager</div>
+      <div className="text-lg font-medium text-[var(--text-primary)]">Cron Manager</div>
       <div className="grid grid-cols-4 gap-4 w-full max-w-lg">
         <StatCard label="Total" value={jobs.length} />
         <StatCard label="Active" value={active} color="text-green-500" />
@@ -48,16 +48,16 @@ export function CronEmptyState({ onCreateJob }: { onCreateJob?: () => void }) {
       {unhealthy > 0 && (
         <div className="text-sm text-yellow-500">{unhealthy} unhealthy job{unhealthy !== 1 ? 's' : ''}</div>
       )}
-      <div className="text-sm text-[var(--fg-muted)]">Select a job from the list to view details</div>
+      <div className="text-sm text-[var(--text-muted)]">Select a job from the list to view details</div>
     </motion.div>
   )
 }
 
 function StatCard({ label, value, color }: { label: string; value: number; color?: string }) {
   return (
-    <div className="flex flex-col items-center p-3 rounded bg-[var(--bg-secondary)] border border-[var(--border)]">
-      <div className={`text-2xl font-bold ${color || 'text-[var(--fg-primary)]'}`}>{value}</div>
-      <div className="text-xs text-[var(--fg-muted)]">{label}</div>
+    <div className="flex flex-col items-center p-3 rounded bg-[var(--bg-surface)] border border-[var(--border)]">
+      <div className={`text-2xl font-bold ${color || 'text-[var(--text-primary)]'}`}>{value}</div>
+      <div className="text-xs text-[var(--text-muted)]">{label}</div>
     </div>
   )
 }

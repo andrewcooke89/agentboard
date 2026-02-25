@@ -72,7 +72,7 @@ export function CronJobList() {
           placeholder="Search jobs..."
           value={localSearch}
           onChange={e => onSearchChange(e.target.value)}
-          className="w-full px-2 py-1 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--fg-primary)] placeholder:text-[var(--fg-muted)]"
+          className="w-full px-2 py-1 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
         />
       </div>
       {/* Sort + Filter */}
@@ -80,7 +80,8 @@ export function CronJobList() {
         <select
           value={sortMode}
           onChange={e => setSortMode(e.target.value)}
-          className="text-xs bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--fg-primary)]"
+          className="text-xs bg-[var(--bg-surface)] border border-[var(--border)] rounded px-1 py-0.5 text-[var(--text-primary)]"
+          style={{ colorScheme: 'dark' }}
         >
           {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
@@ -88,7 +89,7 @@ export function CronJobList() {
           <button
             key={o.value}
             onClick={() => setFilterMode(o.value)}
-            className={`text-xs px-2 py-0.5 rounded ${filterMode === o.value ? 'bg-blue-600 text-white' : 'bg-[var(--bg-secondary)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'}`}
+            className={`text-xs px-2 py-0.5 rounded ${filterMode === o.value ? 'bg-blue-600 text-white' : 'bg-[var(--bg-surface)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
           >
             {o.label}
           </button>
@@ -103,11 +104,11 @@ export function CronJobList() {
             <div key={group}>
               <button
                 onClick={() => toggleGroupCollapse(group)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-[var(--fg-muted)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)] border-b border-[var(--border)]"
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] bg-[var(--bg-surface)] hover:bg-[var(--bg-hover)] border-b border-[var(--border)]"
               >
                 <span className={`transition-transform ${collapsed ? '' : 'rotate-90'}`}>▶</span>
                 <span>{group}</span>
-                <span className="ml-auto text-[var(--fg-muted)]">{jobs.length}</span>
+                <span className="ml-auto text-[var(--text-muted)]">{jobs.length}</span>
               </button>
               {!collapsed && (
                 <AnimatePresence initial={false}>

@@ -44,7 +44,7 @@ export function CronJobDetail() {
 
   if (!job) {
     return (
-      <div className="flex items-center justify-center h-full text-[var(--fg-muted)] text-sm">
+      <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-sm">
         No job selected
       </div>
     )
@@ -87,15 +87,15 @@ export function CronJobDetail() {
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-[var(--fg-primary)] truncate">{job.name}</h2>
+              <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate">{job.name}</h2>
               <span
                 className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_COLORS[job.status] ?? 'bg-gray-500'}`}
                 aria-label={`Status: ${job.status}`}
               />
               <CronHealthBadge health={job.health} reason={job.healthReason} />
             </div>
-            <div className="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
-              <span className="px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)]">
+            <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              <span className="px-1.5 py-0.5 rounded bg-[var(--bg-hover)]">
                 {SOURCE_LABELS[job.source] || job.source}
               </span>
               {job.user && <span>User: {job.user}</span>}
@@ -113,7 +113,7 @@ export function CronJobDetail() {
                 className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
                   job.isManagedByAgentboard
                     ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
-                    : 'bg-[var(--bg-tertiary)] text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                    : 'bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
                 }`}
                 title={job.isManagedByAgentboard ? 'Managed by Agentboard — click to unmanage' : 'Not managed — click to manage'}
               >
@@ -145,8 +145,8 @@ export function CronJobDetail() {
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm capitalize ${
               activeTab === tab
-                ? 'text-[var(--fg-primary)] border-b-2 border-blue-500'
-                : 'text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                ? 'text-[var(--text-primary)] border-b-2 border-blue-500'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
           >
             {tab}
@@ -178,7 +178,11 @@ export function CronJobDetail() {
         isOpen={showDeleteConfirm}
         job={job}
         onCancel={() => setShowDeleteConfirm(false)}
-        onConfirm={() => setShowDeleteConfirm(false)}
+        onConfirm={() => {
+          const ws = (window as unknown as { __cronWsSend?: (msg: unknown) => void }).__cronWsSend
+          if (ws) ws({ type: 'cron-job-delete', jobId: job.id })
+          setShowDeleteConfirm(false)
+        }}
       />
     </div>
   )

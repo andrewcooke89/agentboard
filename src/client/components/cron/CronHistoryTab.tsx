@@ -94,7 +94,7 @@ function HistoryEntry({
         className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-white/5 cursor-pointer"
         onClick={() => setExpanded((v) => !v)}
       >
-        <span className="text-xs text-[var(--fg-muted)] shrink-0 tabular-nums">
+        <span className="text-xs text-[var(--text-muted)] shrink-0 tabular-nums">
           {formatTimestamp(record.timestamp)}
         </span>
 
@@ -107,24 +107,24 @@ function HistoryEntry({
         </span>
 
         {record.duration != null && (
-          <span className="text-xs text-[var(--fg-muted)] shrink-0">
+          <span className="text-xs text-[var(--text-muted)] shrink-0">
             {formatDuration(record.duration)}
           </span>
         )}
 
-        <span className="text-xs text-[var(--fg-muted)] capitalize px-1.5 py-0.5 rounded bg-[var(--bg-secondary)] shrink-0">
+        <span className="text-xs text-[var(--text-muted)] capitalize px-1.5 py-0.5 rounded bg-[var(--bg-surface)] shrink-0">
           {record.trigger}
         </span>
 
         {record.logSnippet && (
-          <span className="ml-auto text-xs text-[var(--fg-muted)]">
+          <span className="ml-auto text-xs text-[var(--text-muted)]">
             {expanded ? '▲' : '▼'}
           </span>
         )}
       </button>
 
       {expanded && record.logSnippet && (
-        <pre className="px-4 pb-3 text-xs font-mono text-[var(--fg-muted)] bg-[var(--bg-secondary)] whitespace-pre-wrap overflow-x-auto">
+        <pre className="px-4 pb-3 text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-surface)] whitespace-pre-wrap overflow-x-auto">
           {record.logSnippet}
         </pre>
       )}
@@ -161,11 +161,11 @@ export default function CronHistoryTab(): React.ReactElement {
     <div className="flex flex-col h-full overflow-hidden">
       {/* Sparkline */}
       <div className="px-4 pt-3 pb-2 border-b border-[var(--border)] shrink-0">
-        <div className="text-xs text-[var(--fg-muted)] mb-1">Duration (last {Math.min(sorted.length, 20)} runs)</div>
+        <div className="text-xs text-[var(--text-muted)] mb-1">Duration (last {Math.min(sorted.length, 20)} runs)</div>
         {sorted.length > 0 ? (
           <DurationSparkline records={sorted} />
         ) : (
-          <div className="h-10 flex items-center text-xs text-[var(--fg-muted)] italic">No data</div>
+          <div className="h-10 flex items-center text-xs text-[var(--text-muted)] italic">No data</div>
         )}
       </div>
 
@@ -179,7 +179,7 @@ export default function CronHistoryTab(): React.ReactElement {
       {/* Timeline */}
       <div className="flex-1 overflow-y-auto">
         {sorted.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-xs text-[var(--fg-muted)]">
+          <div className="flex items-center justify-center h-full text-xs text-[var(--text-muted)]">
             No run history
           </div>
         ) : (

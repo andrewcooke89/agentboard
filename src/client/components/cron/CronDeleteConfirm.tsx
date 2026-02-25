@@ -38,11 +38,11 @@ export function CronDeleteConfirm({ isOpen, job, onConfirm, onCancel }: CronDele
       onClick={onCancel}
     >
       <div
-        className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-xl w-[400px]"
+        className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg shadow-xl w-[400px]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-4 space-y-3">
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)]">Delete Job</h3>
+          <h3 className="text-lg font-semibold text-[var(--text-primary)]">Delete Job</h3>
 
           {isSystemLevel && (
             <div className="text-sm text-yellow-500 p-2 bg-yellow-500/10 rounded border border-yellow-500/20">
@@ -51,15 +51,15 @@ export function CronDeleteConfirm({ isOpen, job, onConfirm, onCancel }: CronDele
             </div>
           )}
 
-          <p className="text-sm text-[var(--fg-muted)]">
+          <p className="text-sm text-[var(--text-muted)]">
             Are you sure you want to delete{' '}
-            <strong className="text-[var(--fg-primary)]">{job.name}</strong>? This action cannot be
+            <strong className="text-[var(--text-primary)]">{job.name}</strong>? This action cannot be
             undone.
           </p>
 
           {isSystemLevel && (
             <label className="block">
-              <span className="text-xs text-[var(--fg-muted)]">
+              <span className="text-xs text-[var(--text-muted)]">
                 Type &ldquo;{job.name}&rdquo; to confirm
               </span>
               <input
@@ -67,7 +67,7 @@ export function CronDeleteConfirm({ isOpen, job, onConfirm, onCancel }: CronDele
                 onChange={(e) => setConfirmText(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleConfirm()}
                 autoFocus
-                className="w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--fg-primary)] font-mono"
+                className="w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)] font-mono"
               />
             </label>
           )}
@@ -76,7 +76,7 @@ export function CronDeleteConfirm({ isOpen, job, onConfirm, onCancel }: CronDele
         <div className="flex justify-end gap-2 p-4 border-t border-[var(--border)]">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
+            className="px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
           >
             Cancel
           </button>

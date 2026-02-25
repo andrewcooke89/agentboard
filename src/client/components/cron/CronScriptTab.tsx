@@ -74,7 +74,7 @@ export default function CronScriptTab(): React.ReactElement {
 
   if (!job) {
     return (
-      <div className="flex items-center justify-center h-full text-[var(--fg-muted)] text-sm">
+      <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-sm">
         No job selected
       </div>
     )
@@ -85,13 +85,13 @@ export default function CronScriptTab(): React.ReactElement {
       {/* Breadcrumb / toolbar */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border)] shrink-0 text-xs">
         {scriptPath ? (
-          <span className="text-[var(--fg-muted)] font-mono truncate flex-1" title={scriptPath}>
+          <span className="text-[var(--text-muted)] font-mono truncate flex-1" title={scriptPath}>
             {scriptPath}
           </span>
         ) : (
-          <span className="text-[var(--fg-muted)] truncate flex-1 italic">Inline command</span>
+          <span className="text-[var(--text-muted)] truncate flex-1 italic">Inline command</span>
         )}
-        <span className="shrink-0 px-1.5 py-0.5 rounded bg-[var(--bg-tertiary)] text-[var(--fg-muted)]">
+        <span className="shrink-0 px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">
           {resolvedLang}
         </span>
       </div>
@@ -104,7 +104,7 @@ export default function CronScriptTab(): React.ReactElement {
               {lines.map((line, i) => (
                 <tr key={i} className="hover:bg-white/5">
                   <td
-                    className="select-none text-right pr-4 pl-3 text-[var(--fg-muted)] border-r border-white/10 w-[3rem] shrink-0 sticky left-0 bg-[#0d1117]"
+                    className="select-none text-right pr-4 pl-3 text-[var(--text-muted)] border-r border-white/10 w-[3rem] shrink-0 sticky left-0 bg-[#0d1117]"
                     style={{ userSelect: 'none' }}
                   >
                     {i + 1}
@@ -117,7 +117,7 @@ export default function CronScriptTab(): React.ReactElement {
             </tbody>
           </table>
         ) : (
-          <div className="p-4 text-[var(--fg-muted)] italic">No script content available</div>
+          <div className="p-4 text-[var(--text-muted)] italic">No script content available</div>
         )}
       </div>
     </div>

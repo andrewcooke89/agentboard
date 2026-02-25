@@ -33,7 +33,7 @@ function formatCountdown(targetTs: string): string {
 function TrendArrow({ last, avg }: { last: number; avg: number }): React.ReactElement {
   if (last > avg * 1.2) return <span className="text-red-400" title="Slower than average">↑</span>
   if (last < avg * 0.8) return <span className="text-green-400" title="Faster than average">↓</span>
-  return <span className="text-[var(--fg-muted)]" title="Stable">→</span>
+  return <span className="text-[var(--text-muted)]" title="Stable">→</span>
 }
 
 // ─── CronOverviewTab ─────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ export default function CronOverviewTab(): React.ReactElement {
 
   if (!job) {
     return (
-      <div className="flex items-center justify-center h-full text-[var(--fg-muted)] text-sm">
+      <div className="flex items-center justify-center h-full text-[var(--text-muted)] text-sm">
         No job selected
       </div>
     )
@@ -77,34 +77,34 @@ export default function CronOverviewTab(): React.ReactElement {
     <div className="flex flex-col gap-6 p-4 overflow-y-auto">
       {/* ── Schedule ─────────────────────────────────────────────────────── */}
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)] mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">
           Schedule
         </div>
         <div className="space-y-2">
           <div className="text-sm font-medium">{scheduleHuman || 'Unknown'}</div>
-          <div className="text-xs font-mono text-[var(--fg-muted)] bg-[var(--bg-secondary)] px-2 py-1 rounded inline-block">
+          <div className="text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-surface)] px-2 py-1 rounded inline-block">
             {schedule}
           </div>
 
           <div className="grid grid-cols-2 gap-3 mt-3 text-xs">
-            <div className="bg-[var(--bg-secondary)] rounded p-2">
-              <div className="text-[var(--fg-muted)] mb-1">Next run</div>
+            <div className="bg-[var(--bg-surface)] rounded p-2">
+              <div className="text-[var(--text-muted)] mb-1">Next run</div>
               <div className="font-medium">
                 {nextRun ? (
                   <>
                     <span className="text-[var(--accent)]">{formatCountdown(nextRun)}</span>
-                    <div className="text-[var(--fg-muted)] mt-0.5 text-[10px]">
+                    <div className="text-[var(--text-muted)] mt-0.5 text-[10px]">
                       {formatTimestamp(nextRun)}
                     </div>
                   </>
                 ) : (
-                  <span className="text-[var(--fg-muted)]">Unknown</span>
+                  <span className="text-[var(--text-muted)]">Unknown</span>
                 )}
               </div>
             </div>
 
-            <div className="bg-[var(--bg-secondary)] rounded p-2">
-              <div className="text-[var(--fg-muted)] mb-1">Last run</div>
+            <div className="bg-[var(--bg-surface)] rounded p-2">
+              <div className="text-[var(--text-muted)] mb-1">Last run</div>
               <div className="font-medium">
                 {lastRun ? (
                   <>
@@ -121,17 +121,17 @@ export default function CronOverviewTab(): React.ReactElement {
                         </span>
                       )}
                       {lastRunDuration != null && (
-                        <span className="text-[var(--fg-muted)]">
+                        <span className="text-[var(--text-muted)]">
                           {formatDuration(lastRunDuration)}
                         </span>
                       )}
                     </div>
-                    <div className="text-[var(--fg-muted)] mt-0.5 text-[10px]">
+                    <div className="text-[var(--text-muted)] mt-0.5 text-[10px]">
                       {formatTimestamp(lastRun)}
                     </div>
                   </>
                 ) : (
-                  <span className="text-[var(--fg-muted)]">Never</span>
+                  <span className="text-[var(--text-muted)]">Never</span>
                 )}
               </div>
             </div>
@@ -141,12 +141,12 @@ export default function CronOverviewTab(): React.ReactElement {
 
       {/* ── Duration Stats ───────────────────────────────────────────────── */}
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)] mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">
           Duration
         </div>
         <div className="grid grid-cols-3 gap-3 text-xs">
-          <div className="bg-[var(--bg-secondary)] rounded p-2">
-            <div className="text-[var(--fg-muted)] mb-1">Last</div>
+          <div className="bg-[var(--bg-surface)] rounded p-2">
+            <div className="text-[var(--text-muted)] mb-1">Last</div>
             <div className={`font-medium ${durationWarning ? 'text-yellow-400' : ''}`}>
               {lastRunDuration != null ? formatDuration(lastRunDuration) : '—'}
               {durationWarning && (
@@ -154,19 +154,19 @@ export default function CronOverviewTab(): React.ReactElement {
               )}
             </div>
           </div>
-          <div className="bg-[var(--bg-secondary)] rounded p-2">
-            <div className="text-[var(--fg-muted)] mb-1">Average</div>
+          <div className="bg-[var(--bg-surface)] rounded p-2">
+            <div className="text-[var(--text-muted)] mb-1">Average</div>
             <div className="font-medium">
               {avgDuration != null ? formatDuration(avgDuration) : '—'}
             </div>
           </div>
-          <div className="bg-[var(--bg-secondary)] rounded p-2">
-            <div className="text-[var(--fg-muted)] mb-1">Trend</div>
+          <div className="bg-[var(--bg-surface)] rounded p-2">
+            <div className="text-[var(--text-muted)] mb-1">Trend</div>
             <div className="font-medium text-base">
               {lastRunDuration != null && avgDuration != null ? (
                 <TrendArrow last={lastRunDuration} avg={avgDuration} />
               ) : (
-                <span className="text-[var(--fg-muted)]">—</span>
+                <span className="text-[var(--text-muted)]">—</span>
               )}
             </div>
           </div>
@@ -175,13 +175,13 @@ export default function CronOverviewTab(): React.ReactElement {
 
       {/* ── Raw Config ───────────────────────────────────────────────────── */}
       <section>
-        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--fg-muted)] mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)] mb-3">
           Config
         </div>
         {isCron ? (
           <div>
-            <div className="text-xs text-[var(--fg-muted)] mb-1">Crontab line</div>
-            <pre className="text-xs font-mono bg-[var(--bg-secondary)] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+            <div className="text-xs text-[var(--text-muted)] mb-1">Crontab line</div>
+            <pre className="text-xs font-mono bg-[var(--bg-surface)] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
               {detail?.crontabLine ?? job.schedule + '  ' + job.command}
             </pre>
           </div>
@@ -189,22 +189,22 @@ export default function CronOverviewTab(): React.ReactElement {
           <div className="space-y-3">
             {detail?.timerConfig && (
               <div>
-                <div className="text-xs text-[var(--fg-muted)] mb-1">Timer unit</div>
-                <pre className="text-xs font-mono bg-[var(--bg-secondary)] rounded p-3 overflow-x-auto whitespace-pre-wrap">
+                <div className="text-xs text-[var(--text-muted)] mb-1">Timer unit</div>
+                <pre className="text-xs font-mono bg-[var(--bg-surface)] rounded p-3 overflow-x-auto whitespace-pre-wrap">
                   {detail.timerConfig}
                 </pre>
               </div>
             )}
             {detail?.serviceConfig && (
               <div>
-                <div className="text-xs text-[var(--fg-muted)] mb-1">Service unit</div>
-                <pre className="text-xs font-mono bg-[var(--bg-secondary)] rounded p-3 overflow-x-auto whitespace-pre-wrap">
+                <div className="text-xs text-[var(--text-muted)] mb-1">Service unit</div>
+                <pre className="text-xs font-mono bg-[var(--bg-surface)] rounded p-3 overflow-x-auto whitespace-pre-wrap">
                   {detail.serviceConfig}
                 </pre>
               </div>
             )}
             {!detail?.timerConfig && !detail?.serviceConfig && (
-              <pre className="text-xs font-mono bg-[var(--bg-secondary)] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
+              <pre className="text-xs font-mono bg-[var(--bg-surface)] rounded p-3 overflow-x-auto whitespace-pre-wrap break-all">
                 {job.command}
               </pre>
             )}

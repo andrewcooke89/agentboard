@@ -80,7 +80,7 @@ export default function CronLogsTab(): React.ReactElement {
       return (
         <div key={idx} className="flex gap-0">
           {showLineNumbers && (
-            <span className="select-none text-right pr-4 text-[var(--fg-muted)] w-10 shrink-0 tabular-nums">
+            <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
               {idx + 1}
             </span>
           )}
@@ -94,7 +94,7 @@ export default function CronLogsTab(): React.ReactElement {
     return (
       <div key={idx} className="flex gap-0">
         {showLineNumbers && (
-          <span className="select-none text-right pr-4 text-[var(--fg-muted)] w-10 shrink-0 tabular-nums">
+          <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
             {idx + 1}
           </span>
         )}
@@ -124,7 +124,7 @@ export default function CronLogsTab(): React.ReactElement {
         <button
           onClick={() => setLiveTail((v) => !v)}
           className={`flex items-center gap-1.5 px-2 py-1 rounded ${
-            liveTail ? 'bg-green-900/40 text-green-400' : 'hover:bg-white/5 text-[var(--fg-muted)]'
+            liveTail ? 'bg-green-900/40 text-green-400' : 'hover:bg-white/5 text-[var(--text-muted)]'
           }`}
           title="Toggle live tail"
         >
@@ -138,7 +138,7 @@ export default function CronLogsTab(): React.ReactElement {
         <button
           onClick={() => setShowLineNumbers((v) => !v)}
           className={`px-2 py-1 rounded ${
-            showLineNumbers ? 'text-[var(--fg-primary)]' : 'text-[var(--fg-muted)]'
+            showLineNumbers ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
           } hover:bg-white/5`}
           title="Toggle line numbers"
         >
@@ -148,20 +148,20 @@ export default function CronLogsTab(): React.ReactElement {
         {/* Search toggle */}
         <button
           onClick={() => setSearchOpen((v) => !v)}
-          className={`px-2 py-1 rounded hover:bg-white/5 ${searchOpen ? 'text-[var(--accent)]' : 'text-[var(--fg-muted)]'}`}
+          className={`px-2 py-1 rounded hover:bg-white/5 ${searchOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
           title="Search (Ctrl+F)"
         >
           ⌕
         </button>
 
         {searchOpen && matchCount > 0 && (
-          <span className="text-[var(--fg-muted)]">{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>
+          <span className="text-[var(--text-muted)]">{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>
         )}
 
         {/* Copy all */}
         <button
           onClick={copyAll}
-          className="px-2 py-1 rounded hover:bg-white/5 text-[var(--fg-muted)] ml-auto"
+          className="px-2 py-1 rounded hover:bg-white/5 text-[var(--text-muted)] ml-auto"
           title="Copy all"
         >
           Copy all
@@ -177,11 +177,11 @@ export default function CronLogsTab(): React.ReactElement {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search logs..."
-            className="flex-1 bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-[var(--accent)]"
+            className="flex-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-[var(--accent)]"
           />
           <button
             onClick={() => { setSearchOpen(false); setSearchQuery('') }}
-            className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] text-xs"
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
           >
             ✕
           </button>
@@ -191,10 +191,10 @@ export default function CronLogsTab(): React.ReactElement {
       {/* Log output */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto font-mono text-xs p-4 bg-[var(--bg-primary)] leading-5 space-y-0"
+        className="flex-1 overflow-y-auto font-mono text-xs p-4 bg-[var(--bg-elevated)] leading-5 space-y-0"
       >
         {lines.length === 0 ? (
-          <span className="text-[var(--fg-muted)] italic">No logs available</span>
+          <span className="text-[var(--text-muted)] italic">No logs available</span>
         ) : (
           lines.map((line, i) => renderLine(line, i))
         )}

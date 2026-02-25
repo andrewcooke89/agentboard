@@ -49,7 +49,7 @@ export function CronSudoPrompt({
       onClick={onCancel}
     >
       <div
-        className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-xl w-[380px]"
+        className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg shadow-xl w-[380px]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Plain WS security warning */}
@@ -61,10 +61,10 @@ export function CronSudoPrompt({
         )}
 
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)]">Authentication Required</h3>
+          <h3 className="text-lg font-semibold text-[var(--text-primary)]">Authentication Required</h3>
           <button
             onClick={onCancel}
-            className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] text-xl leading-none"
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xl leading-none"
           >
             &times;
           </button>
@@ -72,20 +72,20 @@ export function CronSudoPrompt({
 
         <div className="p-4 space-y-3">
           {operation && (
-            <p className="text-sm text-[var(--fg-muted)]">
+            <p className="text-sm text-[var(--text-muted)]">
               The operation{' '}
-              <strong className="text-[var(--fg-primary)]">{operation}</strong> requires elevated
+              <strong className="text-[var(--text-primary)]">{operation}</strong> requires elevated
               privileges.
             </p>
           )}
           {!operation && (
-            <p className="text-sm text-[var(--fg-muted)]">
+            <p className="text-sm text-[var(--text-muted)]">
               This operation requires administrator privileges.
             </p>
           )}
 
           <label className="block">
-            <span className="text-xs text-[var(--fg-muted)]">Password</span>
+            <span className="text-xs text-[var(--text-muted)]">Password</span>
             <input
               ref={inputRef}
               type="password"
@@ -95,12 +95,12 @@ export function CronSudoPrompt({
                 if (e.key === 'Enter') handleSubmit()
                 if (e.key === 'Escape') onCancel()
               }}
-              className="w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--fg-primary)]"
+              className="w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)]"
               autoComplete="off"
             />
           </label>
 
-          <p className="text-xs text-[var(--fg-muted)]">
+          <p className="text-xs text-[var(--text-muted)]">
             Credentials are cached in memory for {gracePeriodMinutes} minute
             {gracePeriodMinutes !== 1 ? 's' : ''}, then securely zeroed.
           </p>
@@ -109,7 +109,7 @@ export function CronSudoPrompt({
         <div className="flex justify-end gap-2 p-4 border-t border-[var(--border)]">
           <button
             onClick={onCancel}
-            className="px-3 py-1.5 text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
+            className="px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
           >
             Cancel
           </button>

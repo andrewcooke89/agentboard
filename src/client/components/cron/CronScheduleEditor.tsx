@@ -74,7 +74,7 @@ export function CronScheduleEditor(props: CronScheduleEditorProps): React.ReactE
         type="text"
         value={currentValue}
         onChange={(e) => handleChange(e.target.value)}
-        className={`w-full bg-[var(--bg-primary)] border rounded px-2 py-1.5 text-sm font-mono focus:outline-none ${borderClass}`}
+        className={`w-full bg-[var(--bg-elevated)] border rounded px-2 py-1.5 text-sm font-mono focus:outline-none ${borderClass}`}
         placeholder={
           (!isInline && props.mode === 'systemd') ? 'daily' : '0 * * * *'
         }

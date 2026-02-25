@@ -106,10 +106,10 @@ export function CronTagInput({ jobId, tags }: CronTagInputProps) {
               if (!input) setEditing(false)
             }}
             placeholder="Add tag..."
-            className="w-24 px-1.5 py-0.5 text-xs bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--fg-primary)]"
+            className="w-24 px-1.5 py-0.5 text-xs bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)]"
           />
           {suggestions.length > 0 && (
-            <div className="absolute z-10 top-full left-0 mt-1 w-32 bg-[var(--bg-primary)] border border-[var(--border)] rounded shadow-lg">
+            <div className="absolute z-10 top-full left-0 mt-1 w-32 bg-[var(--bg-elevated)] border border-[var(--border)] rounded shadow-lg">
               {suggestions.map((s) => (
                 <button
                   key={s}
@@ -117,7 +117,7 @@ export function CronTagInput({ jobId, tags }: CronTagInputProps) {
                     e.preventDefault() // prevent input blur before click fires
                     addTag(s)
                   }}
-                  className="w-full text-left px-2 py-1 text-xs text-[var(--fg-primary)] hover:bg-[var(--bg-secondary)]"
+                  className="w-full text-left px-2 py-1 text-xs text-[var(--text-primary)] hover:bg-[var(--bg-surface)]"
                 >
                   {s}
                 </button>
@@ -128,7 +128,7 @@ export function CronTagInput({ jobId, tags }: CronTagInputProps) {
       ) : (
         <button
           onClick={() => setEditing(true)}
-          className="text-xs text-[var(--fg-muted)] hover:text-[var(--fg-primary)] px-1"
+          className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] px-1"
         >
           + tag
         </button>

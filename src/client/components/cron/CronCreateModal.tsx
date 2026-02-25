@@ -72,9 +72,9 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
   }
 
   const inputCls =
-    'w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-secondary)] border border-[var(--border)] rounded text-[var(--fg-primary)]'
+    'w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)]'
   const labelCls = 'block'
-  const labelTextCls = 'text-xs text-[var(--fg-muted)]'
+  const labelTextCls = 'text-xs text-[var(--text-muted)]'
 
   return (
     <div
@@ -82,15 +82,15 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
       onClick={onClose}
     >
       <div
-        className="bg-[var(--bg-primary)] border border-[var(--border)] rounded-lg shadow-xl w-[480px] max-h-[80vh] overflow-y-auto"
+        className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-lg shadow-xl w-[480px] max-h-[80vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
-          <h3 className="text-lg font-semibold text-[var(--fg-primary)]">Create Job</h3>
+          <h3 className="text-lg font-semibold text-[var(--text-primary)]">Create Job</h3>
           <button
             onClick={onClose}
-            className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] text-xl leading-none"
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xl leading-none"
           >
             &times;
           </button>
@@ -102,8 +102,8 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
             onClick={() => { setMode('cron'); setError(null) }}
             className={`flex-1 py-2 text-sm ${
               mode === 'cron'
-                ? 'text-[var(--fg-primary)] border-b-2 border-blue-500'
-                : 'text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                ? 'text-[var(--text-primary)] border-b-2 border-blue-500'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
             }`}
           >
             Quick (Cron)
@@ -113,8 +113,8 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
               onClick={() => { setMode('systemd'); setError(null) }}
               className={`flex-1 py-2 text-sm ${
                 mode === 'systemd'
-                  ? 'text-[var(--fg-primary)] border-b-2 border-blue-500'
-                  : 'text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                  ? 'text-[var(--text-primary)] border-b-2 border-blue-500'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
               }`}
             >
               Advanced (Systemd)
@@ -219,7 +219,7 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
         <div className="flex justify-end gap-2 p-4 border-t border-[var(--border)]">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-sm text-[var(--fg-muted)] hover:text-[var(--fg-primary)]"
+            className="px-3 py-1.5 text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)]"
           >
             Cancel
           </button>
