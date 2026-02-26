@@ -7180,5 +7180,77 @@ steps:
         nodefs.rmSync(outputDir, { recursive: true, force: true })
       }
     })
+
+    test('gemini_offload supports label-based input substitution', async () => {
+      // Set test API key and disable backoff delays
+      setApiKeyOverride('test-api-key-for-dag-tests')
+      setBackoffDelayOverride(0)
+
+      const originalFetch = global.fetch
+      const nodefs = require('node:fs')
+      const nodepath = require('node:path')
+
+      // Create temp input file
+      const tmpDir = '/tmp/agentboard-gemini-label-test'
+      nodefs.mkdirSync(tmpDir, { recursive: true })
+      const inputFile = nodepath.join(tmpDir, 'data.yaml')
+      nodefs.writeFileSync(inputFile, 'Label-substituted content here', 'utf-8')
+
+      let capturedPrompt = ''
+
+      try {
+        // Capture the actual prompt from the request body
+        global.fetch = mock(async (_url: string, options: any) => {
+          const body = JSON.parse(options.body)
+          capturedPrompt = body.contents[0].parts[0].text
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              candidates: [{ content: { parts: [{ text: 'Response' }] } }],
+            }),
+          }
+        }) as any
+
+        const yaml = [
+          'name: gemini-label-test',
+          'system:',
+          '  engine: dag',
+          'steps:',
+          '  - name: gemini-step',
+          '    type: gemini_offload',
+          '    model: gemini-1.5-flash',
+          '    prompt_template: "Process: {{my_data}}"',
+          `    inputs:`,
+          `      - path: "${inputFile}"`,
+          `        label: my_data`,
+        ].join('\n')
+
+        const wf = createWorkflowDef(workflowStore, yaml, 'gemini-label-test')
+        const parsed = getParsed(yaml)
+        const run = createTestRun(workflowStore, wf.id, [
+          makeStepState({ name: 'gemini-step', type: 'gemini_offload' }),
+        ])
+
+        // Tick to start
+        dagEngine.tick(run, parsed)
+
+        // Wait for completion
+        await tickUntil(
+          dagEngine, run, parsed, workflowStore,
+          (r) => r.steps_state[0].status !== 'running',
+          50,
+          50,
+        )
+
+        // Verify prompt included input file content via label
+        expect(capturedPrompt).toContain('Label-substituted content here')
+      } finally {
+        global.fetch = originalFetch
+        setApiKeyOverride(undefined)
+        setBackoffDelayOverride(undefined)
+        nodefs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
   })
 })

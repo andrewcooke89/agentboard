@@ -1138,7 +1138,23 @@ export function createDAGEngine(
       // Build prompt from template and input files
       let prompt = stepDef.prompt_template ?? ''
 
-      // Read and include input files if specified
+      // First, handle label-based substitution from inputs array (if present)
+      // This supports the format: inputs: [{ path: "...", label: "name" }]
+      if (stepDef.inputs && Array.isArray(stepDef.inputs)) {
+        for (const inp of stepDef.inputs) {
+          if (inp && typeof inp === 'object' && 'path' in inp && 'label' in inp) {
+            const inputObj = inp as Record<string, unknown>
+            const inputPath = resolveOutputPath(run, String(inputObj.path))
+            const label = String(inputObj.label)
+            if (fs.existsSync(inputPath) && label) {
+              const content = fs.readFileSync(inputPath, 'utf-8')
+              prompt = prompt.replace(`{{${label}}}`, content)
+            }
+          }
+        }
+      }
+
+      // Then, handle direct input_files (basename substitution for backward compatibility)
       if (stepDef.input_files && stepDef.input_files.length > 0) {
         for (const inputFile of stepDef.input_files) {
           const inputPath = resolveOutputPath(run, inputFile)
