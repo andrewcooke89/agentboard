@@ -177,11 +177,12 @@ async function createTask(
   projectPath: string,
   prompt: string,
   timeoutSeconds = 3600,
+  model = 'glm',
 ): Promise<string> {
   const res = await fetch(`${apiUrl}/api/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectPath, prompt, timeoutSeconds }),
+    body: JSON.stringify({ projectPath, prompt, timeoutSeconds, metadata: { model } }),
   })
 
   if (!res.ok) {

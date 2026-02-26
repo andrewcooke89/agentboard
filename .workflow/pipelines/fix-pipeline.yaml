@@ -67,6 +67,7 @@ pipeline:
     # ── Step 1: Write Bug Spec ─────────────────────────────────────────
     - name: write-bug-spec
       type: spawn_session
+      model: claude
       projectPath: "{{ project_path }}"
       prompt: |
         You are a bug spec writer. Create a formal bug specification as a YAML file.
@@ -103,6 +104,7 @@ pipeline:
     # ── Step 2: Reproduce Bug ──────────────────────────────────────────
     - name: reproduce
       type: spawn_session
+      model: glm
       depends_on: [write-bug-spec]
       projectPath: "{{ project_path }}"
       prompt: |
@@ -169,6 +171,7 @@ pipeline:
     # ── Step 4: Write Fix Spec ─────────────────────────────────────────
     - name: fix-spec
       type: spawn_session
+      model: claude
       depends_on: [root-cause]
       projectPath: "{{ project_path }}"
       prompt: |
@@ -240,6 +243,7 @@ pipeline:
     # TDD Red Phase: Write a test that reproduces the bug
     - name: write-regression-test
       type: spawn_session
+      model: glm
       depends_on: [capture-test-baseline]
       tier_min: 2
       projectPath: "{{ project_path }}"
@@ -319,6 +323,7 @@ pipeline:
     # ── Step 8: Implement Fix ──────────────────────────────────────────
     - name: implement-fix
       type: spawn_session
+      model: glm
       depends_on: [fix-spec, verify-red]
       projectPath: "{{ project_path }}"
       prompt: |
@@ -431,3 +436,4 @@ pipeline:
       model: gemini-2.5-flash
       max_tokens: 4000
       timeoutSeconds: 120
+

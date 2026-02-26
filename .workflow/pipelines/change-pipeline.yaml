@@ -67,6 +67,7 @@ steps:
   # Stage 1: Validate the feature spec against schema and constitution
   - name: validate-spec
     type: spec_validate
+    model: glm
     spec_path: "{{ spec_path }}"
     schema_path: "{{ project_path }}/.workflow/schemas/feature_spec_v1.yaml"
     constitution_sections:
@@ -78,6 +79,7 @@ steps:
   # Stage 2: Review loop for spec refinement
   - name: spec-review-loop
     type: review_loop
+    model: claude
     depends_on:
       - validate-spec
     tier_override:
@@ -124,6 +126,7 @@ steps:
   # Stage 3: Decompose spec into work units
   - name: decompose
     type: spawn_session
+    model: claude
     depends_on:
       - spec-review-loop
     projectPath: "{{ project_path }}"
@@ -151,6 +154,7 @@ steps:
     steps:
       - name: generate-scaffold
         type: spawn_session
+        model: glm
         projectPath: "{{ project_path }}"
         prompt: |
           Generate code scaffold from the decomposition manifest.
@@ -281,6 +285,7 @@ steps:
   # Stage 6: Conformance verification
   - name: conformance
     type: spawn_session
+    model: claude
     depends_on:
       - tdd-verify-green
     projectPath: "{{ project_path }}"
@@ -306,6 +311,7 @@ steps:
   # Stage 7: Acceptance testing (tier 2+)
   - name: acceptance-test
     type: spawn_session
+    model: glm
     depends_on:
       - conformance
     tier_min: 2
