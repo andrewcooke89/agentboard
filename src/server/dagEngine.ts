@@ -819,16 +819,53 @@ export function createDAGEngine(
       parts.push(`\nPosture: ${stepDef.posture}`)
     }
 
-    // Include input file paths as context
+    // Include inputs by type: context/spec (content injected), reference (paths only)
     if (stepDef.inputs && Array.isArray(stepDef.inputs)) {
-      const inputPaths = stepDef.inputs.map(inp => {
-        if (typeof inp === 'string') return inp
-        if (inp && typeof inp === 'object' && 'path' in (inp as Record<string, unknown>)) {
-          return String((inp as Record<string, unknown>).path)
+      const contentInputs: string[] = []
+      const referenceInputs: string[] = []
+
+      for (const inp of stepDef.inputs) {
+        if (typeof inp === 'string') {
+          // String inputs default to reference type (backward compatible)
+          referenceInputs.push(inp)
+          continue
         }
-        return String(inp)
-      })
-      parts.push(`\nInput files:\n${inputPaths.map(p => `- ${p}`).join('\n')}`)
+
+        if (inp && typeof inp === 'object') {
+          const inputObj = inp as Record<string, unknown>
+          const path = inputObj.path ? String(inputObj.path) : null
+          const type = String(inputObj.type ?? 'reference')
+          const label = inputObj.label ? String(inputObj.label) : null
+
+          if (!path) continue
+
+          if (type === 'context' || type === 'spec') {
+            // Read and inject content
+            const resolvedPath = resolveOutputPath(run, path)
+            if (fs.existsSync(resolvedPath)) {
+              const content = fs.readFileSync(resolvedPath, 'utf-8')
+              const header = label || type
+              contentInputs.push(`## ${header}\n${content}`)
+            } else {
+              // File doesn't exist, note it in references
+              referenceInputs.push(`${path} (not found)`)
+            }
+          } else {
+            // reference type (default) - just list the path
+            referenceInputs.push(path)
+          }
+        }
+      }
+
+      // Inject content inputs first (more important context)
+      if (contentInputs.length > 0) {
+        parts.push(`\n${contentInputs.join('\n\n')}`)
+      }
+
+      // Finally reference inputs (just paths)
+      if (referenceInputs.length > 0) {
+        parts.push(`\nInput files:\n${referenceInputs.map(p => `- ${p}`).join('\n')}`)
+      }
     }
 
     // Include expected output paths

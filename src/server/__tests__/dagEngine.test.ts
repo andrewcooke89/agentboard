@@ -717,6 +717,91 @@ describe('dagEngine', () => {
       expect(freshRun.steps_state[2].status).toBe('queued')
       expect(freshRun.steps_state[2].poolSlotId).toBeTruthy()
     })
+
+    test('spawn_session injects content from context/spec input types', async () => {
+      const nodefs = require('node:fs')
+      const nodepath = require('node:path')
+
+      // Create test context file
+      const tmpDir = '/tmp/agentboard-context-test'
+      nodefs.mkdirSync(tmpDir, { recursive: true })
+      const contextFile = nodepath.join(tmpDir, 'context-summary.yaml')
+      nodefs.writeFileSync(contextFile, 'KEY_CONTEXT: This is critical info', 'utf-8')
+
+      try {
+        const yaml = [
+          'name: context-inject-test',
+          'system:',
+          '  engine: dag',
+          '  session_pool: true',
+          'steps:',
+          '  - name: context-step',
+          '    type: spawn_session',
+          '    projectPath: /tmp/test',
+          '    agent: implementor',
+          '    description: "do work with context"',
+          `    inputs:`,
+          `      - path: "${contextFile}"`,
+          `        type: context`,
+          `        label: Context`,
+        ].join('\n')
+
+        const wf = createWorkflowDef(workflowStore, yaml, 'context-inject-test')
+        const parsed = getParsed(yaml)
+        const run = createTestRun(workflowStore, wf.id, [
+          makeStepState({ name: 'context-step', type: 'spawn_session' }),
+        ])
+
+        dagEngine.tick(run, parsed)
+        const freshRun = workflowStore.getRun(run.id)!
+
+        // Task should be created
+        const tasks = taskStore.listTasks()
+        const task = tasks.find(t => t.projectPath === '/tmp/test')
+        expect(task).toBeTruthy()
+
+        // Prompt should include injected content
+        expect(task.prompt).toContain('## Context')
+        expect(task.prompt).toContain('KEY_CONTEXT: This is critical info')
+      } finally {
+        nodefs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
+
+    test('spawn_session keeps reference inputs as paths only', async () => {
+      const yaml = [
+        'name: reference-test',
+        'system:',
+        '  engine: dag',
+        '  session_pool: true',
+        'steps:',
+        '  - name: reference-step',
+        '    type: spawn_session',
+        '    projectPath: /tmp/test',
+        '    agent: reviewer',
+        '    inputs:',
+        '      - path: /path/to/spec.yaml',
+        '        type: reference',
+      ].join('\n')
+
+      const wf = createWorkflowDef(workflowStore, yaml, 'reference-test')
+      const parsed = getParsed(yaml)
+      const run = createTestRun(workflowStore, wf.id, [
+        makeStepState({ name: 'reference-step', type: 'spawn_session' }),
+      ])
+
+      dagEngine.tick(run, parsed)
+      const freshRun = workflowStore.getRun(run.id)!
+
+      const tasks = taskStore.listTasks()
+      const task = tasks.find(t => t.projectPath === '/tmp/test')
+      expect(task).toBeTruthy()
+
+      // Reference inputs should only show path, not content
+      expect(task.prompt).toContain('Input files:')
+      expect(task.prompt).toContain('- /path/to/spec.yaml')
+      expect(task.prompt).not.toContain('##')
+    })
   })
 
   // ── Workflow failure on step failure ────────────────────────────────────
