@@ -3,16 +3,19 @@
 # Spec-governed bug fix pipeline with reproduction, root cause analysis,
 # TDD regression testing, and implementation verification.
 #
-# Original 6-step structure expanded to 10 steps:
+# Original 6-step structure expanded to 11 steps:
 # The broken team_mode on implement-fix (never implemented in engine) is
 # replaced with a deterministic TDD cycle: write-regression-test → verify-red
 # → implement-fix → verify-green.
 #
 # Engine: DAG (auto-detected from depends_on)
+#
+# Context Injection: Gemini extracts bug context early, injected into all
+# subsequent spawn_session steps to reduce workload on main agents.
 
 pipeline:
   name: fix-pipeline
-  version: "2.0"
+  version: "2.1"
   description: "Bug fix pipeline with TDD regression testing and verdict enforcement"
 
   system:
@@ -101,6 +104,35 @@ pipeline:
       result_file: "{{ output_dir }}/spec/bug-spec.yaml"
       timeoutSeconds: 300
 
+    # ── Step 1.5: Extract Bug Context (NEW) ─────────────────────────────
+    # Gemini extracts relevant context from bug spec and affected code
+    # This context is injected into all subsequent spawn_session steps
+    - name: extract-bug-context
+      type: gemini_offload
+      depends_on: [write-bug-spec]
+      description: "Extract bug context for injection into subsequent analysis steps"
+      prompt_template: |
+        Analyze the bug specification and extract relevant context for the fix team.
+
+        ## Bug Specification
+        {{bug-spec.yaml}}
+
+        Extract and structure:
+        - affected_areas: List of files/components touched by the bug
+        - bug_summary: Concise description of what's broken
+        - reproduction_summary: Key steps to reproduce
+        - severity_assessment: Impact analysis
+        - suggested_investigation_areas: Where to start looking
+
+        Output as YAML.
+      inputs:
+        - path: "{{ output_dir }}/spec/bug-spec.yaml"
+          label: bug-spec.yaml
+      output_file: "{{ output_dir }}/bug-context.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 60
+
     # ── Step 2: Reproduce Bug ──────────────────────────────────────────
     - name: reproduce
       type: spawn_session
@@ -110,6 +142,8 @@ pipeline:
       prompt: |
         You are a bug reproducer. Your job is to verify that a bug is reproducible
         before the team invests in root cause analysis.
+
+        Bug context has been extracted and provided below.
 
         Read the bug specification at: {{ output_dir }}/spec/bug-spec.yaml
 
@@ -134,15 +168,21 @@ pipeline:
         allowed: [pass]
         fail_message: "Bug could not be reproduced (verdict: {{ verdict }})"
       timeoutSeconds: 600
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
 
     # ── Step 3: Root Cause Analysis ────────────────────────────────────
     - name: root-cause
       type: spawn_session
-      depends_on: [reproduce]
+      depends_on: [reproduce, extract-bug-context]
       projectPath: "{{ project_path }}"
       prompt: |
         You are a root cause analyst. Perform deep investigation to identify
         the root cause of a confirmed bug.
+
+        Bug context has been extracted and provided below.
 
         Read these files:
           - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
@@ -167,16 +207,22 @@ pipeline:
       signal_dir: "{{ output_dir }}/signals"
       result_file: "{{ output_dir }}/root-cause-analysis.yaml"
       timeoutSeconds: 900
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
 
     # ── Step 4: Write Fix Spec ─────────────────────────────────────────
     - name: fix-spec
       type: spawn_session
       model: claude
-      depends_on: [root-cause]
+      depends_on: [root-cause, extract-bug-context]
       projectPath: "{{ project_path }}"
       prompt: |
         You are a fix specification writer. Write a detailed fix specification
         that describes exactly what changes need to be made to fix the bug.
+
+        Bug context has been extracted and provided below.
 
         Read these files:
           - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
@@ -201,6 +247,10 @@ pipeline:
       signal_dir: "{{ output_dir }}/signals"
       result_file: "{{ output_dir }}/spec/fix-spec.yaml"
       timeoutSeconds: 300
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
 
     # ── Step 5: Capture Test Baseline ────────────────────────────────
     # Snapshot current test pass/fail counts BEFORE writing regression tests
@@ -244,13 +294,15 @@ pipeline:
     - name: write-regression-test
       type: spawn_session
       model: glm
-      depends_on: [capture-test-baseline]
+      depends_on: [capture-test-baseline, extract-bug-context]
       tier_min: 2
       projectPath: "{{ project_path }}"
       prompt: |
         You are a test writer. Write a regression test that reproduces this bug.
         The test MUST FAIL with the current code (before the fix is applied).
         Do NOT implement the fix — only write tests.
+
+        Bug context has been extracted and provided below.
 
         Read these files:
           - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
@@ -272,6 +324,10 @@ pipeline:
       signal_dir: "{{ output_dir }}/signals"
       result_file: "{{ output_dir }}/regression-test-report.yaml"
       timeoutSeconds: 600
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
 
     # ── Step 7: Verify Red (TDD) ──────────────────────────────────────
     # Confirm the regression test actually fails (new failures vs baseline)
@@ -305,7 +361,7 @@ pipeline:
         fi
         set -e
 
-        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | grep -oP '\d+' || echo "0")
+        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
         NEW_FAILURES=$((${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0}))
         echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
 
@@ -324,11 +380,13 @@ pipeline:
     - name: implement-fix
       type: spawn_session
       model: glm
-      depends_on: [fix-spec, verify-red]
+      depends_on: [fix-spec, verify-red, extract-bug-context]
       projectPath: "{{ project_path }}"
       prompt: |
         You are a bug fix implementor. Implement the fix described in the fix spec.
         Do NOT modify test files — only implementation code.
+
+        Bug context has been extracted and provided below.
 
         Read these files:
           - Fix spec: {{ output_dir }}/spec/fix-spec.yaml
@@ -355,12 +413,44 @@ pipeline:
         allowed: [pass]
         fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass'"
       timeoutSeconds: 1800
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 8b: Edge contract verification (deterministic, no AI) ────
+    - name: verify-edges
+      type: native_step
+      depends_on: [implement-fix]
+      command: |
+        PLAN_ID=$(grep -oP 'plan_id:\s*\K\S+' "{{ affected_spec_path }}" 2>/dev/null || true)
+        if [ -z "$PLAN_ID" ]; then
+          echo "SKIP: No plan_id in spec — edge verification not applicable"
+          exit 0
+        fi
+        RESULT=$(curl -sf "http://localhost:3847/api/verify/${PLAN_ID}?project_path={{ project_path }}" 2>/dev/null || true)
+        if [ -z "$RESULT" ]; then
+          echo "SKIP: Planner HTTP server not reachable — edge verification skipped"
+          exit 0
+        fi
+        PASSED=$(echo "$RESULT" | jq -r '.passed')
+        echo "$RESULT" | jq .
+        if [ "$PASSED" = "true" ]; then
+          echo "PASS: All edge contracts verified"
+          exit 0
+        else
+          echo "FAIL: Edge contract verification failed"
+          exit 1
+        fi
+      working_dir: "{{ project_path }}"
+      on_step_failure: completed_with_warnings
+      timeoutSeconds: 300
 
     # ── Step 9: Verify Green (TDD) ────────────────────────────────────
     # Confirm no NEW failures vs baseline (pre-existing failures are OK)
     - name: verify-green
       type: native_step
-      depends_on: [implement-fix]
+      depends_on: [verify-edges]
       tier_min: 2
       command: |
         BASELINE_FILE="{{ output_dir }}/test-baseline.json"
@@ -388,7 +478,7 @@ pipeline:
         fi
         set -e
 
-        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | grep -oP '\d+' || echo "0")
+        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
         NEW_FAILURES=$((${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0}))
         echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
 
@@ -436,4 +526,3 @@ pipeline:
       model: gemini-2.5-flash
       max_tokens: 4000
       timeoutSeconds: 120
-

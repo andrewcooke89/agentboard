@@ -217,7 +217,7 @@ steps:
     depends_on:
       - generation
     projectPath: "{{ project_path }}"
-    command: "bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}'"
+    command: "cd /home/andrew-cooke/tools/agentboard && bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}' --language '{{ language }}' --framework '{{ framework }}'"
     prompt: "Per-WU TDD orchestrator — deterministic implementation pipeline"
     signal_protocol: true
     signal_dir: "{{ output_dir }}/signals"
@@ -282,12 +282,41 @@ steps:
     working_dir: "{{ project_path }}"
     timeoutSeconds: 600
 
+  # Stage 5c: Edge contract verification (deterministic, no AI)
+  - name: verify-edges
+    type: native_step
+    depends_on:
+      - tdd-verify-green
+    command: |
+      PLAN_ID=$(grep -oP 'plan_id:\s*\K\S+' "{{ output_dir }}/refined-spec.yaml" 2>/dev/null || grep -oP 'plan_id:\s*\K\S+' "{{ spec_path }}" 2>/dev/null || true)
+      if [ -z "$PLAN_ID" ]; then
+        echo "SKIP: No plan_id in spec — edge verification not applicable"
+        exit 0
+      fi
+      RESULT=$(curl -sf "http://localhost:3847/api/verify/${PLAN_ID}?project_path={{ project_path }}" 2>/dev/null || true)
+      if [ -z "$RESULT" ]; then
+        echo "SKIP: Planner HTTP server not reachable — edge verification skipped"
+        exit 0
+      fi
+      PASSED=$(echo "$RESULT" | jq -r '.passed')
+      echo "$RESULT" | jq .
+      if [ "$PASSED" = "true" ]; then
+        echo "PASS: All edge contracts verified"
+        exit 0
+      else
+        echo "FAIL: Edge contract verification failed"
+        exit 1
+      fi
+    working_dir: "{{ project_path }}"
+    on_step_failure: completed_with_warnings
+    timeoutSeconds: 300
+
   # Stage 6: Conformance verification
   - name: conformance
     type: spawn_session
     model: claude
     depends_on:
-      - tdd-verify-green
+      - verify-edges
     projectPath: "{{ project_path }}"
     prompt: |
       Verify implementation conformance against the approved spec.

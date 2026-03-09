@@ -17,6 +17,9 @@ required_fields:
     description: "Scope definition with included/excluded paths"
 
 optional_fields:
+  plan_id:
+    type: string
+    description: "Planner plan ID for edge contract verification"
   description:
     type: string
     description: "Detailed description of the feature"
