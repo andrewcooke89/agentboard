@@ -1100,6 +1100,8 @@ describe('workflowEngine', () => {
     }, 15000)
 
     test('native_step with unknown action errors', async () => {
+      // P2-17: unknown action values are now rejected at schema validation time,
+      // not at engine execution time.
       const yaml = [
         'name: native-bad-action',
         'steps:',
@@ -1107,24 +1109,10 @@ describe('workflowEngine', () => {
         '    type: native_step',
         '    action: nonexistent_action',
       ].join('\n')
-      const wf = createWorkflowDef(workflowStore, yaml, 'native-bad-action')
-      const run = createTestRun(workflowStore, wf.id, [
-        makeStepState({ name: 'bad', type: 'native_step' }),
-      ])
-
-      engine.start()
-
-      const deadline = Date.now() + 3000
-      let updatedRun = workflowStore.getRun(run.id)
-      while (Date.now() < deadline) {
-        updatedRun = workflowStore.getRun(run.id)
-        if (updatedRun && updatedRun.status !== 'running') break
-        await Bun.sleep(100)
-      }
-      engine.stop()
-
-      expect(updatedRun!.status).toBe('failed')
-      expect(updatedRun!.steps_state[0].errorMessage).toContain('unknown predefined action')
+      const { parseWorkflowYAML } = await import('../workflowSchema')
+      const result = parseWorkflowYAML(yaml)
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('nonexistent_action'))).toBe(true)
     })
 
     test('native_step with timeout triggers SIGTERM', async () => {

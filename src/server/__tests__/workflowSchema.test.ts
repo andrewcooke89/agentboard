@@ -2885,6 +2885,9 @@ triggers:
   test('gemini_offload step type accepted and requires prompt_template', () => {
     const yaml = `
 name: test
+variables:
+  - name: input
+    type: string
 steps:
   - name: analyze
     type: gemini_offload

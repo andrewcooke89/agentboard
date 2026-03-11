@@ -254,8 +254,8 @@ work_units:
     broken
 `)
 
-      const result = parseManifest('invalid-yaml.yaml', TEMP_DIR)
-      expect(result).toBeNull()
+      // P1-31: malformed YAML must throw so the pipeline fails visibly
+      expect(() => parseManifest('invalid-yaml.yaml', TEMP_DIR)).toThrow()
     })
 
     test('handles JSON instead of YAML', () => {

@@ -127,7 +127,8 @@ export function readReviewerVerdict(
   // Extract feedback
   let feedback: string | null = null
   if (feedbackField && doc[feedbackField] !== undefined && doc[feedbackField] !== null) {
-    feedback = String(doc[feedbackField])
+    const feedbackValue = doc[feedbackField]
+    feedback = typeof feedbackValue === 'string' ? feedbackValue : JSON.stringify(feedbackValue)
   }
 
   return { verdict, raw, feedback, warning }
@@ -142,8 +143,8 @@ function extractVerdictFromText(
   verdictField: string,
   feedbackField?: string,
 ): VerdictResult | null {
-  // Try "field: VALUE" pattern
-  const fieldPattern = new RegExp(`${escapeRegex(verdictField)}\\s*:\\s*(.+)`, 'im')
+  // Try "field: VALUE" pattern (capture only the first word to avoid inline comments)
+  const fieldPattern = new RegExp(`${escapeRegex(verdictField)}\\s*:\\s*(\\S+)`, 'im')
   const fieldMatch = content.match(fieldPattern)
   if (fieldMatch) {
     const raw = fieldMatch[1].trim()

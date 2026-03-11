@@ -112,8 +112,8 @@ work_units:
 this is not valid yaml: [
 `)
 
-    const result = parseManifest(manifestPath, TEMP_DIR)
-    expect(result).toBeNull()
+    // P1-31: malformed YAML must throw so the pipeline fails visibly
+    expect(() => parseManifest(manifestPath, TEMP_DIR)).toThrow()
   })
 
   test('returns null for empty manifest', () => {

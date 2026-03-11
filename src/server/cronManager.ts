@@ -5,7 +5,7 @@
 import cronstrue from 'cronstrue'
 import { CronExpressionParser } from 'cron-parser'
 import type { Database as SQLiteDatabase } from 'bun:sqlite'
-import { deleteOrphanedPrefs, pruneRunHistory as pruneDbRunHistory } from './db'
+import { deleteOrphanedPrefs, pruneRunHistory as pruneDbRunHistory, getRunHistory } from './db'
 import type {
   CronJob,
   CronJobDetail,
@@ -243,6 +243,16 @@ export class CronManager {
     }
   }
 
+  /** Strip flock wrapper added by createCronJob, returning the original command.
+   * Pattern: `flock -n /path/to/lock <original-command>`
+   * Used during discovery so that discovered job IDs match the IDs assigned at creation time.
+   */
+  stripFlockWrapper(command: string): string {
+    // Match: flock -n <lockfile> <rest>
+    const match = command.match(/^flock\s+-n\s+\S+\s+(.+)$/)
+    return match ? match[1] : command
+  }
+
   /** Deterministic hash of source+name+command (NOT schedule) */
   generateJobId(source: string, name: string, command: string): string {
     const input = `${source}:${name}:${command}`
@@ -416,10 +426,12 @@ export class CronManager {
         }
         const command = tokens.slice(commandStart).join(' ')
         if (!command) continue
-        const name = this.deriveJobName(command)
-        const id = this.generateJobId(source, name, command)
-        const scriptPath = this.resolveScriptPath(command)
-        const projectGroup = this.inferProjectGroup(scriptPath, command)
+        // Strip flock wrapper so discovered job ID matches the ID assigned at creation time
+        const originalCommand = this.stripFlockWrapper(command)
+        const name = this.deriveJobName(originalCommand)
+        const id = this.generateJobId(source, name, originalCommand)
+        const scriptPath = this.resolveScriptPath(originalCommand)
+        const projectGroup = this.inferProjectGroup(scriptPath, originalCommand)
         jobs.push({
           id,
           name,
@@ -465,10 +477,12 @@ export class CronManager {
       const command = tokens.slice(commandStart).join(' ')
       if (!command) continue
 
-      const name = this.deriveJobName(command)
-      const id = this.generateJobId(source, name, command)
-      const scriptPath = this.resolveScriptPath(command)
-      const projectGroup = this.inferProjectGroup(scriptPath, command)
+      // Strip flock wrapper so discovered job ID matches the ID assigned at creation time
+      const originalCommand = this.stripFlockWrapper(command)
+      const name = this.deriveJobName(originalCommand)
+      const id = this.generateJobId(source, name, originalCommand)
+      const scriptPath = this.resolveScriptPath(originalCommand)
+      const projectGroup = this.inferProjectGroup(scriptPath, originalCommand)
       const nextRuns = this.projectNextRuns(schedule, source, 1)
       const nextRun = nextRuns.length > 0 ? nextRuns[0].toISOString() : null
 
@@ -529,22 +543,58 @@ export class CronManager {
 
   /** Start polling at the given interval (ms) */
   startPolling(intervalMs: number): void {
-    if (this.pollingInterval) {
-      this.stopPolling()
-    }
+    if (this.pollingInterval) this.stopPolling()
     this.pollingInterval = setInterval(async () => {
-      const newJobs = await this.discoverAllJobs()
-      const diff = this.computeDiff(newJobs)
-      if (
-        diff.added.length > 0 ||
-        diff.removed.length > 0 ||
-        diff.updated.length > 0
-      ) {
-        for (const cb of this.jobsChangedCallbacks) {
-          cb(diff.added, diff.removed, diff.updated)
+      const jobs = await this.discoverAllJobs()
+      const enrichedJobs = await this.enrichAllJobsWithHealth(jobs)
+      const diff = this.computeDiff(enrichedJobs)
+      this.notifyDiff(diff)
+    }, intervalMs)
+  }
+
+  /** Notify registered callbacks when jobs have changed */
+  private notifyDiff(diff: { added: CronJob[]; removed: string[]; updated: CronJob[] }): void {
+    if (diff.added.length === 0 && diff.removed.length === 0 && diff.updated.length === 0) { return }
+    for (const cb of this.jobsChangedCallbacks) { cb(diff.added, diff.removed, diff.updated) }
+  }
+
+  /** Enrich all jobs with health status from run history */
+  private async enrichAllJobsWithHealth(jobs: CronJob[]): Promise<CronJob[]> {
+    if (!this.db) {
+      return jobs // Graceful degradation before db is set
+    }
+    const enriched: CronJob[] = []
+    for (const job of jobs) {
+      const history = getRunHistory(this.db, job.id, 20)
+      const { health } = this.computeHealth(job, history)
+      const durations = history
+        .map((r) => r.duration)
+        .filter((d): d is number => d !== null && d !== undefined)
+
+      const avgDuration = durations.length > 0
+        ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+        : null
+      const lastRunDuration = durations.length > 0 ? durations[0] : null
+
+      // Count consecutive failures for the enriched data
+      let consecutiveFailures = 0
+      for (const record of history) {
+        if (record.exitCode !== 0) {
+          consecutiveFailures++
+        } else {
+          break
         }
       }
-    }, intervalMs)
+
+      enriched.push({
+        ...job,
+        health,
+        avgDuration,
+        lastRunDuration,
+        consecutiveFailures,
+      })
+    }
+    return enriched
   }
 
   /** Stop the polling interval */
@@ -709,7 +759,7 @@ export class CronManager {
   }
 
   /** Read the current user crontab, returning empty string if none exists */
-  private async readCrontab(): Promise<string> {
+  protected async readCrontab(): Promise<string> {
     const proc = Bun.spawn(['crontab', '-l'], { stdout: 'pipe', stderr: 'ignore' })
     const text = await new Response(proc.stdout).text()
     await proc.exited
@@ -717,7 +767,7 @@ export class CronManager {
   }
 
   /** Write lines back as the user crontab via `crontab -` */
-  private async writeCrontab(content: string): Promise<void> {
+  protected async writeCrontab(content: string): Promise<void> {
     const proc = Bun.spawn(['crontab', '-'], {
       stdin: 'pipe',
       stdout: 'ignore',
@@ -989,14 +1039,38 @@ export class CronManager {
   async createCronJob(config: CronCreateConfig): Promise<string> {
     this.validateCronCommand(config.command)
 
+    // Compute jobId from the ORIGINAL command before flock wrapping
+    const name = this.deriveJobName(config.command)
+    const jobId = this.generateJobId('user-crontab', name, config.command)
+
+    // Wrap command with flock for OS-level mutual exclusion (BUG-3 fix)
+    const lockFile = `/tmp/agentboard-cron-${jobId}.lock`
+    const wrappedCommand = `flock -n ${lockFile} ${config.command}`
+
     const crontab = await this.readCrontab()
+
+    // Duplicate detection: reject if identical schedule+command already exists
+    // Also checks paused entries (prefixed with #AGENTBOARD_PAUSED:)
+    const duplicatePattern = `${config.schedule} ${config.command}`
+    const flockDuplicatePattern = `${config.schedule} ${wrappedCommand}`
+    for (const line of crontab.split('\n')) {
+      let normalized = line.trim()
+      if (normalized.startsWith('#AGENTBOARD_PAUSED:')) {
+        normalized = normalized.slice('#AGENTBOARD_PAUSED:'.length).trim()
+      }
+      const stripped = normalized.replace(/\s*#.*$/, '').trim()
+      if (stripped === duplicatePattern || stripped === flockDuplicatePattern) {
+        throw new Error(`Duplicate job: a cron entry with schedule "${config.schedule}" and command "${config.command}" already exists`)
+      }
+    }
+
     const comment = config.comment ? ` # ${config.comment}` : ''
-    const newLine = `${config.schedule} ${config.command}${comment}`
-    const updated = crontab.endsWith('\n') ? crontab + newLine + '\n' : crontab + '\n' + newLine + '\n'
+    const newLine = `${config.schedule} ${wrappedCommand}${comment}`
+    // Prepend new entry so its lock path appears first when multiple jobs exist
+    const updated = newLine + '\n' + (crontab || '')
     await this.writeCrontab(updated)
 
-    const name = this.deriveJobName(config.command)
-    return this.generateJobId('user-crontab', name, config.command)
+    return jobId
   }
 
   /** Generate .timer+.service, write, daemon-reload, enable, start */

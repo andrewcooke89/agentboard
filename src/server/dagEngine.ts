@@ -38,9 +38,10 @@ import {
   writeResolutionFile,
   validateSignalAuthority,
   readSignalFile,
-  
+  archiveStaleSignals,
+  archiveConsumedSignal,
 } from './signalProtocol'
-import type { SignalFile } from './signalProtocol'
+import type { SignalFile, SignalMatch } from './signalProtocol'
 import {
   readReviewerVerdict,
   writeReviewLoopSummary,
@@ -154,6 +155,12 @@ export function createDAGEngine(
   // ROBUSTNESS-2 (REQ-37): In-memory re-entrance guard for processReviewLoop.
   // Key: "{runId}:{stepName}". NOT persisted to DB to avoid stale locks.
   const reviewLoopProcessing = new Set<string>()
+
+  // P1-13: Re-entrancy guard for tick() — prevents overlapping executions.
+  let tickInProgress = false
+
+  // P0-4: Track consecutive tick exceptions per run to detect stuck runs.
+  const tickExceptionCounts = new Map<string, number>()
 
   function getProcessedSignals(runId: string, stepName: string): Set<string> {
     const key = `${runId}:${stepName}`
@@ -508,7 +515,15 @@ export function createDAGEngine(
         variables: run.variables,
       }
 
-      const expanded = expandPerWorkUnit(containerDef, expansionCtx)
+      let expanded: ReturnType<typeof expandPerWorkUnit>
+      try {
+        expanded = expandPerWorkUnit(containerDef, expansionCtx)
+      } catch (err) {
+        // parsed is not in scope here (hydratePerWorkUnitChildDefs is called before tick parsing).
+        // Pass undefined — failWorkflow will skip pipeline-level cleanup hooks gracefully.
+        failWorkflow(run, `Failed to parse work unit manifest: ${err instanceof Error ? err.message : String(err)}`, undefined)
+        return
+      }
       for (const item of expanded) {
         if (!stepDefMap.has(item.name)) {
           stepDefMap.set(item.name, {
@@ -564,14 +579,14 @@ export function createDAGEngine(
         const depIdx = stateIndexMap.get(depName)
         if (depIdx === undefined) continue // Unknown dep — skip (may be optional)
         const depState = run.steps_state[depIdx]
-        // Completed or skipped = satisfied
-        if (depState.status === 'completed' || depState.status === 'skipped') continue
+        // Completed, skipped, or partial = satisfied (P1-17: partial counts as done)
+        if (depState.status === 'completed' || depState.status === 'skipped' || depState.status === 'partial') continue
         // Paused statuses block dependents — these require human intervention or resolution
         // before the pipeline can proceed. paused_human (review escalation), paused_starvation
         // (pool exhaustion), paused_amendment (spec concern), paused_exploration (needs input),
         // and paused_escalated all mean the step has NOT successfully completed.
-        // Failed dependency blocks this step
-        if (depState.status === 'failed' || depState.status === 'cancelled') return false
+        // Failed/terminal-error dependency blocks this step
+        if (depState.status === 'failed' || depState.status === 'cancelled' || depState.status === 'signal_timeout' || depState.status === 'signal_error') return false
         // Any other status (pending, running, queued) = not yet satisfied
         return false
       }
@@ -610,8 +625,8 @@ export function createDAGEngine(
       const depIdx = stateIndexMap.get(depName)
       if (depIdx === undefined) return false
       const depState = run.steps_state[depIdx]
-      // Completed or skipped = satisfied
-      if (depState.status === 'completed' || depState.status === 'skipped') continue
+      // Completed, skipped, or cancelled = satisfied (P1-18: cancelled unblocks under continue_others)
+      if (depState.status === 'completed' || depState.status === 'skipped' || depState.status === 'cancelled') continue
       // Any other status = not yet satisfied
       return false
     }
@@ -883,6 +898,7 @@ export function createDAGEngine(
   function releasePoolSlotIfHeld(stepState: StepRunState, run: WorkflowRun): void {
     if (stepState.poolSlotId && pool) {
       const promoted = pool.releaseSlot(stepState.poolSlotId)
+      stepState.poolSlotId = null // P0-7: clear to prevent double-release
       if (promoted) {
         ctx.broadcast({
           type: 'pool_slot_granted',
@@ -912,7 +928,7 @@ export function createDAGEngine(
   ): void {
     switch (stepDef.type) {
       case 'spawn_session': {
-        const projectPath = stepDef.projectPath ?? run.output_dir
+        const projectPath = stepDef.projectPath ?? run.variables?.project_path ?? run.output_dir
         const allowedRoots = ctx.config.allowedRoots ?? []
         if (allowedRoots.length > 0 && projectPath) {
           const resolved = path.resolve(projectPath)
@@ -923,6 +939,7 @@ export function createDAGEngine(
             stepState.status = 'failed'
             stepState.errorMessage = `projectPath "${projectPath}" is not under any allowed root`
             stepState.completedAt = new Date().toISOString()
+            releasePoolSlotIfHeld(stepState, run) // P1-10: release slot on security check failure
             saveAndBroadcast(run)
             return
           }
@@ -938,8 +955,25 @@ export function createDAGEngine(
         // Phase 7: Signal directory setup
         if (stepDef.signal_protocol && stepDef.signal_dir) {
           try {
-            const signalDir = stepDef.signal_dir
+            const rawSignalDir = stepDef.signal_dir
+            const signalDir = resolveTemplateVars(stepDef.signal_dir, run)
+            ctx.logger.info('dag_signal_dir_resolve', {
+              runId: run.id,
+              step: sanitizeForLog(stepDef.name),
+              rawSignalDir,
+              resolvedSignalDir: signalDir,
+            })
             ensureSignalDir(signalDir)
+            // Archive stale signals from previous cancelled/failed runs
+            const archived = archiveStaleSignals(signalDir)
+            if (archived > 0) {
+              ctx.logger.info('dag_stale_signals_archived', {
+                runId: run.id,
+                step: sanitizeForLog(stepDef.name),
+                signalDir,
+                archivedCount: archived,
+              })
+            }
             ctx.logger.info('dag_signal_dir_created', {
               runId: run.id,
               step: sanitizeForLog(stepDef.name),
@@ -955,12 +989,18 @@ export function createDAGEngine(
           }
         }
         const rawPrompt = buildAgentPrompt(stepDef, run)
-        const prompt = outputDir
+        let prompt = outputDir
           ? `Working directory: ${outputDir}\n\n${rawPrompt}`
           : rawPrompt
 
+        // Inject signal-writing instructions for non-command steps with signal_protocol
+        if (stepDef.signal_protocol && stepDef.signal_dir && !stepDef.command) {
+          const signalDir = resolveTemplateVars(stepDef.signal_dir, run)
+          prompt += `\n\n## Signal Protocol — IMPORTANT\nWhen you have completed your task, you MUST write a YAML signal file to indicate completion.\n\nWrite this file: ${signalDir}/${stepDef.name}_completed.yaml\n\nUse atomic write (write to a temp file in ${signalDir}/.tmp/ then rename).\n\nThe file MUST contain exactly:\n\`\`\`yaml\nversion: 1\nsignal_type: completed\ntimestamp: "${new Date().toISOString()}"\nagent: claude\nstep_name: "${stepDef.name}"\nrun_id: "${run.id}"\ncheckpoint: null\n\`\`\`\n\nIf you encounter an error and cannot complete, write the same file but with \`signal_type: error\` instead.\n`
+        }
+
         const task = taskStore.createTask({
-          projectPath: stepDef.projectPath ?? run.output_dir,
+          projectPath: stepDef.projectPath ?? run.variables?.project_path ?? run.output_dir,
           prompt,
           templateId: null,
           priority: 5,
@@ -991,7 +1031,7 @@ export function createDAGEngine(
         // Phase 7: Initialize signal protocol state
         if (stepDef.signal_protocol) {
           stepState.signalProtocol = true
-          stepState.signalDir = stepDef.signal_dir ?? null
+          stepState.signalDir = (stepDef.signal_dir ? resolveTemplateVars(stepDef.signal_dir, run) : null)
           stepState.signalTimeoutSeconds = stepDef.signal_timeout_seconds ?? (stepDef.timeoutSeconds ?? 300) + 60
           stepState.verifiedCompletion = true // default, set false if synthetic later
           stepState.status = 'waiting_signal'
@@ -1065,8 +1105,14 @@ export function createDAGEngine(
         stepState.startedAt = new Date().toISOString()
         saveAndBroadcast(run)
 
-        // Execute Gemini call asynchronously
-        executeGeminiOffload(run, stepDef, stepState)
+        // Execute Gemini call asynchronously — attach .catch() to prevent silent failures
+        executeGeminiOffload(run, stepDef, stepState).catch(err => {
+          const errorMsg = err instanceof Error ? err.message : String(err)
+          stepState.status = 'failed'
+          stepState.errorMessage = `gemini_offload uncaught: ${errorMsg}`
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+        })
         break
       }
 
@@ -1148,8 +1194,14 @@ export function createDAGEngine(
         stepState.startedAt = new Date().toISOString()
         saveAndBroadcast(run)
 
-        // Execute review asynchronously
-        executeReviewStep(run, stepDef, stepState)
+        // Execute review asynchronously — attach .catch() to prevent silent failures
+        executeReviewStep(run, stepDef, stepState).catch(err => {
+          const errorMsg = err instanceof Error ? err.message : String(err)
+          stepState.status = 'failed'
+          stepState.errorMessage = `review uncaught: ${errorMsg}`
+          stepState.completedAt = new Date().toISOString()
+          saveAndBroadcast(run)
+        })
         break
       }
 
@@ -1157,6 +1209,7 @@ export function createDAGEngine(
         stepState.status = 'failed'
         stepState.errorMessage = `Unknown step type: ${stepDef.type}`
         stepState.completedAt = new Date().toISOString()
+        releasePoolSlotIfHeld(stepState, run) // P1-16: release slot on unknown step type
         saveAndBroadcast(run)
       }
     }
@@ -2127,7 +2180,7 @@ export function createDAGEngine(
       case 'amendment_check': {
         // Synchronous execution -- scan signal_dir for amendment signals
         try {
-          const signalDir = stepDef.signal_dir
+          const signalDir = resolveTemplateVars(stepDef.signal_dir ?? '', run)
           if (!signalDir || !fs.existsSync(signalDir)) {
             stepState.status = 'completed'
             stepState.completedAt = new Date().toISOString()
@@ -2160,7 +2213,13 @@ export function createDAGEngine(
               }
 
               const content = fs.readFileSync(filePath, 'utf-8')
-              const parsed = yaml.load(content) as Record<string, unknown>
+              let parsed: Record<string, unknown>
+              try {
+                parsed = yaml.load(content) as Record<string, unknown>
+              } catch (yamlErr) {
+                ctx.logger.warn('dag_amendment_yaml_parse_error', { runId: run.id, step: sanitizeForLog(stepState.name), file: sanitizeForLog(file), error: String(yamlErr) })
+                continue
+              }
               if (!parsed || typeof parsed !== 'object') continue
 
               const signalType = String(parsed.signal_type ?? '')
@@ -2247,7 +2306,7 @@ export function createDAGEngine(
       case 'reconcile-spec': {
         // P-8 (REQ-36, REQ-37): Batch reconciliation — scan signal_dir for reconciliation amendments
         try {
-          const signalDir = stepDef.signal_dir
+          const signalDir = resolveTemplateVars(stepDef.signal_dir ?? '', run)
           if (!signalDir || !fs.existsSync(signalDir)) {
             stepState.status = 'completed'
             stepState.completedAt = new Date().toISOString()
@@ -2282,7 +2341,13 @@ export function createDAGEngine(
               }
 
               const content = fs.readFileSync(filePath, 'utf-8')
-              const parsed = yaml.load(content) as Record<string, unknown>
+              let parsed: Record<string, unknown>
+              try {
+                parsed = yaml.load(content) as Record<string, unknown>
+              } catch (yamlErr) {
+                ctx.logger.warn('dag_reconcile_yaml_parse_error', { runId: run.id, step: sanitizeForLog(stepState.name), file: sanitizeForLog(file), error: String(yamlErr) })
+                continue
+              }
               if (!parsed || typeof parsed !== 'object') continue
 
               const signalType = String(parsed.signal_type ?? '')
@@ -2417,14 +2482,16 @@ export function createDAGEngine(
   ): void {
     // REQ-14/REQ-44: Pass processed signal files set for deduplication
     const processed = getProcessedSignals(run.id, stepState.name)
-    const signal = checkStepSignals(
+    const match: SignalMatch | null = checkStepSignals(
       stepState.signalDir!,
       stepState.name,
       stepState.startedAt!,
       processed,
+      run.id,
     )
 
-    if (signal) {
+    if (match) {
+      const { signal, filePath: signalFilePath } = match
       // Validate signal authority
       const loggerAdapter = { warn: (...args: unknown[]) => ctx.logger.warn(String(args[0]), typeof args[1] === 'object' ? args[1] as Record<string, unknown> : {}) }
       if (!validateSignalAuthority(signal, loggerAdapter)) {
@@ -2442,7 +2509,7 @@ export function createDAGEngine(
         run_id: run.id,
         step_name: stepState.name,
         signal_type: signal.signal_type,
-        signal_file_path: `${stepState.signalDir}/${stepState.name}_${signal.signal_type}.yaml`,
+        signal_file_path: signalFilePath,
         resolution: null,
         resolution_file_path: null,
         resolved_at: null,
@@ -2721,9 +2788,23 @@ export function createDAGEngine(
 
     try {
       const fullPath = resolveOutputPath(run, stepDef.result_file)
-      if (!fs.existsSync(fullPath)) return
+      if (!fs.existsSync(fullPath)) {
+        // P1-32: log warning; fail step if verdict enforcement is required
+        if (stepDef.enforce_verdict) {
+          ctx.logger.warn('collect_result_missing_file', { runId: run.id, step: stepDef.name, path: fullPath })
+          stepState.status = 'failed'
+          stepState.errorMessage = `Result file not found (required for verdict enforcement): ${fullPath}`
+          stepState.completedAt = new Date().toISOString()
+          releasePoolSlotIfHeld(stepState, run)
+          saveAndBroadcast(run)
+        }
+        return
+      }
       const stat = fs.statSync(fullPath)
-      if (stat.size > 1024 * 1024) return // 1MB limit
+      if (stat.size > 1024 * 1024) {
+        ctx.logger.warn('collect_result_oversized', { runId: run.id, step: stepDef.name, sizeBytes: stat.size })
+        return // 1MB limit — still treat as missing (no fail on oversize)
+      }
       stepState.resultContent = fs.readFileSync(fullPath, 'utf-8')
       stepState.resultCollected = true
       trackStepOutputHash(run, stepState)
@@ -3057,6 +3138,30 @@ export function createDAGEngine(
 
     // ── Queued: waiting for pool slot ──
     if (stepState.status === 'queued' && stepState.poolSlotId) {
+      // P1-12: producer starvation detection — mirrors reviewer starvation check
+      if (!stepState.producerQueuedAt) {
+        stepState.producerQueuedAt = new Date().toISOString()
+      }
+      const producerElapsed = (Date.now() - new Date(stepState.producerQueuedAt).getTime()) / 1000
+      if (producerElapsed > 300) {
+        ctx.logger.warn('dag_review_loop_producer_starvation', {
+          runId: run.id,
+          step: sanitizeForLog(stepDef.name),
+          waitSeconds: Math.round(producerElapsed),
+        })
+        stepState.status = 'paused_starvation' as any
+        stepState.errorMessage = `Pool starvation: producer queued for ${Math.round(producerElapsed)}s, exceeds 300s timeout`
+        releasePoolSlotIfHeld(stepState, run)
+        saveAndBroadcast(run)
+        ctx.broadcast({
+          type: 'step_starvation',
+          runId: run.id,
+          stepName: stepDef.name,
+          waitSeconds: Math.round(producerElapsed),
+        })
+        return
+      }
+
       const slot = pool?.getSlot(stepState.poolSlotId)
       if (slot && slot.status === 'active') {
         ctx.broadcast({
@@ -3102,11 +3207,49 @@ export function createDAGEngine(
 
     // ── Running / waiting_signal: monitor current sub-step ──
     // Review loop sub-steps (producer/reviewer) may use signal_protocol, which sets
-    // status to 'waiting_signal'. We treat that the same as 'running' for monitoring:
-    // check task completion and advance the review loop state machine.
+    // status to 'waiting_signal'. Check for completion signals first, then fall
+    // through to task-based monitoring as synthetic fallback.
     if (stepState.status === 'waiting_signal') {
-      stepState.status = 'running'
-      // Fall through to the monitoring logic below
+      // Check for completed/error signals from the sub-step's signal protocol
+      if (stepState.signalDir) {
+        const processed = getProcessedSignals(run.id, stepState.name)
+        const match: SignalMatch | null = checkStepSignals(
+          stepState.signalDir, stepState.name,
+          stepState.startedAt ?? new Date().toISOString(),
+          processed, run.id,
+        )
+        const signal = match?.signal ?? null
+        if (signal && (signal.signal_type === 'completed' || signal.signal_type === 'error')) {
+          // Signal found — for error, archive and terminate immediately.
+          // For completed, defer archive until task completion is confirmed (BUG-1b fix:
+          // archiving before task completion could lose the signal if the task hasn't
+          // actually finished yet). Store the path for deferred archival.
+          stepState.verifiedCompletion = !signal.synthetic
+          if (signal.signal_type === 'error') {
+            archiveConsumedSignal(stepState.signalDir, match!.filePath)
+            stepState.status = 'failed'
+            stepState.errorMessage = `${stepState.reviewSubStep} failed via signal`
+            stepState.completedAt = new Date().toISOString()
+            releasePoolSlotIfHeld(stepState, run)
+            saveAndBroadcast(run)
+            return
+          }
+          // completed signal — stash file path for deferred archive after task confirms done
+          stepState.pendingSignalArchivePath = match!.filePath
+          // fall through to task completion handling
+          stepState.status = 'running'
+        } else if (signal && signal.signal_type === 'amendment_required') {
+          stepState.status = 'paused_amendment'
+          releasePoolSlotIfHeld(stepState, run)
+          saveAndBroadcast(run)
+          return
+        } else {
+          // No signal yet — also fall through to check task status as synthetic fallback
+          stepState.status = 'running'
+        }
+      } else {
+        stepState.status = 'running'
+      }
     }
     if (stepState.status !== 'running') return
 
@@ -3241,6 +3384,12 @@ export function createDAGEngine(
       return
     }
 
+    // Task completed — now safe to archive any deferred signal (BUG-1b: deferred from waiting_signal handler)
+    if (stepState.pendingSignalArchivePath && stepState.signalDir) {
+      archiveConsumedSignal(stepState.signalDir, stepState.pendingSignalArchivePath)
+      stepState.pendingSignalArchivePath = undefined
+    }
+
     // Task completed
     if (stepState.reviewSubStep === 'producer') {
       collectStepResult(run, stepDef.producer!, stepState)
@@ -3248,8 +3397,8 @@ export function createDAGEngine(
       // Check for amendment signal
       if (stepState.signalDir) {
         const processed = getProcessedSignals(run.id, stepDef.name)
-        const signal = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed)
-        if (signal && signal.signal_type === 'amendment_required') {
+        const match: SignalMatch | null = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed, run.id)
+        if (match?.signal.signal_type === 'amendment_required') {
           stepState.status = 'paused_amendment'
           releasePoolSlotIfHeld(stepState, run)
           saveAndBroadcast(run)
@@ -3295,8 +3444,8 @@ export function createDAGEngine(
       // Check for amendment signal
       if (stepState.signalDir) {
         const processed = getProcessedSignals(run.id, stepDef.name)
-        const signal = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed)
-        if (signal && signal.signal_type === 'amendment_required') {
+        const match: SignalMatch | null = checkStepSignals(stepState.signalDir, stepDef.name, stepState.startedAt ?? new Date().toISOString(), processed, run.id)
+        if (match?.signal.signal_type === 'amendment_required') {
           stepState.status = 'paused_amendment'
           releasePoolSlotIfHeld(stepState, run)
           saveAndBroadcast(run)
@@ -3825,7 +3974,9 @@ export function createDAGEngine(
     const onFailure = groupDef.on_failure ?? 'cancel_all'
 
     // Check if any child has failed and handle on_failure policy
-    const failedChildren = childStates.filter(c => c.state.status === 'failed')
+    // P1-23: treat signal_error, signal_timeout, paused_starvation, paused_escalated as failures
+    const CHILD_FAIL_TRIGGER = new Set(['failed', 'signal_error', 'signal_timeout', 'paused_starvation', 'paused_escalated'])
+    const failedChildren = childStates.filter(c => CHILD_FAIL_TRIGGER.has(c.state.status))
     if (failedChildren.length > 0 && (onFailure === 'fail_fast' || onFailure === 'cancel_all')) {
       // M-02: Termination state machine -- advance in-progress terminations and initiate new ones
       let terminationsInProgress = false
@@ -3892,7 +4043,9 @@ export function createDAGEngine(
     // Check if all children are terminal
     const allTerminal = childStates.every(c => TERMINAL_STATUSES.has(c.state.status))
     if (allTerminal) {
-      const anyFailed = childStates.some(c => c.state.status === 'failed')
+      // P1-23: include signal_error, signal_timeout, paused_starvation, paused_escalated as failure
+      const CHILD_FAILURE_STATUSES = new Set(['failed', 'signal_error', 'signal_timeout', 'paused_starvation', 'paused_escalated'])
+      const anyFailed = childStates.some(c => CHILD_FAILURE_STATUSES.has(c.state.status))
       if (anyFailed && onFailure === 'continue_others') {
         // REQ-15: partial status when some failed under continue_others
         groupState.status = 'partial'
@@ -3938,13 +4091,20 @@ export function createDAGEngine(
         const elapsed = (Date.now() - new Date(groupState.startedAt).getTime()) / 1000
         if (elapsed > effectiveTimeout) {
           // Timeout: cancel pending, terminate running, fail group
+          // P1-11: check terminateRunningChild return; if not done, wait for next tick
+          let terminationsInProgress = false
           for (const child of childStates) {
+            if (TERMINAL_STATUSES.has(child.state.status)) continue
             if (child.state.status === 'pending' || child.state.status === 'queued') {
               child.state.status = 'cancelled'
               child.state.completedAt = new Date().toISOString()
               releasePoolSlotIfHeld(child.state, run)
-            } else if (child.state.status === 'running' && child.def.type === 'spawn_session') {
-              terminateRunningChild(child.state, run, 'cancel_all')
+            } else if ((child.state.status === 'running' || child.state.status === 'waiting_signal') && child.def.type === 'spawn_session') {
+              const done = terminateRunningChild(child.state, run, 'cancel_all')
+              if (!done) {
+                terminationsInProgress = true
+                continue
+              }
               child.state.status = 'cancelled'
               child.state.completedAt = new Date().toISOString()
               releasePoolSlotIfHeld(child.state, run)
@@ -3952,6 +4112,10 @@ export function createDAGEngine(
               child.state.status = 'cancelled'
               child.state.completedAt = new Date().toISOString()
             }
+          }
+          if (terminationsInProgress) {
+            saveAndBroadcast(run)
+            return
           }
           groupState.status = 'failed'
           groupState.errorMessage = `parallel_group '${groupDef.name}' exceeded timeout (${effectiveTimeout}s)`
@@ -4380,7 +4544,7 @@ export function createDAGEngine(
 
           // Create a task for the amendment handler agent
           const handlerTask = taskStore.createTask({
-            projectPath: stepDef.projectPath ?? run.output_dir,
+            projectPath: stepDef.projectPath ?? run.variables?.project_path ?? run.output_dir,
             prompt: `${handlerPrompt}\n\n## Resolution Output Path\nWrite your resolution to: ${resolutionPath}\n`,
             templateId: null,
             priority: 7, // Higher priority than normal tasks
@@ -4401,6 +4565,7 @@ export function createDAGEngine(
           taskStore.updateTask(handlerTask.id, { metadata: JSON.stringify(metadataObj) })
 
           stepState.amendmentHandlerTaskId = handlerTask.id
+          stepState.amendmentHandlerStartedAt = new Date().toISOString() // P1-33: record handler spawn time
           stepState.startedAt = new Date().toISOString()
 
           ctx.logger.info('dag_amendment_handler_spawned', {
@@ -4500,10 +4665,12 @@ export function createDAGEngine(
         }
 
         // Check handler timeout (REQ-19)
+        // P1-33: use amendmentHandlerStartedAt (handler spawn time) not stepState.startedAt
         const handlerConfig: AmendmentConfig = stepDef.amendment_config ?? {}
         const timeoutMs = (handlerConfig.handler_timeout_seconds ?? 300) * 1000
-        if (stepState.startedAt) {
-          const elapsed = Date.now() - new Date(stepState.startedAt).getTime()
+        const handlerStartTime = stepState.amendmentHandlerStartedAt ?? stepState.startedAt
+        if (handlerStartTime) {
+          const elapsed = Date.now() - new Date(handlerStartTime).getTime()
           if (elapsed > timeoutMs) {
             stepState.amendmentRetryCount = (stepState.amendmentRetryCount ?? 0) + 1
             // REQ-20: Max retries (default 2)
@@ -4643,7 +4810,7 @@ export function createDAGEngine(
         if (resumePrompt && stepDef.type === 'spawn_session') {
           // Create a new task for the resumed step with checkpoint context
           const resumeTask = taskStore.createTask({
-            projectPath: stepDef.projectPath ?? run.output_dir,
+            projectPath: stepDef.projectPath ?? run.variables?.project_path ?? run.output_dir,
             prompt: `${resumePrompt}\n\nOriginal task prompt:\n${stepDef.prompt ?? ''}`,
             templateId: null,
             priority: 5,
@@ -4957,11 +5124,58 @@ export function createDAGEngine(
   // ── Main Tick ─────────────────────────────────────────────────────────
 
   function tick(run: WorkflowRun, parsed: ParsedWorkflow): void {
+    // P1-13: Re-entrancy guard — skip if tick is already executing
+    if (tickInProgress) {
+      ctx.logger.warn('dag_tick_reentrant', { runId: run.id })
+      return
+    }
+    tickInProgress = true
+    try {
+      tickInner(run, parsed)
+    } catch (err) {
+      // P0-4: Track consecutive exceptions; after 3, fail the run
+      const key = run.id
+      const count = (tickExceptionCounts.get(key) ?? 0) + 1
+      tickExceptionCounts.set(key, count)
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      ctx.logger.error('dag_tick_exception', { runId: run.id, count, error: sanitizeForLog(errorMsg) })
+      if (count >= 3) {
+        tickExceptionCounts.delete(key)
+        run.status = 'failed'
+        run.error_message = `tick() threw ${count} consecutive exceptions: ${errorMsg}`
+        workflowStore.updateRun(run.id, { status: run.status, error_message: run.error_message })
+        broadcastRunUpdate(run)
+      }
+    } finally {
+      tickInProgress = false
+    }
+  }
+
+  function tickInner(run: WorkflowRun, parsed: ParsedWorkflow): void {
+    // Reset exception counter on successful tick entry
+    tickExceptionCounts.delete(run.id)
+
+    // P0-6: If run was cancelled externally, propagate cancellation to all running/pending steps
+    if (run.status === 'cancelled') {
+      let changed = false
+      for (const stepState of run.steps_state) {
+        if (!TERMINAL_STATUSES.has(stepState.status)) {
+          stepState.status = 'cancelled'
+          stepState.completedAt = new Date().toISOString()
+          releasePoolSlotIfHeld(stepState, run)
+          changed = true
+        }
+      }
+      if (changed) saveAndBroadcast(run)
+      return
+    }
+
     // Auto-populate standard variables on first tick
     ensureStandardVariables(run)
 
     // A2: Branch isolation — create worktree on first tick if enabled
-    if (run.variables?.branch_isolation === 'true' && !run.variables?._branch_isolation_done) {
+    // Guard: skip if already done OR if already pending (prevents duplicate initBranchIsolation calls on consecutive ticks)
+    if (run.variables?.branch_isolation === 'true' && !run.variables?._branch_isolation_done && run.variables?._branch_isolation_pending !== 'true') {
       const projectPath = run.variables.project_path || run.output_dir
       const fileList = run.variables.file_list ? run.variables.file_list.split(',') : ['*']
       const tier = getRunTier(run, parsed)
@@ -4980,6 +5194,11 @@ export function createDAGEngine(
           return { run_id: r.id, file_list: rFileList, tier: rTier }
         })
 
+      // P1-34: set pending flag before async call so subsequent ticks skip step processing
+      if (!run.variables) run.variables = {}
+      run.variables._branch_isolation_pending = 'true'
+      workflowStore.updateRun(run.id, { variables: run.variables })
+
       initBranchIsolation(run.id, fileList, tier, activeRuns, getBranchIsolationStore(), projectPath, 'HEAD')
         .then(result => {
           if (!run.variables) run.variables = {}
@@ -4992,15 +5211,25 @@ export function createDAGEngine(
             ctx.logger.warn('branch_isolation_error', { runId: run.id, error: result.error })
           }
           run.variables._branch_isolation_done = 'true'
+          run.variables._branch_isolation_pending = 'false'
           workflowStore.updateRun(run.id, { variables: run.variables })
           broadcastRunUpdate(run)
         })
         .catch(err => {
           ctx.logger.warn('branch_isolation_init_failed', { runId: run.id, error: String(err) })
           if (!run.variables) run.variables = {}
+          // P1-41: set _branch_isolation_failed so callers can detect failure
+          run.variables._branch_isolation_failed = 'true'
           run.variables._branch_isolation_done = 'true'
+          run.variables._branch_isolation_pending = 'false'
           workflowStore.updateRun(run.id, { variables: run.variables })
         })
+      return // P1-34: skip step processing this tick while isolation initializes
+    }
+
+    // P1-34: if branch isolation is in progress, skip step processing
+    if (run.variables?.branch_isolation === 'true' && run.variables?._branch_isolation_pending === 'true') {
+      return
     }
 
     // A4: Periodic expired worktree cleanup
@@ -5027,7 +5256,7 @@ export function createDAGEngine(
 
     const steps = getEffectiveSteps(run, parsed)
     if (!steps) {
-      failWorkflow(run, 'Cannot parse workflow steps')
+      failWorkflow(run, 'Cannot parse workflow steps', parsed) // P1-42: pass parsed for cleanup hooks
       return
     }
 
@@ -5053,7 +5282,8 @@ export function createDAGEngine(
 
       // REQ-08: Only check top-level steps for workflow failure
       // Phase 7: signal_timeout and signal_error are also failure conditions
-      const FAILURE_STATUSES = new Set(['failed', 'signal_timeout', 'signal_error', 'paused_escalated', 'paused_human'])
+      // paused_starvation: pool exhaustion is treated as terminal failure. Operator must increase pool size and restart the run.
+      const FAILURE_STATUSES = new Set(['failed', 'signal_timeout', 'signal_error', 'paused_escalated', 'paused_human', 'paused_starvation'])
       const anyFailed = run.steps_state.some(s => !s.parentGroup && FAILURE_STATUSES.has(s.status))
       if (anyFailed) {
         failWorkflow(run, 'One or more steps failed', parsed)
@@ -5250,6 +5480,7 @@ export function createDAGEngine(
           stepState.status = 'failed'
           stepState.errorMessage = `monitor error: ${errorMsg}`
           stepState.completedAt = new Date().toISOString()
+          releasePoolSlotIfHeld(stepState, run) // P0-8: release slot on monitor exception
           saveAndBroadcast(run)
           ctx.logger.error('dag_monitor_step_exception', {
             runId: run.id,

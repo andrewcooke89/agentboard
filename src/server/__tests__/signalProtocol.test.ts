@@ -224,7 +224,7 @@ describe('signalProtocol', () => {
       const signal = checkStepSignals(testDir, 'target-step', '2020-01-01T00:00:00Z')
 
       expect(signal).not.toBeNull()
-      expect(signal?.step_name).toBe('target-step')
+      expect(signal?.signal.step_name).toBe('target-step')
     })
 
     test('TEST-12: Returns null when no signals exist', () => {
@@ -307,7 +307,7 @@ describe('signalProtocol', () => {
 
       expect(signal).not.toBeNull()
       // Oldest by mtime is signal2 (completed)
-      expect(signal?.signal_type).toBe('completed')
+      expect(signal?.signal.signal_type).toBe('completed')
     })
 
     test('TEST-16: Returns null for non-existent signal dir (ENOENT)', () => {
@@ -333,7 +333,7 @@ describe('signalProtocol', () => {
       // First call should return the signal and add it to processedFiles
       const signal1 = checkStepSignals(testDir, 'target-step', '2020-01-01T00:00:00Z', processedFiles)
       expect(signal1).not.toBeNull()
-      expect(signal1?.signal_type).toBe('completed')
+      expect(signal1?.signal.signal_type).toBe('completed')
       expect(processedFiles.size).toBe(1)
 
       // Second call with same processedFiles should skip the already-processed signal
@@ -357,7 +357,7 @@ describe('signalProtocol', () => {
       // First call returns signal1
       const result1 = checkStepSignals(testDir, 'target-step', '2020-01-01T00:00:00Z', processedFiles)
       expect(result1).not.toBeNull()
-      expect(result1?.signal_type).toBe('progress')
+      expect(result1?.signal.signal_type).toBe('progress')
 
       // Write a new signal file
       const signalData2 = {
@@ -373,7 +373,7 @@ describe('signalProtocol', () => {
       // Second call should skip signal1 but return signal2
       const result2 = checkStepSignals(testDir, 'target-step', '2020-01-01T00:00:00Z', processedFiles)
       expect(result2).not.toBeNull()
-      expect(result2?.signal_type).toBe('completed')
+      expect(result2?.signal.signal_type).toBe('completed')
     })
 
     test('TEST-28: mtime security - future YAML timestamp cannot bypass stale filter (REQ-45)', () => {

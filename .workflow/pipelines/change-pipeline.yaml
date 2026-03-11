@@ -22,7 +22,7 @@ defaults:
     - architecture
     - quality
   signal_protocol: true
-  signal_dir: "{{ output_dir }}/signals"
+  signal_dir: "{{ run_dir }}/signals"
   working_dir: "{{ project_path }}"
   env:
     SPEC_PATH: "{{ spec_path }}"
@@ -105,7 +105,7 @@ steps:
 
         Output: Updated spec at {{ output_dir }}/refined-spec.yaml
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/refined-spec.yaml"
     reviewer:
       name: spec-reviewer
@@ -118,7 +118,7 @@ steps:
         Write your verdict as a YAML file to: {{ output_dir }}/spec-review-verdict.yaml
         The file MUST contain a 'verdict' field (PASS, FAIL, or NEEDS_FIX) and a 'feedback' field.
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       verdict_field: verdict
       feedback_field: feedback
       result_file: "{{ output_dir }}/spec-review-verdict.yaml"
@@ -141,7 +141,7 @@ steps:
 
       Output: {{ output_dir }}/decomposition/manifest.yaml + WU-*.yaml files
     signal_protocol: true
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     result_file: "{{ output_dir }}/decomposition/manifest.yaml"
     timeoutSeconds: 1800
 
@@ -162,7 +162,7 @@ steps:
           Input: {{ output_dir }}/decomposition/manifest.yaml
           Output: {{ output_dir }}/generation/scaffold-report.yaml
         signal_protocol: true
-        signal_dir: "{{ output_dir }}/signals"
+        signal_dir: "{{ run_dir }}/signals"
         result_file: "{{ output_dir }}/generation/scaffold-report.yaml"
         timeoutSeconds: 1800
 
@@ -170,8 +170,141 @@ steps:
         type: native_step
         depends_on:
           - generate-scaffold
-        command: "echo 'Consistency check placeholder — verifies scaffold against manifest'"
+        command: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          MANIFEST="{{ output_dir }}/decomposition/manifest.yaml"
+          SCAFFOLD="{{ output_dir }}/generation/scaffold-report.yaml"
+          DECOMP_DIR="{{ output_dir }}/decomposition"
+          ERRORS=0
+
+          # ── Existence checks ──────────────────────────────────────
+          if [ ! -f "$MANIFEST" ]; then
+            echo "FAIL: manifest.yaml not found at $MANIFEST"
+            exit 1
+          fi
+          if [ ! -f "$SCAFFOLD" ]; then
+            echo "FAIL: scaffold-report.yaml not found at $SCAFFOLD"
+            exit 1
+          fi
+
+          echo "=== Generation Consistency Check ==="
+          echo "Manifest: $MANIFEST"
+          echo "Scaffold: $SCAFFOLD"
+          echo ""
+
+          # ── 1. Extract WU IDs from manifest (yq v4 syntax) ────────
+          MANIFEST_WUS=$(yq -r '.work_units[].id' "$MANIFEST" | sort -u)
+          MANIFEST_COUNT=$(echo "$MANIFEST_WUS" | grep -c . || true)
+          echo "Manifest declares $MANIFEST_COUNT work units"
+
+          if [ "$MANIFEST_COUNT" -eq 0 ]; then
+            echo "FAIL: No work units found in manifest"
+            exit 1
+          fi
+
+          # ── 2. Extract WU IDs covered by scaffold ─────────────────
+          # Gather from all known schema variants (v1.0 and older)
+          SCAFFOLD_WUS=$(yq -r '.work_unit_readiness[].id' "$SCAFFOLD" 2>/dev/null || true)
+          STATS_WUS=$(yq -r '.stats.work_units_covered[]' "$SCAFFOLD" 2>/dev/null || true)
+          FILE_WUS=$(yq -r '.files[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          SCAFF_FILE_WUS=$(yq -r '.scaffold_files[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          MOD_WUS=$(yq -r '.modification_points[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          ALL_SCAFFOLD_WUS=$(printf '%s\n%s\n%s\n%s\n%s\n' \
+            "$SCAFFOLD_WUS" "$STATS_WUS" "$FILE_WUS" "$SCAFF_FILE_WUS" "$MOD_WUS" \
+            | grep -v '^$' | grep -v '^null$' | sort -u)
+          SCAFFOLD_COUNT=$(echo "$ALL_SCAFFOLD_WUS" | grep -c . || true)
+          echo "Scaffold covers $SCAFFOLD_COUNT work units"
+          echo ""
+
+          # ── 3. Check: every manifest WU appears in scaffold ───────
+          echo "--- WU Coverage Check ---"
+          MISSING=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if echo "$ALL_SCAFFOLD_WUS" | grep -qxF "$wu"; then
+              : # found
+            else
+              echo "  MISSING: $wu not covered by scaffold"
+              MISSING=$((MISSING + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$MANIFEST_WUS"
+          [ "$MISSING" -eq 0 ] && echo "  PASS: All manifest WUs covered by scaffold"
+          echo ""
+
+          # ── 4. Check: no phantom WUs in scaffold ──────────────────
+          echo "--- Phantom WU Check ---"
+          PHANTOMS=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if echo "$MANIFEST_WUS" | grep -qxF "$wu"; then
+              : # found
+            else
+              echo "  PHANTOM: $wu in scaffold but not in manifest"
+              PHANTOMS=$((PHANTOMS + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$ALL_SCAFFOLD_WUS"
+          [ "$PHANTOMS" -eq 0 ] && echo "  PASS: No phantom WUs in scaffold"
+          echo ""
+
+          # ── 5. Check: WU YAML files exist for each manifest WU ────
+          echo "--- WU File Check ---"
+          FMISSING=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if [ ! -f "$DECOMP_DIR/${wu}.yaml" ]; then
+              echo "  MISSING: $DECOMP_DIR/${wu}.yaml not found"
+              FMISSING=$((FMISSING + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$MANIFEST_WUS"
+          [ "$FMISSING" -eq 0 ] && echo "  PASS: All WU YAML files exist"
+          echo ""
+
+          # ── 6. Check scaffold verdict/blockers (v1.0 format) ──────
+          echo "--- Scaffold Verdict Check ---"
+          VERDICT=$(yq -r '.verdict.status // "NONE"' "$SCAFFOLD" 2>/dev/null || echo "NONE")
+          if [ "$VERDICT" = "FAIL" ]; then
+            echo "  FAIL: Scaffold verdict is FAIL"
+            ERRORS=$((ERRORS + 1))
+          elif [ "$VERDICT" = "NONE" ] || [ "$VERDICT" = "null" ]; then
+            echo "  SKIP: No verdict field (older schema)"
+          else
+            echo "  PASS: Scaffold verdict is $VERDICT"
+          fi
+          echo ""
+
+          # ── 7. Check scaffold readiness per WU (v1.0 format) ──────
+          echo "--- WU Readiness Check ---"
+          NOT_READY=$(yq -r '.work_unit_readiness[] | select(.scaffold_ready != true) | .id' "$SCAFFOLD" 2>/dev/null || true)
+          NOT_READY=$(echo "$NOT_READY" | grep -v '^$' || true)
+          if [ -n "$NOT_READY" ]; then
+            echo "  WARNING: Not scaffold-ready:"
+            echo "$NOT_READY" | while read -r w; do echo "    - $w"; done
+          else
+            READINESS_COUNT=$(yq -r '.work_unit_readiness | length' "$SCAFFOLD" 2>/dev/null || echo "0")
+            if [ "${READINESS_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+              echo "  PASS: All $READINESS_COUNT WUs are scaffold-ready"
+            else
+              echo "  SKIP: No work_unit_readiness field (older schema)"
+            fi
+          fi
+          echo ""
+
+          # ── Summary ───────────────────────────────────────────────
+          echo "=== Summary ==="
+          echo "Manifest WUs: $MANIFEST_COUNT | Scaffold WUs: $SCAFFOLD_COUNT | Errors: $ERRORS"
+          echo ""
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "FAIL: $ERRORS consistency error(s) found"
+            exit 1
+          fi
+          echo "PASS: Scaffold is consistent with decomposition manifest"
         working_dir: "{{ project_path }}"
+        on_step_failure: completed_with_warnings
         timeoutSeconds: 300
 
       # TDD red-phase verification (REQ-63, REQ-64)
@@ -217,10 +350,10 @@ steps:
     depends_on:
       - generation
     projectPath: "{{ project_path }}"
-    command: "cd /home/andrew-cooke/tools/agentboard && bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}' --language '{{ language }}' --framework '{{ framework }}'"
+    command: "cd /home/andrew-cooke/tools/agentboard && bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}' --language '{{ language }}' --framework '{{ framework }}' --run-id '{{ run_id }}'"
     prompt: "Per-WU TDD orchestrator — deterministic implementation pipeline"
     signal_protocol: true
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     result_file: "{{ output_dir }}/implementation/implementation-report.yaml"
     enforce_verdict:
       field: overall_verdict
@@ -234,7 +367,7 @@ steps:
     type: amendment_check
     depends_on:
       - implement
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     signal_types:
       - amendment_required
     on_amendment:
@@ -328,7 +461,7 @@ steps:
         - Implementation: {{ output_dir }}/implementation/
       Output: {{ output_dir }}/conformance/verification-report.yaml
     signal_protocol: true
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     result_file: "{{ output_dir }}/conformance/verification-report.yaml"
     enforce_verdict:
       field: overall_verdict
@@ -351,7 +484,7 @@ steps:
       Input: {{ output_dir }}/conformance/verification-report.yaml
       Output: {{ output_dir }}/acceptance/test-results.yaml
     signal_protocol: true
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     result_file: "{{ output_dir }}/acceptance/test-results.yaml"
     enforce_verdict:
       field: overall_verdict
@@ -368,4 +501,4 @@ steps:
   #   projectPath: "{{ project_path }}"
   #   prompt: "Observe pipeline execution patterns and record learnings"
   #   signal_protocol: true
-  #   signal_dir: "{{ output_dir }}/signals"
+  #   signal_dir: "{{ run_dir }}/signals"

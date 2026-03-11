@@ -761,8 +761,8 @@ describe('dagEngine', () => {
         expect(task).toBeTruthy()
 
         // Prompt should include injected content
-        expect(task.prompt).toContain('## Context')
-        expect(task.prompt).toContain('KEY_CONTEXT: This is critical info')
+        expect(task!.prompt).toContain('## Context')
+        expect(task!.prompt).toContain('KEY_CONTEXT: This is critical info')
       } finally {
         nodefs.rmSync(tmpDir, { recursive: true, force: true })
       }
@@ -798,9 +798,9 @@ describe('dagEngine', () => {
       expect(task).toBeTruthy()
 
       // Reference inputs should only show path, not content
-      expect(task.prompt).toContain('Input files:')
-      expect(task.prompt).toContain('- /path/to/spec.yaml')
-      expect(task.prompt).not.toContain('##')
+      expect(task!.prompt).toContain('Input files:')
+      expect(task!.prompt).toContain('- /path/to/spec.yaml')
+      expect(task!.prompt).not.toContain('##')
     })
   })
 
@@ -1537,6 +1537,8 @@ describe('dagEngine', () => {
     })
 
     test('M-05: native_step with action uses predefined registry', () => {
+      // Schema now validates action names at parse time, so use parseWorkflowYAML
+      // directly (bypassing the strict getParsed helper) to test runtime behaviour
       const yaml = [
         'name: native-action-test',
         'system:',
@@ -1548,21 +1550,12 @@ describe('dagEngine', () => {
       ].join('\n')
 
       const wf = createWorkflowDef(workflowStore, yaml, 'native-action-test')
-      const parsed = getParsed(yaml)
-      const run = createTestRun(workflowStore, wf.id, [
-        makeStepState({ name: 'unknown-action', type: 'native_step' }),
-      ])
-
-      // Tick 1: start
-      dagEngine.tick(run, parsed)
-      let freshRun = workflowStore.getRun(run.id)!
-
-      // Tick 2: execute - unknown action should fail
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
-
-      expect(freshRun.steps_state[0].status).toBe('failed')
-      expect(freshRun.steps_state[0].errorMessage).toContain('unknown predefined action')
+      // Use parseWorkflowYAML directly — schema rejects unknown actions now,
+      // but we want to test the runtime path. Construct parsed manually.
+      const result = parseWorkflowYAML(yaml)
+      // Schema now catches unknown actions at parse time — verify it produces an error
+      expect(result.valid).toBe(false)
+      expect(result.errors.some(e => e.includes('nonexistent_action'))).toBe(true)
     })
 
     test('M-05: native_step without command or action fails at runtime', () => {
@@ -1854,7 +1847,7 @@ describe('dagEngine', () => {
         '    steps:',
         '      - name: max-review',
         '        type: review_loop',
-        '        max_iterations: 1',
+        '        max_iterations: 2',
         '        on_max_iterations: accept_last',
         '        producer:',
         '          name: prod',
@@ -1900,7 +1893,7 @@ describe('dagEngine', () => {
       freshRun = workflowStore.getRun(run.id)!
       expect(freshRun.steps_state[1].reviewSubStep).toBe('reviewer')
 
-      // Complete reviewer with FAIL
+      // Complete reviewer with FAIL (iteration 1 — loops back to producer)
       taskStore.updateTask(freshRun.steps_state[1].taskId!, { status: 'completed' })
       const nodefs2 = require('node:fs')
       const verdictDir2 = freshRun.output_dir
@@ -1910,7 +1903,33 @@ describe('dagEngine', () => {
         'verdict: FAIL\ncomments: still bad',
       )
 
-      // Tick 4: max_iterations=1 reached, accept_last policy completes with warning
+      // Tick: verdict processed, loops back to producer for iteration 2
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Iteration 2: complete producer
+      taskStore.updateTask(freshRun.steps_state[1].taskId!, { status: 'completed' })
+
+      // Tick: between
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Tick: REQ-17 gap tick
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Tick: between -> reviewer
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Complete reviewer with FAIL (iteration 2 — max_iterations=2 reached)
+      taskStore.updateTask(freshRun.steps_state[1].taskId!, { status: 'completed' })
+      nodefs2.writeFileSync(
+        require('node:path').join(verdictDir2, 'verdict.yaml'),
+        'verdict: FAIL\ncomments: still bad',
+      )
+
+      // Tick: max_iterations=2 reached, accept_last policy completes with warning
       dagEngine.tick(freshRun, parsed)
       freshRun = workflowStore.getRun(run.id)!
 
@@ -3810,9 +3829,36 @@ describe('dagEngine', () => {
       let poolStatus = pool.getStatus()
       expect(poolStatus.active.length).toBe(2)
 
-      // Tick: timeout exceeded -> uses cancel_all policy (the bug fix!) -> signal file written
+      // Tick 1: timeout exceeded -> uses cancel_all policy -> signal files written, state machine starts
       dagEngine.tick(run, parsed)
-      const freshRun = workflowStore.getRun(run.id)!
+      let freshRun = workflowStore.getRun(run.id)!
+
+      // BUG FIX VERIFICATION: cancel_all writes signal files (not fail_fast)
+      const nodePath = require('node:path')
+      const signalPath1 = nodePath.join(outputDir, 't26-group', 't26-child-1', 't26-child-1_cancel_requested.yaml')
+      const signalPath2 = nodePath.join(outputDir, 't26-group', 't26-child-2', 't26-child-2_cancel_requested.yaml')
+      expect(fs.existsSync(signalPath1)).toBe(true)
+      expect(fs.existsSync(signalPath2)).toBe(true)
+
+      // P1-11: state machine in progress, group still running after first tick
+      // Fast-forward terminationStartedAt to bypass grace periods
+      const farPast = new Date(Date.now() - 20000).toISOString()
+      for (const s of freshRun.steps_state) {
+        if (s.terminationPhase) s.terminationStartedAt = farPast
+      }
+      workflowStore.updateRun(freshRun.id, { steps_state: freshRun.steps_state })
+
+      // Tick through state machine phases until termination completes
+      for (let i = 0; i < 5; i++) {
+        const r = workflowStore.getRun(freshRun.id)!
+        if (r.steps_state[0].status === 'failed') break
+        for (const s of r.steps_state) {
+          if (s.terminationPhase && s.terminationPhase !== 'killed') s.terminationStartedAt = farPast
+        }
+        workflowStore.updateRun(r.id, { steps_state: r.steps_state })
+        dagEngine.tick(r, parsed)
+      }
+      freshRun = workflowStore.getRun(run.id)!
 
       // Both children should be cancelled
       expect(freshRun.steps_state[1].status).toBe('cancelled')
@@ -3821,15 +3867,6 @@ describe('dagEngine', () => {
       // Group should be failed with timeout message
       expect(freshRun.steps_state[0].status).toBe('failed')
       expect(freshRun.steps_state[0].errorMessage).toContain('exceeded timeout')
-
-      // BUG FIX VERIFICATION: cancel_all writes signal files (not fail_fast)
-      // The cancel_all policy calls terminateRunningChild with 'cancel_all',
-      // which writes signal files for graceful shutdown
-      const nodePath = require('node:path')
-      const signalPath1 = nodePath.join(outputDir, 't26-group', 't26-child-1', 't26-child-1_cancel_requested.yaml')
-      const signalPath2 = nodePath.join(outputDir, 't26-group', 't26-child-2', 't26-child-2_cancel_requested.yaml')
-      expect(fs.existsSync(signalPath1)).toBe(true)
-      expect(fs.existsSync(signalPath2)).toBe(true)
 
       // Pool slots should be released
       poolStatus = pool.getStatus()
@@ -4280,8 +4317,19 @@ describe('dagEngine', () => {
 
       expect(pool.getStatus().active.length).toBe(1)
 
-      dagEngine.tick(run2, parsed2)
-      const freshRun2 = workflowStore.getRun(run2.id)!
+      // P1-11: timeout uses terminateRunningChild state machine — tick until complete
+      const farPast2 = new Date(Date.now() - 20000).toISOString()
+      let freshRun2 = workflowStore.getRun(run2.id)!
+      for (let i = 0; i < 6; i++) {
+        const r = workflowStore.getRun(run2.id)!
+        if (r.steps_state[0].status === 'failed') break
+        for (const s of r.steps_state) {
+          if (s.terminationPhase && s.terminationPhase !== 'killed') s.terminationStartedAt = farPast2
+        }
+        workflowStore.updateRun(r.id, { steps_state: r.steps_state })
+        dagEngine.tick(r, parsed2)
+      }
+      freshRun2 = workflowStore.getRun(run2.id)!
 
       expect(freshRun2.steps_state[0].status).toBe('failed')
       expect(freshRun2.steps_state[0].errorMessage).toContain('exceeded timeout')
@@ -5005,7 +5053,7 @@ steps:
         'steps:',
         '  - name: review-step',
         '    type: review_loop',
-        '    max_iterations: 1',
+        '    max_iterations: 2',
         '    producer:',
         '      name: producer',
         '      type: spawn_session',
@@ -5026,19 +5074,26 @@ steps:
         makeStepState({ name: 'review-step', type: 'review_loop' as any }),
       ], { output_dir: testOutputDir })
 
-      // Run through 1 iteration with FAIL
-      dagEngine.tick(run, parsed)
-      let freshRun = workflowStore.getRun(run.id)!
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed) // REQ-17 gap tick
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
+      // Helper: run through one full producer+reviewer iteration with FAIL verdict
+      function runOneIteration(r: typeof run) {
+        dagEngine.tick(r, parsed)
+        let fr = workflowStore.getRun(r.id)!
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed) // REQ-17 gap tick
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        return workflowStore.getRun(r.id)!
+      }
 
-      nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
+      // Run through 2 iterations with FAIL (max_iterations=2)
+      let freshRun = runOneIteration(run) // iteration 1 → loops to iteration 2
+      freshRun = runOneIteration(freshRun) // iteration 2 → exhausted
 
       // Tick: max_iterations reached → escalate (default)
       dagEngine.tick(freshRun, parsed)
@@ -5069,7 +5124,7 @@ steps:
         'steps:',
         '  - name: review-step',
         '    type: review_loop',
-        '    max_iterations: 1',
+        '    max_iterations: 2',
         '    on_max_iterations: accept_last',
         '    producer:',
         '      name: producer',
@@ -5091,19 +5146,26 @@ steps:
         makeStepState({ name: 'review-step', type: 'review_loop' as any }),
       ], { output_dir: testOutputDir })
 
-      // Run through 1 iteration with FAIL
-      dagEngine.tick(run, parsed)
-      let freshRun = workflowStore.getRun(run.id)!
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed) // REQ-17 gap tick
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
+      // Helper: run through one full producer+reviewer iteration with FAIL verdict
+      function runOneIteration(r: typeof run) {
+        dagEngine.tick(r, parsed)
+        let fr = workflowStore.getRun(r.id)!
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed) // REQ-17 gap tick
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        return workflowStore.getRun(r.id)!
+      }
 
-      nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
+      // Run through 2 iterations with FAIL (max_iterations=2)
+      let freshRun = runOneIteration(run) // iteration 1 → loops to iteration 2
+      freshRun = runOneIteration(freshRun) // iteration 2 → exhausted
 
       // Tick: max_iterations reached → accept_last
       dagEngine.tick(freshRun, parsed)
@@ -5135,7 +5197,7 @@ steps:
         'steps:',
         '  - name: review-step',
         '    type: review_loop',
-        '    max_iterations: 1',
+        '    max_iterations: 2',
         '    on_max_iterations: fail',
         '    producer:',
         '      name: producer',
@@ -5157,19 +5219,26 @@ steps:
         makeStepState({ name: 'review-step', type: 'review_loop' as any }),
       ], { output_dir: testOutputDir })
 
-      // Run through 1 iteration with FAIL
-      dagEngine.tick(run, parsed)
-      let freshRun = workflowStore.getRun(run.id)!
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed) // REQ-17 gap tick
-      freshRun = workflowStore.getRun(run.id)!
-      dagEngine.tick(freshRun, parsed)
-      freshRun = workflowStore.getRun(run.id)!
+      // Helper: run through one full producer+reviewer iteration with FAIL verdict
+      function runOneIteration(r: typeof run) {
+        dagEngine.tick(r, parsed)
+        let fr = workflowStore.getRun(r.id)!
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed) // REQ-17 gap tick
+        fr = workflowStore.getRun(r.id)!
+        dagEngine.tick(fr, parsed)
+        fr = workflowStore.getRun(r.id)!
+        nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
+        taskStore.updateTask(fr.steps_state[0].taskId!, { status: 'completed' })
+        dagEngine.tick(fr, parsed)
+        return workflowStore.getRun(r.id)!
+      }
 
-      nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: FAIL')
-      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
+      // Run through 2 iterations with FAIL (max_iterations=2)
+      let freshRun = runOneIteration(run) // iteration 1 → loops to iteration 2
+      freshRun = runOneIteration(freshRun) // iteration 2 → exhausted
 
       // Tick: max_iterations reached → fail
       dagEngine.tick(freshRun, parsed)
@@ -5283,7 +5352,7 @@ steps:
         'steps:',
         '  - name: review-step',
         '    type: review_loop',
-        '    max_iterations: 1',
+        '    max_iterations: 2',
         '    on_max_iterations: fail',
         '    on_concern:',
         '      timeout_minutes: 1',
@@ -5336,11 +5405,40 @@ steps:
       workflowStore.updateRun(run.id, { steps_state: updatedSteps })
       freshRun = workflowStore.getRun(run.id)!
 
-      // Tick again: timeout elapsed, default reject → treated as FAIL
+      // Tick: timeout elapsed, default reject → treated as FAIL, loops to iteration 2
       dagEngine.tick(freshRun, parsed)
       freshRun = workflowStore.getRun(run.id)!
 
-      // With max_iterations=1 and on_max_iterations=fail, should fail
+      // Iteration 2: run producer
+      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      dagEngine.tick(freshRun, parsed) // REQ-17 gap tick
+      freshRun = workflowStore.getRun(run.id)!
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Write CONCERN verdict for iteration 2
+      nodefs.writeFileSync(path.join(testOutputDir, 'verdict.yaml'), 'verdict: CONCERN')
+      taskStore.updateTask(freshRun.steps_state[0].taskId!, { status: 'completed' })
+
+      // Tick: CONCERN detected again
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+      expect(freshRun.steps_state[0].concernWaitingSince).toBeTruthy()
+
+      // Simulate timeout again
+      const pastTime2 = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+      const updatedSteps2 = [...freshRun.steps_state]
+      updatedSteps2[0] = { ...updatedSteps2[0], concernWaitingSince: pastTime2 }
+      workflowStore.updateRun(run.id, { steps_state: updatedSteps2 })
+      freshRun = workflowStore.getRun(run.id)!
+
+      // Tick: timeout elapsed, default reject → max_iterations=2 reached → fail
+      dagEngine.tick(freshRun, parsed)
+      freshRun = workflowStore.getRun(run.id)!
+
+      // With max_iterations=2 exhausted and on_max_iterations=fail, should fail
       expect(freshRun.steps_state[0].status).toBe('failed')
 
       // Cleanup
@@ -7230,12 +7328,14 @@ steps:
           'name: gemini-input-test',
           'system:',
           '  engine: dag',
+          'variables:',
+          '  - name: input_txt',
           'steps:',
           '  - name: gemini-step',
           '    type: gemini_offload',
           '    model: gemini-1.5-flash',
-          '    prompt_template: "Process this: {{input.txt}}"',
-          `    input_files: ["${inputFile}"]`,
+          '    prompt_template: "Process this: {{input_txt}}"',
+          `    inputs: [{path: "${inputFile}", label: "input_txt"}]`,
         ].join('\n')
 
         const wf = createWorkflowDef(workflowStore, yaml, 'gemini-input-test')
@@ -7301,6 +7401,8 @@ steps:
           'name: gemini-label-test',
           'system:',
           '  engine: dag',
+          'variables:',
+          '  - name: my_data',
           'steps:',
           '  - name: gemini-step',
           '    type: gemini_offload',

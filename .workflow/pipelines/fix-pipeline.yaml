@@ -32,7 +32,7 @@ pipeline:
       - architecture
       - quality
     signal_protocol: true
-    signal_dir: "{{ output_dir }}/signals"
+    signal_dir: "{{ run_dir }}/signals"
     working_dir: "{{ project_path }}"
     amendment_budget:
       quality:
@@ -100,7 +100,7 @@ pipeline:
           verdict: pass
       description: "Write formal bug specification with reproduction steps"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/spec/bug-spec.yaml"
       timeoutSeconds: 300
 
@@ -137,7 +137,7 @@ pipeline:
     - name: reproduce
       type: spawn_session
       model: glm
-      depends_on: [write-bug-spec]
+      depends_on: [write-bug-spec, extract-bug-context]
       projectPath: "{{ project_path }}"
       prompt: |
         You are a bug reproducer. Your job is to verify that a bug is reproducible
@@ -161,7 +161,7 @@ pipeline:
         'fail' if the bug could NOT be reproduced.
       description: "Verify bug is reproducible using reproduction steps from bug spec"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/reproduction-report.yaml"
       enforce_verdict:
         field: verdict
@@ -204,7 +204,7 @@ pipeline:
           risk_assessment: "What could go wrong with the fix"
       description: "Deep investigation to identify root cause of the bug"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/root-cause-analysis.yaml"
       timeoutSeconds: 900
       inputs:
@@ -244,7 +244,7 @@ pipeline:
             - "Risk 1: what could break"
       description: "Write fix specification incorporating root cause analysis"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/spec/fix-spec.yaml"
       timeoutSeconds: 300
       inputs:
@@ -321,7 +321,7 @@ pipeline:
           description: "What the tests verify"
       description: "Write regression test that reproduces the bug (TDD red phase)"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/regression-test-report.yaml"
       timeoutSeconds: 600
       inputs:
@@ -406,7 +406,7 @@ pipeline:
           tests_expected_to_pass: true
       description: "Implement the bug fix following fix-spec (do not modify tests)"
       signal_protocol: true
-      signal_dir: "{{ output_dir }}/signals"
+      signal_dir: "{{ run_dir }}/signals"
       result_file: "{{ output_dir }}/fix-result.yaml"
       enforce_verdict:
         field: verdict

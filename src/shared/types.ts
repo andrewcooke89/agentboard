@@ -127,6 +127,14 @@ export type ServerMessage =
   | { type: 'cron-run-completed'; jobId: string; runId: string; exitCode: number; duration: number }
   | { type: 'cron-bulk-operation-progress'; completed: number; total: number; failures: string[] }
   | { type: 'cron-notification'; jobId: string; event: string; message: string; severity: 'info' | 'warning' | 'critical' }
+  // Cron AI Orchestrator messages (WU-001)
+  | { type: 'cron-ai-proposal'; proposal: CronAiProposal }
+  | { type: 'cron-ai-navigate'; action: string; payload: Record<string, unknown> }
+  | { type: 'cron-ai-session-status'; status: 'offline' | 'starting' | 'working' | 'waiting'; windowId?: string; sessionId?: string }
+  | { type: 'cron-ai-mcp-status'; connected: boolean }
+  | { type: 'cron-ai-context-update'; context: UiContext }
+  | { type: 'cron-ai-proposal-resolved'; id: string; status: CronAiProposal['status']; feedback?: string }
+  | { type: 'cron-ai-mcp-register'; success: boolean }
 
 export interface ResumeError {
   code: 'NOT_FOUND' | 'ALREADY_ACTIVE' | 'RESUME_FAILED'
@@ -182,6 +190,14 @@ export type ClientMessage =
   | { type: 'cron-sudo-auth'; sudoCredential: string }
   | { type: 'cron-job-logs'; jobId: string; lines: number; offset?: number }
   | { type: 'cron-job-history'; jobId: string; limit: number; before?: string }
+  // Cron AI Orchestrator messages (WU-001)
+  | { type: 'cron-ai-drawer-open' }
+  | { type: 'cron-ai-drawer-close' }
+  | { type: 'cron-ai-new-conversation' }
+  | { type: 'cron-ai-proposal-response'; id: string; approved: boolean; feedback?: string }
+  | { type: 'cron-ai-context-update'; context: UiContext }
+  | { type: 'cron-ai-mcp-register'; authToken?: string }
+  | { type: 'cron-ai-navigate'; action: string; payload: Record<string, unknown> }
 
 // Task queue types
 export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -230,7 +246,7 @@ export interface TaskQueueStats {
 }
 
 // Typed function signatures for client-side messaging
-export type SendClientMessage = (message: ClientMessage) => void
+export type SendClientMessage = (message: ClientMessage) => boolean
 export type SubscribeServerMessage = (listener: (message: ServerMessage) => void) => () => void
 
 // ─── Workflow Engine Types (WO-001) ─────────────────────────────────────────
@@ -587,6 +603,7 @@ export interface StepRunState {
   concernWaitingSince?: string | null
   concernResolution?: 'accept' | 'reject' | null
   reviewerQueuedAt?: string | null
+  producerQueuedAt?: string | null  // P1-12: starvation detection for producer slot
   needsReviewerSlot?: boolean
   currentIterationId?: string | null
   // Phase 7: Signal-checkpoint protocol state
@@ -595,11 +612,14 @@ export interface StepRunState {
   signalTimeoutSeconds?: number | null
   verifiedCompletion?: boolean
   lastSignalType?: string | null
+  // BUG-1b fix: deferred signal archive path for review loop waiting_signal → running transition
+  pendingSignalArchivePath?: string
   // Phase 8: Crash recovery flag
   crashRecoveryChecked?: boolean
   // Phase 10: Amendment tracking
   amendmentPhase?: 'detected' | 'budget_checked' | 'handler_running' | 'handler_complete' | 'awaiting_human' | null
   amendmentHandlerTaskId?: string | null
+  amendmentHandlerStartedAt?: string | null  // P1-33: handler spawn time for timeout calculation
   amendmentSignalFile?: string | null
   amendmentSignalId?: string | null
   amendmentRetryCount?: number
@@ -824,4 +844,67 @@ export interface BulkProgress {
   completed: number
   total: number
   failures: string[]
+}
+
+// ─── Cron AI Orchestrator Types (WU-001) ─────────────────────────────────────
+
+export type CronAiProposalOperation =
+  | 'create'
+  | 'edit_frequency'
+  | 'pause'
+  | 'resume'
+  | 'delete'
+  | 'run_now'
+  | 'set_tags'
+  | 'link_session'
+
+export interface CronAiProposal {
+  id: string
+  operation: CronAiProposalOperation
+  jobId: string | null
+  jobName: string | null
+  jobAvatarUrl: string | null
+  description: string
+  diff: string
+  status: 'pending' | 'accepted' | 'rejected' | 'expired'
+  feedback: string | null
+  createdAt: string
+  resolvedAt: string | null
+}
+
+export interface UiContext {
+  selectedJobId: string | null
+  selectedJobDetail: CronJobDetail | null
+  activeTab: string
+  visibleJobCount: number
+  filterState: { mode: string; source: string | null; tags: string[] }
+  healthSummary: { healthy: number; warning: number; critical: number }
+}
+
+export interface ProposalResult {
+  success: boolean
+  result?: unknown
+  rejected?: boolean
+  expired?: boolean
+  feedback?: string
+  error?: string
+}
+
+export interface ScheduleConflict {
+  jobIds: string[]
+  schedule: string
+  description: string
+}
+
+export interface ScheduleLoadAnalysis {
+  hourlyLoad: Record<number, number>
+  peakHours: number[]
+  recommendations: string[]
+}
+
+export interface DurationTrendData {
+  jobId: string
+  durations: number[]
+  average: number
+  trend: string
 }

@@ -30,6 +30,12 @@ interface Config {
   outputDir: string
   apiUrl: string
   tier: string
+  testDir: string
+  testCommand: string
+  language: string
+  framework: string
+  model: string
+  runId: string
 }
 
 interface TestBaseline {
@@ -37,6 +43,8 @@ interface TestBaseline {
   passing: number
   failing: number
   skipped: number
+  errors: number
+  exitCode: number
   timestamp: string
 }
 
@@ -82,6 +90,18 @@ function parseArgs(): Config {
         config.apiUrl = next; i++; break
       case '--tier':
         config.tier = next; i++; break
+      case '--test-dir':
+        config.testDir = next; i++; break
+      case '--test-command':
+        config.testCommand = next; i++; break
+      case '--language':
+        config.language = next; i++; break
+      case '--framework':
+        config.framework = next; i++; break
+      case '--model':
+        config.model = next; i++; break
+      case '--run-id':
+        config.runId = next; i++; break
     }
   }
 
@@ -94,16 +114,23 @@ function parseArgs(): Config {
   }
 
   config.tier = config.tier ?? '2'
+  config.testDir = config.testDir ?? config.projectPath
+  config.testCommand = config.testCommand ?? 'bun test'
+  config.language = config.language ?? 'typescript'
+  config.framework = config.framework ?? ''
+  config.model = config.model ?? 'glm'
+  config.runId = config.runId ?? ''
   return config as Config
 }
 
 // ─── Test Baseline ──────────────────────────────────────────────────────────
 
-async function captureTestBaseline(projectPath: string): Promise<TestBaseline> {
+async function captureTestBaseline(testDir: string, testCommand: string): Promise<TestBaseline> {
   const now = new Date().toISOString()
+  const [cmd, ...cmdArgs] = testCommand.split(/\s+/)
   try {
-    const proc = Bun.spawn(['bun', 'test'], {
-      cwd: projectPath,
+    const proc = Bun.spawn([cmd, ...cmdArgs], {
+      cwd: testDir,
       stdout: 'pipe',
       stderr: 'pipe',
       env: { ...process.env },
@@ -112,61 +139,77 @@ async function captureTestBaseline(projectPath: string): Promise<TestBaseline> {
     const stdout = await new Response(proc.stdout).text()
     const stderr = await new Response(proc.stderr).text()
     await proc.exited
+    const exitCode = proc.exitCode ?? 1
 
     // bun test summary line: "1772 pass | 9 fail | 5 skip"
     const combined = stdout + '\n' + stderr
     const passMatch = combined.match(/(\d+)\s+pass/)
     const failMatch = combined.match(/(\d+)\s+fail/)
     const skipMatch = combined.match(/(\d+)\s+skip/)
+    const errorMatch = combined.match(/(\d+)\s+error/)
 
     const passing = passMatch ? parseInt(passMatch[1], 10) : 0
     const failing = failMatch ? parseInt(failMatch[1], 10) : 0
     const skipped = skipMatch ? parseInt(skipMatch[1], 10) : 0
+    const errors = errorMatch ? parseInt(errorMatch[1], 10) : 0
 
     return {
       totalTests: passing + failing + skipped,
       passing,
       failing,
       skipped,
+      errors,
+      exitCode,
       timestamp: now,
     }
   } catch (err) {
-    console.warn(`[baseline] bun test failed to run: ${err}`)
-    return { totalTests: 0, passing: 0, failing: 0, skipped: 0, timestamp: now }
+    console.warn(`[baseline] ${testCommand} failed to run: ${err}`)
+    return { totalTests: 0, passing: 0, failing: 0, skipped: 0, errors: 0, exitCode: -1, timestamp: now }
   }
 }
 
 // ─── RED / GREEN Verification ───────────────────────────────────────────────
 
-async function verifyRed(projectPath: string, baseline: TestBaseline): Promise<VerifyResult> {
-  const current = await captureTestBaseline(projectPath)
+async function verifyRed(testDir: string, testCommand: string, baseline: TestBaseline): Promise<VerifyResult> {
+  const current = await captureTestBaseline(testDir, testCommand)
   const newFailures = current.failing - baseline.failing
+  const newErrors = current.errors - baseline.errors
 
-  if (newFailures > 0) {
+  if (newFailures > 0 || newErrors > 0) {
+    const parts: string[] = []
+    if (newFailures > 0) parts.push(`${newFailures} new failure(s)`)
+    if (newErrors > 0) parts.push(`${newErrors} new error(s)`)
     return {
       pass: true,
-      message: `RED OK: ${newFailures} new test failure(s) (baseline=${baseline.failing}, current=${current.failing})`,
+      message: `RED OK: ${parts.join(', ')} (baseline: ${baseline.failing} fail/${baseline.errors} err, current: ${current.failing} fail/${current.errors} err)`,
     }
   }
   return {
     pass: false,
-    message: `RED FAIL: No new test failures (baseline=${baseline.failing}, current=${current.failing}). Tests may be trivially passing.`,
+    message: `RED FAIL: No new test failures or errors (baseline: ${baseline.failing} fail/${baseline.errors} err, current: ${current.failing} fail/${current.errors} err). Tests may be trivially passing.`,
   }
 }
 
-async function verifyGreen(projectPath: string, baseline: TestBaseline): Promise<VerifyResult> {
-  const current = await captureTestBaseline(projectPath)
+async function verifyGreen(testDir: string, testCommand: string, baseline: TestBaseline): Promise<VerifyResult> {
+  const current = await captureTestBaseline(testDir, testCommand)
+  const newErrors = current.errors - baseline.errors
   const newFailures = current.failing - baseline.failing
 
-  if (newFailures <= 0) {
+  if (newErrors > 0) {
     return {
-      pass: true,
-      message: `GREEN OK: No new failures (baseline=${baseline.failing}, current=${current.failing})`,
+      pass: false,
+      message: `GREEN FAIL: ${newErrors} new import/parse error(s) detected (baseline: ${baseline.errors} err, current: ${current.errors} err)`,
+    }
+  }
+  if (newFailures > 0) {
+    return {
+      pass: false,
+      message: `GREEN FAIL: ${newFailures} new failure(s) remain (baseline: ${baseline.failing} fail, current: ${current.failing} fail)`,
     }
   }
   return {
-    pass: false,
-    message: `GREEN FAIL: ${newFailures} new failure(s) remain (baseline=${baseline.failing}, current=${current.failing})`,
+    pass: true,
+    message: `GREEN OK: No new failures or errors (baseline: ${baseline.failing} fail/${baseline.errors} err, current: ${current.failing} fail/${current.errors} err)`,
   }
 }
 
@@ -256,8 +299,10 @@ function buildTestPrompt(
   wuYaml: string,
   specExcerpt: string,
   projectPath: string,
+  language: string,
+  framework: string,
 ): string {
-  return `You are a test writer for the agentboard project (Bun + TypeScript).
+  return `You are a test writer for a ${framework ? `${framework} ` : ''}${language} project.
 
 ## Rules
 - Write tests ONLY. Never write implementation code.
@@ -288,8 +333,10 @@ function buildImplPrompt(
   wuYaml: string,
   specExcerpt: string,
   projectPath: string,
+  language: string,
+  framework: string,
 ): string {
-  return `You are an implementor for the agentboard project (Bun + TypeScript + React + Hono + Zustand + Tailwind).
+  return `You are an implementor for a ${framework ? `${framework} ` : ''}${language} project.
 
 ## Rules
 - Implement ONLY the files listed in this work unit. Do not modify test files.
@@ -359,22 +406,28 @@ function writeResultYaml(outputDir: string, results: WUResult[]): void {
   console.log(`[report] Wrote implementation-report.yaml (verdict=${verdict})`)
 }
 
-function writeSignalFile(outputDir: string, verdict: string): void {
+function writeSignalFile(outputDir: string, verdict: string, runId: string): void {
   const signal = {
-    type: 'step_complete',
-    step: 'implement',
-    verdict,
+    version: 1,
+    signal_type: verdict === 'pass' ? 'completed' : 'error',
     timestamp: new Date().toISOString(),
+    agent: 'wu-orchestrator',
+    step_name: 'implement',
+    run_id: runId,
+    checkpoint: {
+      last_build_status: verdict === 'pass' ? 'pass' : 'fail',
+    },
   }
 
   const dir = path.join(outputDir, 'signals')
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(
-    path.join(dir, 'implement-complete.yaml'),
-    yaml.dump(signal, { lineWidth: 120, noRefs: true }),
-    'utf-8',
-  )
-  console.log(`[signal] Wrote implement-complete.yaml (verdict=${verdict})`)
+
+  // Atomic write: temp file then rename
+  const tmpPath = path.join(dir, `.tmp-implement-${Date.now()}.yaml`)
+  const finalPath = path.join(dir, 'implement_completed.yaml')
+  fs.writeFileSync(tmpPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
+  fs.renameSync(tmpPath, finalPath)
+  console.log(`[signal] Wrote implement_completed.yaml (signal_type=${signal.signal_type})`)
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -389,6 +442,10 @@ async function main(): Promise<void> {
   console.log(`  output-dir:   ${config.outputDir}`)
   console.log(`  api-url:      ${config.apiUrl}`)
   console.log(`  tier:         ${config.tier}`)
+  console.log(`  test-dir:     ${config.testDir}`)
+  console.log(`  test-command: ${config.testCommand}`)
+  console.log(`  language:     ${config.language}`)
+  console.log(`  framework:    ${config.framework}`)
   console.log()
 
   // 1. Load manifest
@@ -418,10 +475,17 @@ async function main(): Promise<void> {
 
   // 4. Capture global test baseline
   console.log('[baseline] Capturing initial test baseline...')
-  let baseline = await captureTestBaseline(config.projectPath)
+  let baseline = await captureTestBaseline(config.testDir, config.testCommand)
   console.log(
-    `[baseline] ${baseline.totalTests} tests: ${baseline.passing} pass, ${baseline.failing} fail, ${baseline.skipped} skip`,
+    `[baseline] ${baseline.totalTests} tests: ${baseline.passing} pass, ${baseline.failing} fail, ${baseline.skipped} skip, ${baseline.errors} error(s) [exit=${baseline.exitCode}]`,
   )
+  if (baseline.exitCode !== 0 && baseline.totalTests === 0) {
+    console.warn(`[baseline] WARNING: Test runner exited with code ${baseline.exitCode} and found 0 tests`)
+    console.warn(`[baseline] Check --test-dir (${config.testDir}) and --test-command (${config.testCommand})`)
+  }
+  if (baseline.errors > 0) {
+    console.warn(`[baseline] WARNING: Baseline has ${baseline.errors} import/parse error(s)`)
+  }
   console.log()
 
   // 5. Process each WU in sorted order
@@ -449,8 +513,8 @@ async function main(): Promise<void> {
     console.log(`[${wu.id}] Creating test-writer task...`)
     let testTaskId: string
     try {
-      const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath)
-      testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt)
+      const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+      testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt, 3600, config.model)
       console.log(`[${wu.id}] Test task created: ${testTaskId}`)
     } catch (err) {
       console.error(`[${wu.id}] Failed to create test task: ${err}`)
@@ -483,7 +547,7 @@ async function main(): Promise<void> {
 
     // ── Step B: Verify RED ───────────────────────────────────────────────
     console.log(`[${wu.id}] Verifying RED (new test failures expected)...`)
-    const redResult = await verifyRed(config.projectPath, baseline)
+    const redResult = await verifyRed(config.testDir, config.testCommand, baseline)
     console.log(`[${wu.id}] ${redResult.message}`)
     if (!redResult.pass) {
       console.warn(`[${wu.id}] RED verification failed, continuing anyway`)
@@ -504,8 +568,8 @@ async function main(): Promise<void> {
       // Create implementor task
       console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})...`)
       try {
-        const implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath)
-        implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt)
+        const implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+        implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
         console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
       } catch (err) {
         console.error(`[${wu.id}] Failed to create impl task: ${err}`)
@@ -524,7 +588,7 @@ async function main(): Promise<void> {
 
       // Verify GREEN
       console.log(`[${wu.id}] Verifying GREEN (no new failures expected)...`)
-      const greenResult = await verifyGreen(config.projectPath, baseline)
+      const greenResult = await verifyGreen(config.testDir, config.testCommand, baseline)
       console.log(`[${wu.id}] ${greenResult.message}`)
       greenMessage = greenResult.message
 
@@ -546,7 +610,7 @@ async function main(): Promise<void> {
       })
       // Update baseline to incorporate new tests
       console.log(`[${wu.id}] Updating baseline...`)
-      baseline = await captureTestBaseline(config.projectPath)
+      baseline = await captureTestBaseline(config.testDir, config.testCommand)
       console.log(
         `[${wu.id}] New baseline: ${baseline.totalTests} tests, ${baseline.passing} pass, ${baseline.failing} fail`,
       )
@@ -580,7 +644,7 @@ async function main(): Promise<void> {
   }
 
   writeResultYaml(config.outputDir, results)
-  writeSignalFile(config.outputDir, verdict)
+  writeSignalFile(config.outputDir, verdict, config.runId)
 
   console.log('=== Summary ===')
   console.log(`  Total: ${results.length}  Passed: ${passed}  Failed: ${failed}  Skipped: ${skipped}`)

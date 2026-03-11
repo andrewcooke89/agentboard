@@ -182,9 +182,14 @@ export function readSignalFile(filePath: string): SignalFile | null {
   return null
 }
 
+export interface SignalMatch {
+  signal: SignalFile
+  filePath: string
+}
+
 /**
  * Check for signals matching a specific step, filtering by filesystem mtime.
- * Returns the oldest matching signal, or null if none found.
+ * Returns the oldest matching signal with its file path, or null if none found.
  *
  * REQ-13/REQ-45: Uses filesystem mtime (not YAML timestamp field) for stale
  * detection. This prevents agents from bypassing stale filtering by writing
@@ -198,7 +203,8 @@ export function checkStepSignals(
   stepName: string,
   startedAt: string,
   processedFiles?: Set<string>,
-): SignalFile | null {
+  runId?: string,
+): SignalMatch | null {
   try {
     const files = readdirSync(signalDir)
     const startedAtMs = new Date(startedAt).getTime()
@@ -254,20 +260,26 @@ export function checkStepSignals(
         continue
       }
 
+      // Filter by run_id to prevent cross-run signal contamination
+      // Check signal.run_id !== undefined to prevent empty string bypass
+      if (runId && signal.run_id !== undefined && signal.run_id !== '' && signal.run_id !== runId) {
+        continue
+      }
+
       candidates.push({ path: filePath, signal, mtime })
     }
 
     // Sort oldest-first by mtime (filesystem time, not YAML timestamp)
     candidates.sort((a, b) => a.mtime.getTime() - b.mtime.getTime())
 
-    // Return the first (oldest) matching signal
+    // Return the first (oldest) matching signal with its file path
     if (candidates.length > 0) {
       const best = candidates[0]
       // If processedFiles set provided, mark this signal as processed
       if (processedFiles) {
         processedFiles.add(best.path)
       }
-      return best.signal
+      return { signal: best.signal, filePath: best.path }
     }
 
     return null
@@ -280,6 +292,54 @@ export function checkStepSignals(
 
     console.warn(`Failed to check step signals in ${signalDir}: ${err}`)
     return null
+  }
+}
+
+/**
+ * Archive a consumed signal file to a .consumed/ subdirectory.
+ * Prevents replays and keeps the signal directory clean.
+ */
+export function archiveConsumedSignal(signalDir: string, signalFilePath: string): void {
+  try {
+    const consumedDir = path.join(signalDir, '.consumed')
+    mkdirSync(consumedDir, { recursive: true })
+    const fileName = path.basename(signalFilePath)
+    const destPath = path.join(consumedDir, fileName)
+    renameSync(signalFilePath, destPath)
+  } catch (err) {
+    // Best effort — don't fail the pipeline if archival fails
+    console.warn(`Failed to archive consumed signal ${signalFilePath}: ${err}`)
+  }
+}
+
+/**
+ * Archive all existing signal files in a directory to .stale/ subdirectory.
+ * Called when a new run starts and the signal directory already exists from a
+ * previous (possibly cancelled) run, to prevent cross-run contamination.
+ */
+export function archiveStaleSignals(signalDir: string): number {
+  try {
+    const files = readdirSync(signalDir)
+    const yamlFiles = files.filter(f =>
+      (f.endsWith('.yaml') || f.endsWith('.yml')) &&
+      !f.endsWith('_resolved.yaml') && !f.endsWith('_resolved.yml')
+    )
+
+    if (yamlFiles.length === 0) return 0
+
+    const staleDir = path.join(signalDir, `.stale-${Date.now()}`)
+    mkdirSync(staleDir, { recursive: true })
+
+    let archived = 0
+    for (const file of yamlFiles) {
+      try {
+        renameSync(path.join(signalDir, file), path.join(staleDir, file))
+        archived++
+      } catch { /* best effort */ }
+    }
+    return archived
+  } catch {
+    return 0
   }
 }
 

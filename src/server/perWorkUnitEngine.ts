@@ -211,75 +211,82 @@ export function topologicalSort(workUnits: WorkUnit[]): WorkUnit[] {
 
 /**
  * Parse work unit manifest from YAML file.
- * Returns null on error.
+ * Returns null if the file does not exist or contains no valid work units.
+ * Throws if the file exists but YAML is malformed (P1-31: fail visibly).
  */
 export function parseManifest(manifestPath: string, baseDir: string): WorkUnitManifest | null {
-  try {
-    const fullPath = path.resolve(baseDir, manifestPath)
+  const fullPath = path.resolve(baseDir, manifestPath)
 
-    // P1-5: Path traversal protection - must check with separator to prevent
-    // baseDir/subdir from matching baseDirOther/file
-    if (fullPath !== baseDir && !fullPath.startsWith(baseDir + path.sep)) {
-      throw new Error(`Path traversal detected: ${manifestPath}`)
-    }
-
-    if (!fs.existsSync(fullPath)) {
-      return null
-    }
-
-    const content = fs.readFileSync(fullPath, 'utf-8')
-    const raw = yaml.load(content, { schema: yaml.FAILSAFE_SCHEMA })
-
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-      return null
-    }
-
-    const doc = raw as Record<string, unknown>
-    const workUnits: WorkUnit[] = []
-
-    // Support both 'work_units' and 'units' keys
-    const unitsArray = (doc.work_units ?? doc.units) as unknown[] | undefined
-    if (!Array.isArray(unitsArray)) {
-      return null
-    }
-
-    for (const unitRaw of unitsArray) {
-      if (!unitRaw || typeof unitRaw !== 'object' || Array.isArray(unitRaw)) {
-        continue
-      }
-      const u = unitRaw as Record<string, unknown>
-
-      const workUnit: WorkUnit = {
-        id: String(u.id ?? ''),
-        scope: String(u.scope ?? ''),
-        files: Array.isArray(u.files)
-          ? (u.files as unknown[]).map(f => String(f))
-          : [],
-        tags: Array.isArray(u.tags)
-          ? (u.tags as unknown[]).map(t => String(t))
-          : undefined,
-        estimated_complexity: u.estimated_complexity
-          ? String(u.estimated_complexity)
-          : undefined,
-        depends_on: Array.isArray(u.depends_on)
-          ? (u.depends_on as unknown[]).map(d => String(d)).filter(d => d.length > 0)
-          : undefined,
-        interface_dependencies: Array.isArray(u.interface_dependencies)
-          ? (u.interface_dependencies as unknown[]).map(d => String(d))
-          : undefined,
-      }
-
-      if (workUnit.id && workUnit.scope) {
-        workUnits.push(workUnit)
-      }
-    }
-
-    return {
-      version: String(doc.version ?? '1.0'),
-      work_units: workUnits,
-    }
-  } catch {
+  // P1-5: Path traversal protection - must check with separator to prevent
+  // baseDir/subdir from matching baseDirOther/file
+  if (fullPath !== baseDir && !fullPath.startsWith(baseDir + path.sep)) {
     return null
+  }
+
+  if (!fs.existsSync(fullPath)) {
+    return null
+  }
+
+  // P1-31: Read and parse — throw on malformed YAML so pipeline fails visibly
+  let raw: unknown
+  try {
+    const content = fs.readFileSync(fullPath, 'utf-8')
+    raw = yaml.load(content, { schema: yaml.FAILSAFE_SCHEMA })
+  } catch (err) {
+    throw new Error(`Failed to parse manifest at '${manifestPath}': ${err}`)
+  }
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null
+  }
+
+  const doc = raw as Record<string, unknown>
+  const workUnits: WorkUnit[] = []
+
+  // Support both 'work_units' and 'units' keys
+  const unitsArray = (doc.work_units ?? doc.units) as unknown[] | undefined
+  if (!Array.isArray(unitsArray)) {
+    return null
+  }
+
+  for (const unitRaw of unitsArray) {
+    if (!unitRaw || typeof unitRaw !== 'object' || Array.isArray(unitRaw)) {
+      continue
+    }
+    const u = unitRaw as Record<string, unknown>
+
+    // Accept 'dependencies' as alias for 'depends_on' (decompose output format)
+    const depsArray = u.depends_on ?? u.dependencies
+
+    const workUnit: WorkUnit = {
+      id: String(u.id ?? ''),
+      // Accept 'title' as alias for 'scope' (decompose output format)
+      scope: String(u.scope ?? u.title ?? ''),
+      files: Array.isArray(u.files)
+        ? (u.files as unknown[]).map(f => String(f))
+        : [],
+      tags: Array.isArray(u.tags)
+        ? (u.tags as unknown[]).map(t => String(t))
+        : undefined,
+      estimated_complexity: u.estimated_complexity
+        ? String(u.estimated_complexity)
+        : undefined,
+      depends_on: Array.isArray(depsArray)
+        ? (depsArray as unknown[]).map(d => String(d)).filter(d => d.length > 0)
+        : undefined,
+      interface_dependencies: Array.isArray(u.interface_dependencies)
+        ? (u.interface_dependencies as unknown[]).map(d => String(d))
+        : undefined,
+    }
+
+    if (workUnit.id && workUnit.scope) {
+      workUnits.push(workUnit)
+    }
+  }
+
+  return {
+    version: String(doc.version ?? '1.0'),
+    work_units: workUnits,
   }
 }
 
@@ -299,11 +306,17 @@ export function selectSpecialist(
   }
 
   // Try to match tags to specialist agents
-  for (const tag of workUnit.tags) {
-    // Pattern: defaultAgent-tag (e.g., "workhorse-rust")
+  // Pattern: defaultAgent-tag (e.g., "workhorse-rust")
+  // We log a warning when a tag produces a specialist name but cannot be verified;
+  // the caller is responsible for ensuring the agent exists in the pipeline config.
+  const tagField = config.tag_field ?? 'tags'
+  const tagsToCheck = tagField === 'tags' ? workUnit.tags : []
+  for (const tag of tagsToCheck ?? []) {
     const specialistAgent = `${defaultAgent}-${tag}`
-    // In a real implementation, we'd check if this agent exists
-    // For now, return the first matched specialist
+    console.debug(
+      `selectSpecialist: using specialist '${specialistAgent}' for work unit '${workUnit.id}' ` +
+      `(tag: '${tag}') — verify this agent is defined in your pipeline config`
+    )
     return specialistAgent
   }
 

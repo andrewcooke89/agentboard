@@ -82,6 +82,13 @@ const VALID_CONDITION_TYPES: ReadonlySet<string> = new Set([
 
 const MAX_VALIDATION_ERRORS = 100
 
+// P2-17: Known native_step action values (mirrors PREDEFINED_ACTIONS in dagEngine.ts)
+const VALID_NATIVE_STEP_ACTIONS: ReadonlySet<string> = new Set([
+  'git_rebase_from_main',
+  'run_tests',
+  'prepare-context',
+])
+
 // ─── Main Entry Point ───────────────────────────────────────────────────────
 
 /**
@@ -284,13 +291,38 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
     parsedSteps.push(buildWorkflowStep(step, stepType))
   }
 
+  // ── P0-1: Validate depends_on references at top-level ────────────────────
+  // Collect all top-level step names so we can validate cross-references.
+  const allTopLevelNames = new Set<string>()
+  for (const s of parsedSteps) {
+    if (s.name) allTopLevelNames.add(s.name)
+  }
+  for (let i = 0; i < parsedSteps.length; i++) {
+    const step = parsedSteps[i]
+    const prefix = `steps[${i}]`
+    if (!step.depends_on || step.depends_on.length === 0) continue
+    for (const dep of step.depends_on) {
+      if (dep === step.name) {
+        errors.push(`${prefix}: self-dependency detected (step '${step.name}' depends on itself)`)
+      } else if (!allTopLevelNames.has(dep)) {
+        errors.push(`${prefix}.depends_on references unknown step '${dep}'`)
+      }
+    }
+  }
+
   // ── Validate {{ var }} references in step fields ─────────────────────────
-  if (parsedVariables.length > 0) {
-    const definedVarNames = new Set(parsedVariables.map(v => v.name))
+  // Always check, even when no variables: section exists (P0-3).
+  // Any {{ ref }} is an error unless it's a built-in variable.
+  {
+    const definedVarNames = new Set([
+      ...parsedVariables.map(v => v.name),
+      // Built-in variables auto-populated by dagEngine.ensureStandardVariables
+      'run_dir',
+      'run_id',
+    ])
     const templateRegex = /\{\{\s*([\w.]+)\s*\}\}/g
-    for (let i = 0; i < parsedSteps.length; i++) {
-      const step = parsedSteps[i]
-      const prefix = `steps[${i}]`
+
+    function checkStepTemplateRefs(step: WorkflowStep, prefix: string): void {
       const fieldsToCheck: [string, string | undefined][] = [
         ['projectPath', step.projectPath],
         ['prompt', step.prompt],
@@ -304,6 +336,7 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
         ['signal_dir', step.signal_dir],
         ['spec_path', step.spec_path],
         ['schema_path', step.schema_path],
+        ['prompt_template', step.prompt_template],
       ]
       // Also check args array entries
       if (step.args) {
@@ -327,6 +360,20 @@ export function parseWorkflowYAML(yamlContent: string): ValidationResult {
           }
         }
       }
+      // P0-2: Recurse into review_loop producer and reviewer
+      if (step.producer) checkStepTemplateRefs(step.producer, `${prefix}.producer`)
+      if (step.reviewer) checkStepTemplateRefs(step.reviewer, `${prefix}.reviewer`)
+      // Also recurse into parallel_group children
+      if (step.steps) {
+        for (let ci = 0; ci < step.steps.length; ci++) {
+          checkStepTemplateRefs(step.steps[ci], `${prefix}.steps[${ci}]`)
+        }
+      }
+    }
+
+    for (let i = 0; i < parsedSteps.length; i++) {
+      if (errors.length >= MAX_VALIDATION_ERRORS) break
+      checkStepTemplateRefs(parsedSteps[i], `steps[${i}]`)
     }
   }
 
@@ -640,6 +687,18 @@ function validateTypeSpecificFields(
     }
   }
 
+  // P1-39: also validate snake_case alias used by pipeline YAMLs
+  if ('timeout_seconds' in step && !('timeoutSeconds' in step)) {
+    const timeout = Number(step.timeout_seconds)
+    if (isNaN(timeout) || timeout <= 0) {
+      errors.push(`${prefix}.timeout_seconds must be a positive integer`)
+    } else if (timeout > 86400) {
+      errors.push(`${prefix}.timeout_seconds must not exceed 86400 (24 hours)`)
+    } else if (!Number.isInteger(timeout)) {
+      errors.push(`${prefix}.timeout_seconds must be an integer`)
+    }
+  }
+
   if ('maxRetries' in step) {
     const retries = Number(step.maxRetries)
     if (isNaN(retries) || retries < 0) {
@@ -777,6 +836,11 @@ function validateTypeSpecificFields(
         && hasStringField(step.execution as Record<string, unknown>, 'command')
       if (hasCommand && hasAction) {
         errors.push(`${prefix} must specify either command or action, not both`)
+      } else if (hasAction && !VALID_NATIVE_STEP_ACTIONS.has(step.action as string)) {
+        // P2-17: reject unknown action values at parse time
+        errors.push(
+          `${prefix}.action "${step.action}" is not a known native action (must be one of: ${[...VALID_NATIVE_STEP_ACTIONS].join(', ')})`,
+        )
       } else if (!hasCommand && !hasAction && !hasExecutionCommand) {
         // Phase 21: Pipeline YAMLs may have native_step with actions/checks defined
         // as structured data — these get their command at runtime
@@ -1024,11 +1088,14 @@ function validateTypeSpecificFields(
           }
         }
       }
-      // max_iterations — optional, positive integer, defaults to 3
+      // max_iterations — optional, positive integer >= 2, defaults to 3
+      // P2-19: value of 1 means no review can actually happen (producer runs, reviewer never runs)
       if ('max_iterations' in step && step.max_iterations !== undefined && step.max_iterations !== null) {
         const maxIter = Number(step.max_iterations)
         if (isNaN(maxIter) || !Number.isInteger(maxIter) || maxIter < 1) {
           errors.push(`${prefix}.max_iterations must be a positive integer`)
+        } else if (maxIter === 1) {
+          errors.push(`${prefix}.max_iterations of 1 is invalid: reviewer would never run (minimum is 2)`)
         } else {
           const envMax = parseInt(process.env.AGENTBOARD_MAX_REVIEW_ITERATIONS ?? '10', 10)
           const ceiling = (Number.isInteger(envMax) && envMax > 0) ? envMax : 10
@@ -1298,6 +1365,30 @@ function validateTypeSpecificFields(
     const tierMax = Number(step.tier_max)
     if (!isNaN(tierMin) && !isNaN(tierMax) && tierMin > tierMax) {
       errors.push(`${prefix}.tier_min (${tierMin}) must be <= tier_max (${tierMax})`)
+    }
+  }
+
+  // P2-18: Validate amendment_budget numeric values (0 is ambiguous/useless)
+  if ('amendment_budget' in step && step.amendment_budget !== undefined && step.amendment_budget !== null) {
+    if (typeof step.amendment_budget !== 'object' || Array.isArray(step.amendment_budget)) {
+      errors.push(`${prefix}.amendment_budget must be an object`)
+    } else {
+      const budget = step.amendment_budget as Record<string, unknown>
+      for (const [categoryKey, categoryVal] of Object.entries(budget)) {
+        if (categoryVal !== null && categoryVal !== undefined && typeof categoryVal === 'object' && !Array.isArray(categoryVal)) {
+          const cat = categoryVal as Record<string, unknown>
+          for (const [limitKey, limitVal] of Object.entries(cat)) {
+            if (limitVal !== undefined && limitVal !== null) {
+              const n = Number(limitVal)
+              if (isNaN(n) || !Number.isInteger(n) || n < 0) {
+                errors.push(`${prefix}.amendment_budget.${categoryKey}.${limitKey} must be a non-negative integer`)
+              } else if (n === 0) {
+                errors.push(`${prefix}.amendment_budget.${categoryKey}.${limitKey} is 0, which disables amendments entirely — use a positive integer or remove this field`)
+              }
+            }
+          }
+        }
+      }
     }
   }
 }
