@@ -157,8 +157,9 @@ function verifyGreen(projectPath: string, project: ProjectConfig): { pass: boole
 }
 
 function commitFix(projectPath: string, ticketId: string, title: string): { success: boolean; message: string } {
-  Bun.spawnSync(['git', 'add', '-A'], { cwd: projectPath })
-  const status = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: projectPath })
+  // Only stage tracked files that changed — avoid pulling in untracked ticket YAMLs etc.
+  Bun.spawnSync(['git', 'add', '-u'], { cwd: projectPath })
+  const status = Bun.spawnSync(['git', 'diff', '--cached', '--name-only'], { cwd: projectPath })
   if (!status.stdout.toString().trim()) return { success: false, message: 'Nothing to commit' }
   const msg = `fix(minion): ${title.slice(0, 72)} [${ticketId}]`
   const commit = Bun.spawnSync(['git', 'commit', '--no-verify', '-m', msg], { cwd: projectPath })
@@ -167,8 +168,8 @@ function commitFix(projectPath: string, ticketId: string, title: string): { succ
 }
 
 function revertChanges(projectPath: string): void {
+  // Only revert tracked file changes — don't nuke untracked files (ticket YAMLs etc.)
   Bun.spawnSync(['git', 'checkout', '.'], { cwd: projectPath })
-  Bun.spawnSync(['git', 'clean', '-fd'], { cwd: projectPath })
 }
 
 // ─── Prompt Builder ──────────────────────────────────────────────────────────
