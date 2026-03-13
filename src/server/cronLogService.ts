@@ -27,7 +27,7 @@ export class CronLogService {
    * - For systemd: `journalctl -u {service} -f`
    * - For cron: tail detected log files or syslog
    */
-  async *tailLogs(jobId: string): AsyncGenerator<string> {
+  async *tailLogs(_jobId: string): AsyncGenerator<string> {
     // Log sources will be connected via WU-007
   }
 }
