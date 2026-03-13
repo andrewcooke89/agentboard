@@ -1,10 +1,10 @@
 id: TKT-0046
 version: 1
 created_at: 2026-03-13T07:25:43.945Z
-updated_at: 2026-03-13T07:25:43.945Z
+updated_at: 2026-03-13T07:33:42.793Z
 category: style
 severity: medium
-status: open
+status: resolved
 source:
   file: /home/andrew-cooke/tools/agentboard/src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts
   line_start: 120
@@ -22,11 +22,17 @@ related_tickets: []
 tags:
   - nightly
   - oxlint
-notes: []
+notes:
+  - timestamp: 2026-03-13T07:33:42.793Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'fetchFromAg
+      [TKT-0046]"
 resolution:
-  status: null
-  resolved_at: null
-  resolved_by: null
+  status: fixed
+  resolved_at: 2026-03-13T07:33:42.793Z
+  resolved_by: minion-fix
   pr_url: null
   commit_sha: null
-  resolution_notes: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Identifier 'fetchFromAg [TKT-0046]"

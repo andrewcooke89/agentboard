@@ -1549,7 +1549,7 @@ describe('dagEngine', () => {
         '    action: "nonexistent_action"',
       ].join('\n')
 
-      const wf = createWorkflowDef(workflowStore, yaml, 'native-action-test')
+      const _wf = createWorkflowDef(workflowStore, yaml, 'native-action-test')
       // Use parseWorkflowYAML directly — schema rejects unknown actions now,
       // but we want to test the runtime path. Construct parsed manually.
       const result = parseWorkflowYAML(yaml)
