@@ -2,6 +2,10 @@
  * minion-fix.ts -- Standalone bun executable that reads open tickets from the
  * ticket system and creates agentboard tasks to fix them, then commits results.
  *
+ * Two-tier flow:
+ *   - Small-effort tickets (in auto_merge_efforts): commit directly to current branch
+ *   - Medium+ tickets: commit to a fix branch, push, open PR for review
+ *
  * Usage:
  *   bun run src/server/scripts/minion-fix.ts \
  *     --api-url http://localhost:4040 \
@@ -26,6 +30,7 @@ interface ProjectConfig {
   typecheck_cmd: string
   test_cmd: string
   fix_model: string
+  auto_merge_efforts?: string[]  // efforts that get auto-merged (default: ['small'])
 }
 
 interface MinionConfig {
@@ -37,6 +42,11 @@ interface CliArgs {
   project: string | null
   limit: number
   dryRun: boolean
+}
+
+interface FixResult {
+  ticket: Ticket
+  commitMsg: string
 }
 
 // ─── CLI Parsing ─────────────────────────────────────────────────────────────
@@ -137,12 +147,12 @@ function gitPush(projectPath: string, branchName: string): boolean {
 }
 
 function verifyGreen(projectPath: string, project: ProjectConfig): { pass: boolean; message: string } {
-  // Only verify lint + typecheck for minion fixes (small, lint-level changes).
+  // Only verify lint + typecheck for minion fixes.
   // Full test suite is skipped to avoid false negatives from pre-existing test failures.
   const lint = Bun.spawnSync(project.lint_cmd.split(/\s+/), { cwd: projectPath })
-  if (lint.exitCode !== 0) return { pass: false, message: `Lint failed` }
+  if (lint.exitCode !== 0) return { pass: false, message: 'Lint failed' }
   const tc = Bun.spawnSync(project.typecheck_cmd.split(/\s+/), { cwd: projectPath })
-  if (tc.exitCode !== 0) return { pass: false, message: `Typecheck failed` }
+  if (tc.exitCode !== 0) return { pass: false, message: 'Typecheck failed' }
   return { pass: true, message: 'Lint + typecheck pass' }
 }
 
@@ -182,6 +192,58 @@ Rules:
 - If the fix is unclear, make no changes`
 }
 
+// ─── Fix a Single Ticket ────────────────────────────────────────────────────
+
+async function fixTicket(
+  ticket: Ticket,
+  project: ProjectConfig,
+  args: CliArgs,
+  storage: FileStorage,
+  tag: string,
+): Promise<FixResult | null> {
+  console.log(`${tag} [${ticket.id}] Fixing: ${ticket.title}`)
+
+  const prompt = buildPrompt(ticket, project.language)
+  let taskId: string
+  try {
+    taskId = await createTask(args.apiUrl, project.path, prompt, 1800, project.fix_model)
+  } catch (err) {
+    console.error(`${tag} [${ticket.id}] createTask failed: ${err}`)
+    storage.transitionTicket(ticket.id, 'validated', { reason: 'minion-fix: task creation failed' })
+    return null
+  }
+
+  console.log(`${tag} [${ticket.id}] Task ${taskId} running...`)
+  const result = await pollUntilDone(args.apiUrl, taskId)
+
+  if (result.status !== 'completed') {
+    console.log(`${tag} [${ticket.id}] Task ${result.status} — reverting`)
+    revertChanges(project.path)
+    storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: task ${result.status}` })
+    return null
+  }
+
+  const verify = verifyGreen(project.path, project)
+  if (!verify.pass) {
+    console.log(`${tag} [${ticket.id}] Verification failed (${verify.message}) — reverting`)
+    revertChanges(project.path)
+    storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: ${verify.message}` })
+    return null
+  }
+
+  const commit = commitFix(project.path, ticket.id, ticket.title)
+  if (!commit.success) {
+    console.log(`${tag} [${ticket.id}] ${commit.message} — skipping`)
+    revertChanges(project.path)
+    storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: ${commit.message}` })
+    return null
+  }
+
+  console.log(`${tag} [${ticket.id}] ${commit.message}`)
+  storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-fix', reason: commit.message })
+  return { ticket, commitMsg: `- ${ticket.id}: ${ticket.title}` }
+}
+
 // ─── Per-Project Processing ──────────────────────────────────────────────────
 
 async function processProject(
@@ -190,137 +252,121 @@ async function processProject(
 ): Promise<{ fixed: number; failed: number; skipped: number }> {
   const projectPath = project.path
   const tag = `[minion-fix][${path.basename(projectPath)}]`
-  console.log(`${tag} Starting — limit=${args.limit} dry-run=${args.dryRun}`)
+  const autoMergeEfforts = new Set(project.auto_merge_efforts ?? ['small'])
+
+  console.log(`${tag} Starting — limit=${args.limit} dry-run=${args.dryRun} auto-merge=${[...autoMergeEfforts].join(',')}`)
 
   const storage = new FileStorage(projectPath)
 
-  // List open, small-effort tickets, severity desc
+  // List open tickets, severity desc — fetch all efforts, we'll split them
   const listResult = storage.listTickets({
     status: 'open',
-    effort: 'small',
     sort_by: 'severity',
     sort_order: 'desc',
     limit: 200,
     offset: 0,
   })
 
-  // Get full tickets and filter to minion-detect only (TicketSummary lacks found_by)
-  const eligible: Ticket[] = []
+  // Get full tickets, filter to minion-detect, split by auto-merge vs PR
+  const autoMergeTickets: Ticket[] = []
+  const prTickets: Ticket[] = []
+
   for (const summary of listResult.tickets) {
-    if (eligible.length >= args.limit) break
+    if (autoMergeTickets.length + prTickets.length >= args.limit) break
     const full = storage.getTicket(summary.id)
     if (!full) continue
-    if (full.found_by === 'minion-detect' || full.found_by?.includes('minion')) {
-      eligible.push(full)
+    if (full.found_by !== 'minion-detect' && !full.found_by?.includes('minion')) continue
+
+    if (autoMergeEfforts.has(full.effort)) {
+      autoMergeTickets.push(full)
+    } else {
+      prTickets.push(full)
     }
   }
 
-  if (eligible.length === 0) {
+  const totalEligible = autoMergeTickets.length + prTickets.length
+  if (totalEligible === 0) {
     console.log(`${tag} No eligible tickets found`)
     return { fixed: 0, failed: 0, skipped: 0 }
   }
 
-  console.log(`${tag} Found ${eligible.length} eligible ticket(s)`)
+  console.log(`${tag} Found ${totalEligible} eligible ticket(s): ${autoMergeTickets.length} auto-merge, ${prTickets.length} PR`)
 
   if (args.dryRun) {
-    for (const t of eligible) {
-      console.log(`  [${t.id}] [${t.severity}] ${t.title} — ${t.source.file}:${t.source.line_start}`)
+    for (const t of autoMergeTickets) {
+      console.log(`  [auto-merge] [${t.id}] [${t.severity}] [${t.effort}] ${t.title} — ${t.source.file}:${t.source.line_start}`)
     }
-    return { fixed: 0, failed: 0, skipped: eligible.length }
+    for (const t of prTickets) {
+      console.log(`  [PR]          [${t.id}] [${t.severity}] [${t.effort}] ${t.title} — ${t.source.file}:${t.source.line_start}`)
+    }
+    return { fixed: 0, failed: 0, skipped: totalEligible }
   }
-
-  // Save original branch and create fix branch
-  const originalBranch = gitCurrentBranch(projectPath)
-  const today = new Date().toISOString().slice(0, 10)
-  const fixBranch = `fix/nightly-${today}`
-
-  if (!gitCreateBranch(projectPath, fixBranch)) {
-    console.error(`${tag} ERROR: Could not create branch ${fixBranch}`)
-    return { fixed: 0, failed: 0, skipped: eligible.length }
-  }
-  console.log(`${tag} Created branch ${fixBranch}`)
 
   let fixed = 0
   let failed = 0
-  const commitMessages: string[] = []
+  const originalBranch = gitCurrentBranch(projectPath)
 
-  for (const ticket of eligible) {
-    console.log(`${tag} [${ticket.id}] Fixing: ${ticket.title}`)
+  // ── Pass 1: Auto-merge tickets (commit directly to current branch) ──────
 
-    const prompt = buildPrompt(ticket, project.language)
-    let taskId: string
-    try {
-      taskId = await createTask(args.apiUrl, projectPath, prompt, 1800, project.fix_model)
-    } catch (err) {
-      console.error(`${tag} [${ticket.id}] createTask failed: ${err}`)
-      storage.transitionTicket(ticket.id, 'validated', { reason: 'minion-fix: task creation failed' })
-      failed++
-      continue
+  if (autoMergeTickets.length > 0) {
+    console.log(`${tag} Pass 1: ${autoMergeTickets.length} auto-merge ticket(s)`)
+    for (const ticket of autoMergeTickets) {
+      const result = await fixTicket(ticket, project, args, storage, tag)
+      if (result) { fixed++ } else { failed++ }
     }
-
-    console.log(`${tag} [${ticket.id}] Task ${taskId} running...`)
-    const result = await pollUntilDone(args.apiUrl, taskId)
-
-    if (result.status !== 'completed') {
-      console.log(`${tag} [${ticket.id}] Task ${result.status} — reverting`)
-      revertChanges(projectPath)
-      storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: task ${result.status}` })
-      failed++
-      continue
-    }
-
-    // Verify
-    const verify = verifyGreen(projectPath, project)
-    if (!verify.pass) {
-      console.log(`${tag} [${ticket.id}] Verification failed (${verify.message}) — reverting`)
-      revertChanges(projectPath)
-      storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: ${verify.message}` })
-      failed++
-      continue
-    }
-
-    // Commit
-    const commit = commitFix(projectPath, ticket.id, ticket.title)
-    if (!commit.success) {
-      console.log(`${tag} [${ticket.id}] ${commit.message} — skipping`)
-      revertChanges(projectPath)
-      storage.transitionTicket(ticket.id, 'validated', { reason: `minion-fix: ${commit.message}` })
-      failed++
-      continue
-    }
-
-    console.log(`${tag} [${ticket.id}] ${commit.message}`)
-    commitMessages.push(`- ${ticket.id}: ${ticket.title}`)
-    storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-fix', reason: commit.message })
-    fixed++
   }
 
-  // Push and open PR if any fixes were committed
-  if (fixed > 0) {
-    console.log(`${tag} Pushing branch ${fixBranch}`)
-    if (gitPush(projectPath, fixBranch)) {
-      const prBody = `Automated nightly fixes from minion-fix.\n\n## Fixed Tickets\n${commitMessages.join('\n')}\n\n🤖 Generated by minion-fix`
-      try {
-        const pr = Bun.spawnSync(
-          ['gh', 'pr', 'create', '--title', `fix(nightly): automated fixes ${today}`, '--body', prBody],
-          { cwd: projectPath },
-        )
-        if (pr.exitCode === 0) {
-          console.log(`${tag} PR created: ${pr.stdout.toString().trim()}`)
-        } else {
-          console.error(`${tag} PR creation failed: ${pr.stderr.toString()}`)
-        }
-      } catch {
-        console.log(`${tag} 'gh' CLI not available — skip PR creation. Push succeeded, create PR manually.`)
-      }
+  // ── Pass 2: PR tickets (fix branch → push → PR) ────────────────────────
+
+  if (prTickets.length > 0) {
+    const today = new Date().toISOString().slice(0, 10)
+    const fixBranch = `fix/nightly-${today}`
+    console.log(`${tag} Pass 2: ${prTickets.length} PR ticket(s) → branch ${fixBranch}`)
+
+    if (!gitCreateBranch(projectPath, fixBranch)) {
+      console.error(`${tag} ERROR: Could not create branch ${fixBranch}`)
+      failed += prTickets.length
     } else {
-      console.error(`${tag} Push failed — commits remain on local branch`)
+      const prCommitMessages: string[] = []
+
+      for (const ticket of prTickets) {
+        const result = await fixTicket(ticket, project, args, storage, tag)
+        if (result) {
+          prCommitMessages.push(result.commitMsg)
+          fixed++
+        } else {
+          failed++
+        }
+      }
+
+      // Push and open PR if any fixes were committed
+      if (prCommitMessages.length > 0) {
+        console.log(`${tag} Pushing branch ${fixBranch}`)
+        if (gitPush(projectPath, fixBranch)) {
+          const prBody = `Automated nightly fixes from minion-fix.\n\n## Fixed Tickets\n${prCommitMessages.join('\n')}\n\n🤖 Generated by minion-fix`
+          try {
+            const pr = Bun.spawnSync(
+              ['gh', 'pr', 'create', '--title', `fix(nightly): automated fixes ${today}`, '--body', prBody],
+              { cwd: projectPath },
+            )
+            if (pr.exitCode === 0) {
+              console.log(`${tag} PR created: ${pr.stdout.toString().trim()}`)
+            } else {
+              console.error(`${tag} PR creation failed: ${pr.stderr.toString()}`)
+            }
+          } catch {
+            console.log(`${tag} 'gh' CLI not available — skip PR creation. Push succeeded, create PR manually.`)
+          }
+        } else {
+          console.error(`${tag} Push failed — commits remain on local branch`)
+        }
+      }
+
+      // Return to original branch
+      gitCheckout(projectPath, originalBranch)
+      console.log(`${tag} Returned to ${originalBranch}`)
     }
   }
-
-  // Return to original branch
-  gitCheckout(projectPath, originalBranch)
-  console.log(`${tag} Returned to ${originalBranch}`)
 
   return { fixed, failed, skipped: 0 }
 }
