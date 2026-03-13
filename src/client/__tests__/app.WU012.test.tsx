@@ -204,7 +204,7 @@ function setupDom() {
   }
 }
 
-const baseSession: Session = {
+const _baseSession: Session = {
   id: 'session-1',
   name: 'alpha',
   tmuxWindow: 'agentboard:1',
