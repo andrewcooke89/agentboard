@@ -26,7 +26,7 @@ interface CronAiDrawerProps {
  * - On mount: sends cron-ai-drawer-open WS message (WU-013)
  * - On New Conversation: sends cron-ai-new-conversation WS message (WU-013)
  */
-export function CronAiDrawer({ sendMessage, subscribe, children }: CronAiDrawerProps) {
+export function CronAiDrawer({ sendMessage, subscribe: _subscribe, children }: CronAiDrawerProps) {
   const drawerOpen = useCronAiStore((s) => s.drawerOpen)
   const drawerWidth = useCronAiStore((s) => s.drawerWidth)
   const sessionStatus = useCronAiStore((s) => s.sessionStatus)
