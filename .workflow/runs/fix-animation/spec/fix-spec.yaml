@@ -1,0 +1,62 @@
+verdict: pass
+
+title: "Fix: Add framer-motion animations to TaskQueue and TaskItem components"
+
+description: |
+  Add enter/exit animations to the task list in TaskQueue.tsx and TaskItem.tsx
+  using the established framer-motion (motion/react) pattern from SessionList,
+  CronJobList, and PendingReviewDashboard. Wrap each task list .map() block in
+  AnimatePresence, convert TaskItem's root <div> to a <motion.div> with
+  opacity/height transitions, and add useReducedMotion accessibility support.
+  Follows the simpler CronJobList pattern (no drag-and-drop or spring physics).
+
+changes:
+  - file: "src/client/components/TaskQueue.tsx"
+    description: |
+      1. Add import: { AnimatePresence, useReducedMotion } from 'motion/react'
+      2. Call `const prefersReducedMotion = useReducedMotion()` at the top of
+         the TaskQueue component body.
+      3. Wrap each of the three task list .map() blocks (Running ~line 147,
+         Queued ~line 167, Recent ~line 186) in:
+           <AnimatePresence initial={false}>
+             {tasks.map(...)}
+           </AnimatePresence>
+         Ensure the existing key prop on each TaskItem is preserved (required
+         by AnimatePresence for tracking enter/exit).
+    change_type: modify
+
+  - file: "src/client/components/TaskItem.tsx"
+    description: |
+      1. Add import: { motion, useReducedMotion } from 'motion/react'
+      2. Call `const prefersReducedMotion = useReducedMotion()` at the top of
+         the TaskItem component body.
+      3. Replace the root <div> element (~line 79) with <motion.div> and add
+         the following animation props:
+           initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+           animate={{ opacity: 1, height: 'auto' }}
+           exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+           transition={{ duration: 0.2 }}
+      4. Add style={{ overflow: 'hidden' }} to the <motion.div> to prevent
+         content flash during the height animation (consistent with the
+         SessionList pattern at line 854).
+      5. Update the matching closing </div> to </motion.div>.
+    change_type: modify
+
+acceptance_criteria:
+  - "TaskItem components animate in with opacity 0→1 and height 0→auto over ~200ms when added to the list"
+  - "TaskItem components animate out with opacity 1→0 and height auto→0 over ~200ms when removed from the list"
+  - "All three task list sections (Running, Queued, Recent) in TaskQueue have AnimatePresence wrappers"
+  - "useReducedMotion is respected: users with prefers-reduced-motion skip height/scale transitions and only fade"
+  - "AnimatePresence uses initial={false} so items do not animate on initial page load"
+  - "No visual glitch or content overflow during height animation (overflow: hidden applied)"
+  - "Existing task queue functionality (status display, actions, ordering) is unchanged"
+  - "Project builds without errors (bun run build)"
+  - "Linter passes (bun run lint)"
+  - "Type checker passes (bun run typecheck)"
+  - "Existing tests pass (bun run test)"
+
+regression_risks:
+  - "Rapid re-renders: If TaskItem re-renders rapidly during status polling, AnimatePresence may queue animations. Mitigated by the short 200ms duration and consistent with how SessionList handles rapid updates."
+  - "Key stability: If task keys change unexpectedly (e.g. ID regeneration), AnimatePresence will treat items as new, causing spurious enter/exit animations. Verify that task IDs are stable across renders."
+  - "Layout shift: The height 0→auto animation could cause momentary layout shifts in the task queue panel. The overflow: hidden style mitigates content flash, but rapid adds/removes could cause subtle jitter."
+  - "Bundle size: No impact — motion/react is already a project dependency used by multiple components."

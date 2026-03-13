@@ -1,0 +1,76 @@
+id: WU-002
+title: "Database Schema & Settings Store"
+description: |
+  Add the cron_job_prefs and cron_run_history SQLite tables to the database initialization,
+  and extend the settings store with all cron-related user preferences. This provides the
+  persistence layer for job preferences, manual run history, and user configuration.
+
+dependencies: [WU-001]
+
+files:
+  modified:
+    - path: src/server/db.ts
+      changes: |
+        - Add CREATE TABLE IF NOT EXISTS cron_job_prefs (job_id TEXT PRIMARY KEY,
+          custom_avatar_style TEXT, custom_name TEXT, is_favorite INTEGER DEFAULT 0,
+          is_managed INTEGER DEFAULT 0, linked_session_id TEXT, tags TEXT DEFAULT '[]',
+          notes TEXT, last_seen TEXT DEFAULT (datetime('now')),
+          created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))
+        - Add CREATE TABLE IF NOT EXISTS cron_run_history (id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job_id TEXT NOT NULL, timestamp TEXT NOT NULL, end_timestamp TEXT, duration INTEGER,
+          exit_code INTEGER, trigger TEXT DEFAULT 'manual', log_snippet TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (job_id) REFERENCES cron_job_prefs(job_id) ON DELETE CASCADE)
+        - Add CREATE INDEX IF NOT EXISTS idx_cron_run_history_job ON cron_run_history(job_id, timestamp DESC)
+        - Call table creation in initDatabase()
+    - path: src/client/stores/settingsStore.ts
+      changes: |
+        - Add cronPollInterval: number (default: 5000, min: 2000, max: 30000)
+        - Add cronAvatarStyle: string (default: 'bottts')
+        - Add cronSudoGracePeriod: number (default: 300000)
+        - Add cronShowSystemJobs: boolean (default: true)
+        - Add cronShowUserJobs: boolean (default: true)
+        - Add cronDefaultSort: string (default: 'name')
+        - Add cronListWidth: number (default: 320, min: 180, max: 500)
+        - Add cronNotificationsEnabled: boolean (default: true)
+        - Add cronDesktopNotifications: boolean (default: false)
+        - Add cronNotifyOnFailure: boolean (default: true)
+        - Add cronNotifyOnMissedRun: boolean (default: true)
+        - Add cronNotifyOnManualRun: boolean (default: true)
+        - Add cronTimelineDefaultVisible: boolean (default: false)
+        - Add cronTimelineDefaultRange: string (default: '24h')
+        - Add setter actions for each new field
+        - Bump persist version and add migration for new fields
+        - Include new fields in partialize (they should persist)
+
+acceptance_criteria:
+  - req: REQ-87
+    type: contract
+    check: "cron_job_prefs table created with all specified columns including last_seen"
+  - req: REQ-88
+    type: contract
+    check: "cron_run_history table created with foreign key to cron_job_prefs, cascading delete"
+  - req: REQ-98
+    type: contract
+    check: "last_seen column exists in cron_job_prefs with default datetime('now')"
+  - req: REQ-90
+    type: behavioral
+    check: "All 14 cron settings fields added to settingsStore with correct defaults"
+
+test_specs: []
+  # Database schema and settings store are tested via integration in WU-003+ and WU-008+
+
+cross_wu_interfaces:
+  exports:
+    - name: "cron_job_prefs table schema"
+      consumers: [WU-003, WU-004, WU-005, WU-006, WU-017]
+    - name: "cron_run_history table schema"
+      consumers: [WU-005, WU-006]
+    - name: "Settings store cron fields"
+      consumers: [WU-004, WU-005, WU-008, WU-009, WU-010, WU-017, WU-018, WU-019]
+
+implementation_notes: |
+  Follow the existing initDatabase() pattern in db.ts — define SQL as module-level constants,
+  execute in initDatabase(). For settings, follow the existing settingsStore pattern: add fields
+  to the interface, default values, setter actions, and bump the persist version with a migration
+  function that adds defaults for the new fields. Use the safeStorage utility for persistence.

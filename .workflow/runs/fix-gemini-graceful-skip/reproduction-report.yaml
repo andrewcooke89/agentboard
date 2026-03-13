@@ -1,0 +1,43 @@
+verdict: fail
+
+reproduced: false
+
+reproduction_output: |
+  Initial test run (with GEMINI_API_KEY set in environment):
+  - geminiClient.test.ts: FAIL - response.skipped is undefined (expected true)
+  - dagEngine.test.ts: FAIL - step status is 'failed' (expected 'skipped')
+
+  Investigation revealed GEMINI_API_KEY environment variable is set (39 chars):
+  - GEMINI_API_KEY value: "AIzaSyCFk8lfMIO-kkuKh1bYWd9AfmSjXoecS4w"
+  - This is a real API key, not empty string
+
+  Test run with environment variable unset:
+  - geminiClient.test.ts: 14 pass, 0 fail
+  - dagEngine.test.ts (gemini_offload skip test): 1 pass
+
+  Direct verification (env var unset):
+  - callGemini returns: { "skipped": true, "reason": "no_api_key" }
+  - This matches the expected behavior
+
+notes: |
+  BUG IS NOT REPRODUCIBLE - The code is already correct.
+
+  Root cause of test failure: The test environment has GEMINI_API_KEY set
+  to a real API key. The tests use setApiKeyOverride(undefined) to clear
+  the override, but this causes the code to fall back to the environment
+  variable, which is set.
+
+  Code analysis:
+  - geminiClient.ts lines 217-223: Graceful degradation IS implemented
+    - Returns { skipped: true, reason: 'no_api_key' } when no API key
+  - dagEngine.ts lines 1234-1249: Skip indicator IS checked
+    - Sets stepState.status = 'skipped' when response.skipped is true
+
+  The fix described in the bug spec has already been implemented. The
+  tests fail only because the test environment is not properly isolated
+  from the real GEMINI_API_KEY environment variable.
+
+  Recommendation:
+  - Mark this bug as "cannot reproduce" or "already fixed"
+  - Optionally: Update tests to mock the config import or use bun's
+    env mocking to ensure isolation

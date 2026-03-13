@@ -1,0 +1,71 @@
+id: WU-001
+title: "Shared Types & Data Model"
+description: |
+  Define all TypeScript types for the cron manager feature in the shared types module.
+  This includes the CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, and
+  SystemdCreateConfig interfaces, plus all WebSocket message type extensions to the
+  ServerMessage and ClientMessage discriminated unions. This WU is the foundation for
+  all other work units -- nothing can proceed without these type definitions.
+
+dependencies: []
+
+files:
+  modified:
+    - path: src/shared/types.ts
+      changes: |
+        - Add JobSource, JobStatus, HealthStatus type aliases
+        - Add CronJob interface (id, name, source, schedule, scheduleHuman, command,
+          scriptPath, projectGroup, status, health, healthReason, lastRun, lastRunDuration,
+          nextRun, lastExitCode, consecutiveFailures, avgDuration, user, requiresSudo,
+          avatarUrl, unitFile, description, tags, isManagedByAgentboard, linkedSessionId)
+        - Add CronJobDetail interface extending CronJob (scriptContent, scriptLanguage,
+          timerConfig, serviceConfig, crontabLine, runHistory, recentLogs)
+        - Add JobRunRecord interface (timestamp, endTimestamp, duration, exitCode, trigger, logSnippet)
+        - Add CronCreateConfig interface (command, schedule, comment, tags)
+        - Add SystemdCreateConfig interface (serviceName, command, schedule, description,
+          workingDirectory, scope, tags)
+        - Add BulkProgress interface (completed, total, failures)
+        - Extend ServerMessage union with: cron-jobs, cron-job-update, cron-job-removed,
+          cron-job-detail, cron-operation-result, cron-sudo-required, cron-run-started,
+          cron-run-output, cron-run-completed, cron-bulk-operation-progress, cron-notification
+        - Extend ClientMessage union with: cron-job-select, cron-job-run-now, cron-job-pause,
+          cron-job-resume, cron-job-edit-frequency, cron-job-delete, cron-job-create,
+          cron-bulk-pause, cron-bulk-resume, cron-bulk-delete, cron-job-set-tags,
+          cron-job-set-managed, cron-job-link-session, cron-sudo-auth, cron-job-logs,
+          cron-job-history
+
+acceptance_criteria:
+  - req: REQ-05
+    type: invariant
+    check: "CronJob.id type is string; the ID derivation contract (source+name+command hash) is documented in JSDoc"
+  - req: REQ-81
+    type: contract
+    check: "CronJob.requiresSudo is boolean; documented that system-crontab and systemd-system sources have requiresSudo: true"
+
+test_specs:
+  - id: TEST-06
+    scope: "Type-level: verify CronJob interface compiles with all required fields"
+    note: "Full runtime tests for ID stability are in WU-003"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronJob"
+      consumers: [WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008, WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+    - name: "CronJobDetail"
+      consumers: [WU-006, WU-007, WU-012, WU-013, WU-014]
+    - name: "JobRunRecord"
+      consumers: [WU-004, WU-006, WU-007, WU-013]
+    - name: "CronCreateConfig"
+      consumers: [WU-005, WU-007, WU-015]
+    - name: "SystemdCreateConfig"
+      consumers: [WU-005, WU-007, WU-015]
+    - name: "ServerMessage (cron variants)"
+      consumers: [WU-007, WU-008, WU-009]
+    - name: "ClientMessage (cron variants)"
+      consumers: [WU-007, WU-008]
+
+implementation_notes: |
+  Follow the existing discriminated union pattern in types.ts. Add new types in a clearly
+  demarcated section (e.g. `// --- Cron Manager Types ----`). WebSocket message types
+  use the `{ type: 'cron-*', ... }` naming convention to namespace them from existing messages.
+  The `activeView` type union in App.tsx state is NOT modified here -- that's WU-009.

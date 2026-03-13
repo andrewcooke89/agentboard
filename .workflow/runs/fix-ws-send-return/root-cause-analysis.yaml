@@ -1,0 +1,76 @@
+verdict: pass
+
+root_cause: |
+  FakeWebSocket test mock initializes readyState to FakeWebSocket.OPEN (1)
+  instead of 0 (CONNECTING). Real WebSocket instances start in CONNECTING
+  state (readyState=0) and only transition to OPEN (readyState=1) when
+  the connection handshake completes and onopen fires. The mock skips
+  this lifecycle, making it appear connected immediately after construction.
+
+location:
+  file: "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+  line_range: "25"
+  function: "FakeWebSocket class (property initializer)"
+
+mechanism: |
+  Wrong initial value in mock — the FakeWebSocket class declares:
+
+    readyState = FakeWebSocket.OPEN   // line 25 — value is 1
+
+  When the test calls manager.connect(), WebSocketManager stores the
+  FakeWebSocket instance (useWebSocket.ts:33). The production send()
+  method (useWebSocket.ts:98) checks:
+
+    if (this.ws?.readyState === WebSocket.OPEN)
+
+  Because the mock's readyState is already 1 (OPEN) from construction,
+  this check passes even though triggerOpen() was never called. The test
+  at line 173 expects send() to return false (connection not yet
+  established), but gets true because the mock is lying about its state.
+
+  Execution trace for the failing test ("send() returns false before
+  connection is established", line 167):
+    1. manager.connect() → creates FakeWebSocket (readyState=1 from init)
+    2. triggerOpen() is NOT called (intentionally — simulating CONNECTING)
+    3. manager.send({type:'session-refresh'}) → checks readyState===1 → true
+    4. send() returns true
+    5. expect(result).toBe(false) → FAILS
+
+  The production code (useWebSocket.ts:97-103) is correct. The send()
+  method already returns boolean and properly gates on readyState. The
+  bug is entirely in the test mock's incorrect initial state.
+
+fix_approach: |
+  Change FakeWebSocket.readyState initialization from FakeWebSocket.OPEN
+  to 0 (CONNECTING):
+
+    Before (line 25):
+      readyState = FakeWebSocket.OPEN    // 1 — wrong
+
+    After:
+      readyState = 0                     // CONNECTING — matches real WebSocket
+
+  Also add the CONNECTING constant for clarity:
+
+    static CONNECTING = 0
+
+  The existing triggerOpen() method (line 45-48) already sets
+  readyState = FakeWebSocket.OPEN, so the lifecycle will work correctly:
+  construct → readyState=0 → triggerOpen() → readyState=1.
+
+  No production code changes are needed. The fix is a single-line change
+  in the test mock.
+
+risk_assessment: |
+  Very low risk. The change is confined to the test mock in a single test
+  file. No production code is modified.
+
+  Potential concerns:
+  1. Other tests in the same file that call triggerOpen() before send()
+     (lines 131-144, 146-165) will continue to pass because triggerOpen()
+     sets readyState=OPEN before the send() call.
+  2. The "send() returns true when socket is open" test (line 131) already
+     calls ws.triggerOpen() before send(), so it is unaffected.
+  3. The "send() returns false when socket is closed" test (line 146)
+     calls triggerOpen() then sets readyState=CLOSED, so it is unaffected.
+  4. No other test files import or depend on this FakeWebSocket class.

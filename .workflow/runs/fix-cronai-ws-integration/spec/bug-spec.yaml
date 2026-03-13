@@ -1,0 +1,95 @@
+title: "Missing cron-ai WebSocket handlers and keyboard shortcut in App.tsx"
+
+description: |
+  App.tsx handles all existing cron manager WebSocket message types (cron-jobs,
+  cron-job-update, cron-job-removed, cron-job-detail, cron-operation-result,
+  cron-sudo-required, cron-run-started, cron-run-output, cron-run-completed,
+  cron-bulk-operation-progress, cron-notification) but is completely missing
+  handlers for four cron-ai-* message types:
+
+  1. cron-ai-proposal — should dispatch to useCronAiStore.getState().handleCronAiProposal(message.proposal)
+  2. cron-ai-navigate — should switch on message.action (select_job, switch_tab,
+     show_timeline, filter) and dispatch to the corresponding useCronStore actions
+  3. cron-ai-session-status — should dispatch to useCronAiStore.getState().handleCronAiSessionStatus(message.status)
+     and also call setSessionWindowId(message.windowId)
+  4. cron-ai-mcp-status — should dispatch to useCronAiStore.getState().handleCronAiMcpStatus(message.connected)
+
+  Additionally, App.tsx does not import useCronAiStore at all, and is missing the
+  Cmd+Shift+A (Ctrl+Shift+A on non-Mac) keyboard shortcut to toggle the CronAI
+  drawer via useCronAiStore.getState().toggleDrawer(). The shortcut must be gated
+  on useSettingsStore.getState().cronAiEnabled being true.
+
+  The cron AI stores (cronAiStore, cronStore) already expose all required actions.
+  The shared types (ServerMessage union in types.ts) already include the four
+  missing message type discriminants. Only the wiring in App.tsx is missing.
+
+  24 tests in src/client/__tests__/app.WU012.test.tsx fail because of these
+  missing handlers and shortcut.
+
+reproduction:
+  steps:
+    - "Run: bun test src/client/__tests__/app.WU012.test.tsx"
+    - "Observe 24 failing tests across describe blocks AC-012-3 through AC-012-8"
+    - "Alternatively: open the app, connect a cron-ai session, and send a cron-ai-proposal message via WebSocket — it is silently dropped"
+    - "Press Cmd+Shift+A (or Ctrl+Shift+A) — nothing happens, no drawer toggles"
+  environment: "Bun 1.x, TypeScript 5.x, React 18, macOS/Linux"
+
+expected: |
+  1. WebSocket messages of type cron-ai-proposal are dispatched to
+     useCronAiStore.getState().handleCronAiProposal(message.proposal).
+  2. WebSocket messages of type cron-ai-navigate dispatch sub-actions:
+     - select_job: calls useCronStore.getState().setSelectedJob(payload.jobId)
+       and scrolls to the matching DOM element.
+     - switch_tab: calls useCronStore.getState().setActiveTab(payload.tab).
+     - show_timeline: sets timelineVisible to true and optionally calls
+       useCronStore.getState().setTimelineRange(payload.range).
+     - filter: calls setFilterMode, setFilterSource, and/or setFilterTags on
+       useCronStore as appropriate for the payload fields present.
+  3. WebSocket messages of type cron-ai-session-status dispatch to
+     useCronAiStore.getState().handleCronAiSessionStatus(message.status) and
+     useCronAiStore.getState().setSessionWindowId(message.windowId).
+  4. WebSocket messages of type cron-ai-mcp-status dispatch to
+     useCronAiStore.getState().handleCronAiMcpStatus(message.connected).
+  5. Cmd+Shift+A (Ctrl+Shift+A on non-Mac) toggles the CronAI drawer when
+     cronAiEnabled is true in settingsStore; is a no-op when false.
+  6. All 24 tests in app.WU012.test.tsx pass.
+
+actual: |
+  1. All four cron-ai-* WebSocket message types are silently dropped — no
+     case branches exist for them in the App.tsx message handler.
+  2. useCronAiStore is not imported in App.tsx at all.
+  3. Cmd+Shift+A / Ctrl+Shift+A has no effect — no keyboard handler exists.
+  4. 24 tests in app.WU012.test.tsx fail.
+
+affected_files:
+  - "src/client/App.tsx"
+  - "src/client/stores/cronAiStore.ts"
+  - "src/client/stores/cronStore.ts"
+  - "src/client/stores/settingsStore.ts"
+  - "src/shared/types.ts"
+  - "src/client/__tests__/app.WU012.test.tsx"
+
+root_cause: |
+  App.tsx was not updated when the cron-ai feature was added. The stores and
+  shared types were extended with the new message types and actions, but the
+  WebSocket message handler switch/case in App.tsx and the keyboard event
+  handler were never wired up to consume them.
+
+fix_approach: |
+  1. Add import for useCronAiStore in App.tsx.
+  2. Add four case branches to the WebSocket message handler:
+     - case 'cron-ai-proposal': dispatch to handleCronAiProposal
+     - case 'cron-ai-navigate': switch on message.action for select_job,
+       switch_tab, show_timeline, filter
+     - case 'cron-ai-session-status': dispatch to handleCronAiSessionStatus
+       and setSessionWindowId
+     - case 'cron-ai-mcp-status': dispatch to handleCronAiMcpStatus
+  3. Add Cmd+Shift+A / Ctrl+Shift+A keyboard shortcut gated on
+     settingsStore.cronAiEnabled, calling toggleDrawer().
+  4. Verify all 24 tests pass.
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

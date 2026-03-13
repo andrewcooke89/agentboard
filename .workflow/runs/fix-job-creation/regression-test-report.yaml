@@ -1,0 +1,72 @@
+verdict: pass
+
+test_files_created:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+  - "src/server/__tests__/cronDuplicateDetection.test.ts"
+  - "src/server/__tests__/cronFlockWrapping.test.ts"
+
+test_count: 16
+
+description: |
+  Regression tests for three independent bugs in the cron job creation and
+  execution system. All tests currently FAIL as expected (bugs not fixed).
+
+  ## BUG-1: WebSocket silent failure on job creation (4 tests)
+  File: src/client/__tests__/webSocketSendReturnBoolean.test.ts
+
+  Tests that WebSocketManager.send() returns a boolean indicating whether
+  the message was sent. Currently returns void (undefined), causing the
+  CronCreateModal to close unconditionally even when the message was dropped.
+
+  - send() returns true when socket is open and message is sent
+  - send() returns false when socket is closed and message is dropped
+  - send() returns false before connection is established
+  - send() returns false when manager has no WebSocket instance
+
+  ## BUG-2: No duplicate detection on cron job creation (6 tests)
+  File: src/server/__tests__/cronDuplicateDetection.test.ts
+
+  Tests that createCronJob() throws an error when an identical schedule+command
+  already exists in the crontab. Currently appends unconditionally, allowing
+  duplicate entries.
+
+  - createCronJob throws error when identical schedule+command already exists
+  - createCronJob allows different schedule with same command
+  - createCronJob allows same schedule with different command
+  - createCronJob detects duplicate ignoring trailing comments
+  - createCronJob succeeds with empty crontab
+  - createCronJob handles crontab with only comments and blanks
+
+  ## BUG-3: No concurrent-run guard for scheduled runs (6 tests)
+  File: src/server/__tests__/cronFlockWrapping.test.ts
+
+  Tests that crontab commands are wrapped with flock(1) for OS-level mutual
+  exclusion. Currently commands are appended directly without flock, allowing
+  scheduled runs to overlap with manual runs or other scheduled executions.
+
+  - createCronJob wraps command with flock for mutual exclusion
+  - flock lock file uses consistent jobId-based naming
+  - flock uses non-blocking mode (-n flag)
+  - flock wrapping preserves original command as the wrapped target
+  - flock lock files use /tmp directory for cross-process visibility
+  - multiple jobs get different lock files
+
+test_results:
+  bug_1_websocket:
+    passed: 0
+    failed: 4
+    status: "FAIL (expected - bug not fixed)"
+  bug_2_duplicate_detection:
+    passed: 4
+    failed: 2
+    status: "FAIL (expected - bug not fixed)"
+  bug_3_flock_wrapping:
+    passed: 0
+    failed: 6
+    status: "FAIL (expected - bug not fixed)"
+
+notes: |
+  - All failing tests are expected to fail until the corresponding fix is applied
+  - Test patterns follow existing project conventions (bun:test, FakeWebSocket mocks)
+  - TestableCronManager subclass exposes protected methods for testing
+  - Tests use descriptive comments explaining expected behavior before/after fix

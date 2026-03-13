@@ -1,0 +1,39 @@
+```yaml
+affected_areas:
+  - "src/server/cronManager.ts (server-side cron job management)"
+  - "src/client/stores/cronStore.ts (client-side UI state and notifications)"
+  - "src/server/__tests__/cronJobCreationRegression.test.ts (related tests)"
+
+bug_summary: |
+  This bug report describes two issues related to cron job creation:
+  1.  **Duplicate Cron Job Creation (Server-side):** The `createCronJob()` function in `cronManager.ts` does not check for existing cron entries. Calling it with an identical schedule and command combination results in silently appending a duplicate line to the user's crontab, causing the same job to run multiple times. It should instead detect duplicates and throw an error.
+  2.  **Client-side `create` Operation Handling (Client-side):** The `handleCronOperationResult()` function in `cronStore.ts` fails to process `cron-operation-result` WebSocket messages when the `operation` is 'create'. This leads to a lack of user feedback: no UI notification on success and only a `console.warn` (without a user-visible error notification) on failure.
+
+reproduction_summary: |
+  1.  Start the agentboard application.
+  2.  **For Bug 1:** Attempt to create the same cron job (identical schedule and command) twice using `createCronJob()`. Observe that the crontab contains two identical lines instead of an error on the second attempt.
+  3.  **For Bug 2:**
+      *   Trigger a WebSocket message `cron-operation-result` with `operation='create'` and `success=true`. Observe no UI notification.
+      *   Trigger a WebSocket message `cron-operation-result` with `operation='create'`, `success=false`, and an error message. Observe only a `console.warn` and no user-facing error notification.
+  4.  Run the specific regression tests `bun test src/server/__tests__/cronJobCreationRegression.test.ts` and confirm 3 failures in the "Bug 2" and "CronStore" describe blocks.
+
+severity_assessment: |
+  **Major.**
+  *   **Data Integrity/System Performance:** Silently creating duplicate cron jobs can lead to unintended resource consumption, redundant operations, and potentially incorrect system behavior (e.g., a backup script running twice for the same trigger). This is a critical backend issue.
+  *   **User Experience:** Lack of client-side feedback for cron job creation (both success and error) severely degrades the user experience. Users are left unaware if their job was created successfully or if an error occurred, leading to confusion and potential re-attempts or abandonment.
+
+suggested_investigation_areas:
+  - **Server-side (`src/server/cronManager.ts`):**
+    - Focus on the `createCronJob()` function.
+    - Implement logic to read and parse the existing user crontab.
+    - Develop a comparison mechanism to check if an identical `schedule` + `command` pair already exists.
+    - Integrate error throwing (e.g., `throw new Error("Duplicate cron job already exists")`) when a duplicate is detected.
+  - **Client-side (`src/client/stores/cronStore.ts`):**
+    - Focus on the `handleCronOperationResult()` function.
+    - Add an `else if (operation === "create")` branch to handle this specific operation type.
+    - Implement logic to push user-visible notifications:
+      - On success: A notification indicating the cron job was created.
+      - On error: A notification displaying the error message received from the server (especially for duplicate errors).
+  - **Tests (`src/server/__tests__/cronJobCreationRegression.test.ts`):**
+    - Review the failing tests in "Bug 2" (duplicate detection) and "CronStore" (client-side handling) describe blocks to understand the expected behavior and ensure the fix addresses them.
+```

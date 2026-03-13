@@ -1,0 +1,114 @@
+verdict: pass
+
+bugs:
+  - id: bug1
+    title: "createCronJob() lacks duplicate detection — silently appends duplicate crontab entries"
+    root_cause: |
+      createCronJob() in cronManager.ts reads the existing crontab via readCrontab(),
+      then unconditionally appends a new line (schedule + command + comment) without
+      scanning the existing lines for an identical schedule+command pair. When called
+      twice with the same arguments, two identical crontab entries are written, causing
+      the same job to execute multiple times per trigger interval.
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "1029-1040"
+      function: "createCronJob"
+    mechanism: |
+      Missing guard — the function builds `newLine` from config.schedule + config.command
+      and appends it to the crontab string directly. There is no loop over existing lines
+      to compare the schedule and command fields of each non-comment, non-blank line against
+      the incoming values. The codebase already has parseCrontabLines() (line 375) which
+      knows how to split a crontab line into schedule and command fields, and readCrontab()
+      (line 752) which fetches the current crontab. The infrastructure for detection exists
+      but is not used in the create path.
+    fix_approach: |
+      After reading the crontab (line 1032), iterate over each non-blank, non-comment line.
+      For standard 5-field lines, extract tokens[0..5] as schedule and tokens[5..] as command.
+      For @-keyword lines, extract token[0] as schedule and tokens[1..] as command.
+      Strip any trailing comment (text after unescaped #) from the command before comparison.
+      If any existing line's schedule+command matches the incoming config.schedule+config.command,
+      throw new Error(`Duplicate job: ${config.schedule} ${config.command} already exists`).
+      Different schedules with the same command, or different commands with the same schedule,
+      must be allowed (only the exact schedule+command pair is a duplicate).
+    risk_assessment: |
+      Low risk. The check is purely additive — it only throws before the write, so existing
+      non-duplicate creates are unaffected. Edge cases to handle: paused entries (prefixed
+      with #AGENTBOARD_PAUSED:) should also be considered duplicates, and comments appended
+      to existing lines must be stripped before comparison.
+
+  - id: bug2
+    title: "handleCronOperationResult() ignores 'create' operation — no UI feedback"
+    root_cause: |
+      handleCronOperationResult() in the client cronStore only has branches for 'pause'
+      and 'resume' operations. When the server sends a cron-operation-result message with
+      operation='create', the success path falls through without pushing a notification.
+      The error path logs to console.warn but never calls handleCronNotification() or
+      pushes to the notifications array, so the user sees no feedback.
+    location:
+      file: "src/client/stores/cronStore.ts"
+      line_range: "196-213"
+      function: "handleCronOperationResult"
+    mechanism: |
+      Missing branch — the if/else-if chain in the success block (lines 200-211) checks for
+      operation === 'pause' and operation === 'resume' but has no 'else if (operation === "create")'
+      branch. For the error path (lines 197-199), a console.warn fires but no notification is
+      pushed to the store's notifications array. The store already has handleCronNotification()
+      (line 236) which correctly pushes entries to the notifications array with rate-limited
+      desktop notifications, but handleCronOperationResult() does not call it.
+    fix_approach: |
+      Add an 'else if (operation === "create")' branch in the success block that pushes a
+      notification with a message matching /created/i (e.g., "Cron job {jobId} created
+      successfully"). In the error path, when operation === 'create', push a notification
+      with the error message (which will contain "Duplicate" when the server-side duplicate
+      detection triggers). The simplest implementation is to call the existing
+      handleCronNotification() helper or directly push to the notifications array in the
+      same pattern as the existing code at lines 236-247.
+    risk_assessment: |
+      Very low risk. This is purely additive UI feedback — no state mutation on jobs array
+      is needed for 'create' (unlike pause/resume which toggle job.status). The only concern
+      is ensuring the notification object shape matches what the UI renders, which is already
+      established by handleCronNotification().
+
+  - id: bug3
+    title: "createCronJob() does not wrap commands with flock for concurrent-run protection"
+    root_cause: |
+      createCronJob() writes the bare command to the crontab entry without flock wrapping.
+      If a cron job takes longer than its schedule interval, multiple instances can run
+      simultaneously. The test expects flock -n /tmp/agentboard-cron-<jobId>.lock wrapping.
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "1034"
+      function: "createCronJob"
+    mechanism: |
+      Missing feature — line 1034 constructs newLine as `${config.schedule} ${config.command}${comment}`
+      directly. There is no flock wrapper applied. The jobId is computed after the crontab write
+      (lines 1038-1039), but for flock wrapping the jobId needs to be computed first to use in
+      the lock file path.
+    fix_approach: |
+      1. Compute the jobId (deriveJobName + generateJobId) BEFORE building the crontab line.
+      2. Construct a lock file path: `/tmp/agentboard-cron-${jobId}.lock`
+      3. Wrap the command: `flock -n ${lockPath} ${config.command}`
+      4. Build newLine with the wrapped command but keep the original command for jobId generation.
+      This ensures the jobId is based on the unwrapped command (as test line 345 asserts).
+    risk_assessment: |
+      Low risk. flock -n is non-blocking (fail-fast) — if a previous run still holds the lock,
+      the new invocation exits immediately with code 1 rather than waiting. This is the safest
+      behavior for cron. The lock file path in /tmp/ is cleaned on reboot. The only concern is
+      systems without flock (rare on Linux, absent on some BSDs), but agentboard targets Linux.
+
+summary: |
+  Three bugs in the cron job creation flow, all in the same code path:
+
+  Bug 1 (server, cronManager.ts:1029-1040): createCronJob() unconditionally appends to crontab
+  without scanning for existing entries with the same schedule+command. Fix: parse existing
+  lines and throw on duplicate before writing.
+
+  Bug 2 (client, cronStore.ts:196-213): handleCronOperationResult() has no branch for the
+  'create' operation. Success gives no UI feedback, errors only console.warn. Fix: add
+  'create' branch that pushes notifications for both success and error outcomes.
+
+  Bug 3 (server, cronManager.ts:1034): Commands are written bare without flock wrapping,
+  allowing concurrent instances. Fix: wrap with `flock -n /tmp/agentboard-cron-<jobId>.lock`.
+
+  All three bugs are in well-isolated locations with clear fix paths and low regression risk.
+  The existing parseCrontabLines() and handleCronNotification() infrastructure can be leveraged.

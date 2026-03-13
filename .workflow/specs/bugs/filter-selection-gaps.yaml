@@ -1,0 +1,76 @@
+title: "Source/tag filters, shift+click range selection, group health summary not implemented"
+severity: minor
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronJobList.tsx
+  - src/client/components/cron/CronJobRow.tsx
+  - src/client/stores/cronStore.ts
+
+reproduction:
+  steps:
+    - "Open Cron Manager with jobs from multiple sources (user, system, systemd-user, systemd-system)"
+    - "Look for source filter dropdown"
+    - "Observe: doesn't exist, only status filters present"
+    - "Add tags to jobs, then look for tag filter"
+    - "Observe: tag filter doesn't exist in UI"
+    - "Click one job, then Shift+click another job"
+    - "Observe: range not selected, only individual jobs selected"
+    - "Look at group headers for jobs with critical health"
+    - "Observe: no health indicator (red dot) on group headers"
+  environment: "Any"
+
+expected: |
+  - Source filter dropdown shows all sources
+  - Tag filter allows filtering by tags
+  - Shift+click selects range of jobs
+  - Group headers show health summary indicator
+
+actual: |
+  - Store logic exists (filterSource, filterTags, selectRange) but no UI
+  - Group headers collapse but have no health indicator
+  - Shift+click not wired in CronJobRow onClick
+
+affected_requirements:
+  - REQ-11 # Group health summary
+  - REQ-14 # Group header with health indicator
+  - REQ-18 # Source and tag filters
+  - REQ-19 # Shift+click range selection
+
+root_cause_hints: |
+  1. CronJobList.tsx:16 — FILTER_OPTIONS hardcoded to 5 status entries only
+  2. cronStore.ts:329-341 — selectRange() exists but never called
+  3. CronJobRow.tsx:28-33 — onClick doesn't check shiftKey
+  4. Group header render has no health dot component
+
+fix_approach: |
+  1. Source filter:
+     - Add source filter button/dropdown to CronJobList
+     - Populate unique sources from jobs: ['user', 'system', 'systemd-user', 'systemd-system']
+     - Wire to store.setFilterSource()
+
+  2. Tag filter:
+     - Add tag filter dropdown (multi-select)
+     - Populate from store.allTags()
+     - Wire to store.setFilterTags()
+
+  3. Shift+click range selection:
+     - In CronJobRow onClick handler:
+       - Check event.shiftKey
+       - If true, call store.selectRange(jobId)
+     - selectRange already implements correct logic
+
+  4. Group health summary:
+     - In group header, compute worst health in group
+     - Show red dot for critical, yellow for warning
+     - Add CronHealthBadge component to header
+     - Count jobs per health level in group
+
+acceptance_criteria:
+  - "Source filter button/dropdown shows all sources present in jobs"
+  - "Filtering by source shows only jobs from that source"
+  - "Tag filter allows selecting multiple tags"
+  - "Jobs matching ANY selected tag are shown"
+  - "Shift+click selects all jobs between first and last clicked"
+  - "Group headers show health dot (red=critical, yellow=warning)"
+  - "Health dot tooltip shows count of jobs by health level in group"

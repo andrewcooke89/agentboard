@@ -1,0 +1,84 @@
+id: WU-005
+title: "Operations & Credential Cache"
+description: |
+  Implement all job management operations in CronManager: runJobNow (cron via sh -c,
+  systemd via systemctl start), pauseJob/resumeJob (cron comment prefix, systemd
+  stop+disable/enable+start), editFrequency (cron crontab replace, systemd OnCalendar
+  rewrite + daemon-reload), deleteJob (with backup), createCronJob/createSystemdTimer
+  (with validation). Implement bulk operations (sequential with progress). Implement
+  sudo credential cache (Uint8Array, configurable grace period, zero on expiry).
+  Validate commands for injection (no newlines/null bytes). Create backups before
+  destructive operations.
+files:
+  - path: src/server/cronManager.ts
+    action: modify
+    description: "Implement operations, creation, bulk ops, credential cache"
+dependencies:
+  - WU-003
+  - WU-001
+requirements:
+  - REQ-37
+  - REQ-40
+  - REQ-41
+  - REQ-42
+  - REQ-43
+  - REQ-45
+  - REQ-46
+  - REQ-47
+  - REQ-48
+  - REQ-49
+  - REQ-50
+  - REQ-51
+  - REQ-52
+  - REQ-53
+  - REQ-54
+  - REQ-55
+  - REQ-56
+  - REQ-81
+  - REQ-83
+  - REQ-84
+  - REQ-96
+  - REQ-99
+  - REQ-102
+  - REQ-104
+acceptance_criteria:
+  - type: unit_test
+    description: "runJobNow: cron via sh -c, systemd via systemctl start"
+  - type: unit_test
+    description: "pauseJob: cron comments with #AGENTBOARD_PAUSED: prefix"
+  - type: unit_test
+    description: "resumeJob: cron removes prefix; systemd enable+start"
+  - type: unit_test
+    description: "editFrequency validates before applying; rejects invalid"
+  - type: unit_test
+    description: "deleteJob creates backup before deletion"
+  - type: unit_test
+    description: "createCronJob validates and appends to user crontab"
+  - type: unit_test
+    description: "createSystemdTimer generates .timer + .service files"
+  - type: unit_test
+    description: "Rejects commands with newlines, carriage returns, null bytes"
+  - type: unit_test
+    description: "Validates systemd service name format"
+  - type: unit_test
+    description: "Sudo credentials cached as Uint8Array with grace period"
+  - type: unit_test
+    description: "Credential string zeroed immediately after conversion to Uint8Array"
+  - type: unit_test
+    description: "All sudo operations use Bun.spawn with stdin piping"
+  - type: unit_test
+    description: "Bulk operations execute sequentially with progress tracking"
+interfaces:
+  exports:
+    - "runJobNow(jobId): Promise<{ runId: string }>"
+    - "pauseJob(jobId): Promise<void>"
+    - "resumeJob(jobId): Promise<void>"
+    - "editFrequency(jobId, schedule): Promise<void>"
+    - "deleteJob(jobId): Promise<void>"
+    - "createCronJob(config): Promise<string>"
+    - "createSystemdTimer(config): Promise<string>"
+    - "bulkPause(jobIds): AsyncGenerator<BulkProgress>"
+    - "bulkResume(jobIds): AsyncGenerator<BulkProgress>"
+    - "bulkDelete(jobIds): AsyncGenerator<BulkProgress>"
+    - "cacheSudoCredential(cred: Uint8Array): void"
+estimated_loc: 400

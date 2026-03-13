@@ -1,0 +1,52 @@
+verdict: pass
+
+title: "Fix: createCronJob() missing flock mutual exclusion wrapping"
+
+description: |
+  Add flock -n wrapping to createCronJob() in cronManager.ts so that crontab entries
+  prevent concurrent execution of the same job. The fix reorders the function to compute
+  name and jobId BEFORE building the crontab line, constructs a lock file path from the
+  jobId, and wraps the original command with flock -n <lockFile> before writing to crontab.
+
+  The jobId is always computed from the ORIGINAL unwrapped command to keep it stable and
+  deterministic. The -n (non-blocking) flag ensures overlapping runs skip rather than queue.
+
+changes:
+  - file: "src/server/cronManager.ts"
+    description: |
+      In createCronJob() (around lines 1029-1040), reorder and modify the function body:
+
+      1. Keep existing validation: validateCronCommand(config.command) and readCrontab().
+      2. Move the name computation UP (before crontab line construction):
+           const name = this.deriveJobName(config.command)
+      3. Move the jobId computation UP (before crontab line construction):
+           const jobId = this.generateJobId('user-crontab', name, config.command)
+         CRITICAL: generateJobId must receive config.command (the ORIGINAL unwrapped command).
+      4. Add lock file path construction:
+           const lockFile = `/tmp/agentboard-cron-${jobId}.lock`
+      5. Add command wrapping:
+           const wrappedCommand = `flock -n ${lockFile} ${config.command}`
+      6. Modify the crontab line to use the wrapped command:
+           const newLine = `${config.schedule} ${wrappedCommand}${comment}`
+         (Previously this used config.command directly instead of wrappedCommand.)
+      7. Keep existing: writeCrontab(updated) and return { jobId, ... }.
+
+      The deriveJobName and generateJobId calls that currently appear AFTER the crontab
+      write should be removed from their old position (they are now computed earlier).
+    change_type: modify
+
+acceptance_criteria:
+  - "All 6 tests in src/server/__tests__/cronFlockWrapping.test.ts pass"
+  - "All 2 flock-related tests in src/server/__tests__/cronJobCreationRegression.test.ts pass"
+  - "Crontab lines written by createCronJob() match: <schedule> flock -n /tmp/agentboard-cron-<jobId>.lock <command> # <comment>"
+  - "jobId is computed from the original unwrapped command, not the flock-wrapped version"
+  - "Different jobs produce different lock file paths"
+  - "The -n (non-blocking) flag is present so overlapping runs skip rather than queue"
+  - "Existing tests in the cron test suite continue to pass (no regressions)"
+  - "bun run typecheck passes with no new errors"
+
+regression_risks:
+  - "Risk 1: Existing crontab entries created before this fix will not have flock wrapping. If parseCrontab or pollCrontab uses the full command string (including flock prefix) to compute jobId, it will produce a different jobId for the same job before vs after the fix. Verify that jobId generation from parsed entries either strips the flock prefix or uses a stable identifier."
+  - "Risk 2: Commands containing shell metacharacters or spaces could interact unexpectedly with the flock prefix. This is mitigated by validateCronCommand() which already validates commands before they reach createCronJob()."
+  - "Risk 3: flock is a Linux utility (part of util-linux) and is not available on macOS. If macOS support is needed in the future, a platform check or alternative would be required."
+  - "Risk 4: Lock files in /tmp may be cleaned by systemd-tmpfiles on some distributions. This is acceptable since flock only needs the file while the lock is held and recreates it on next run."

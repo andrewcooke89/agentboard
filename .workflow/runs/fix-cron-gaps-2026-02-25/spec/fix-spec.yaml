@@ -1,0 +1,213 @@
+verdict: pass
+
+title: "Fix: Cron Manager has 4 major unfixed gaps — no animations, no concurrent-run guard, no scheduled cleanup, non-functional session linking"
+
+description: |
+  Addresses four independent implementation gaps in the Cron Manager feature.
+  All gaps are structural omissions (missing imports, missing wiring, hardcoded
+  stubs) rather than logic bugs. The server-side functionality is largely
+  complete; changes are needed in client-side integration and server-side
+  scheduling/guarding.
+
+  GAP-04: Add framer-motion animations to all cron components following the
+  existing SessionList.tsx AnimatePresence + motion.div pattern.
+
+  GAP-05: Add a server-side Set<string> guard in cronHandlers.ts to prevent
+  concurrent manual runs of the same cron job.
+
+  GAP-06: Wire cleanOrphanedPrefs() and pruneRunHistory() to periodic
+  setInterval calls in index.ts, following the existing cleanup interval pattern.
+
+  GAP-08: Replace the hardcoded CronSessionLink stub with real session store
+  integration, navigation on chip click, and an interactive managed toggle.
+
+changes:
+  # ── GAP-04: Animations ──────────────────────────────────────────────
+
+  - file: src/client/components/cron/CronJobList.tsx
+    description: |
+      Import { motion, AnimatePresence, useReducedMotion } from 'motion/react'.
+      Wrap the job list container with <AnimatePresence initial={false}>.
+      Replace each job row <div> with <motion.div> using layout animation and
+      opacity+height enter/exit variants. Gate all animations on useReducedMotion()
+      for accessibility. Follow the SessionList.tsx pattern (lines 609-637).
+    change_type: modify
+
+  - file: src/client/components/cron/CronManager.tsx
+    description: |
+      Import { motion, AnimatePresence } from 'motion/react'. Add AnimatePresence
+      around the main content area that switches between empty state, job list,
+      and job detail views. Add crossfade transitions (opacity 0→1→0) when
+      switching between these views. Use mode="wait" for sequential exit/enter.
+    change_type: modify
+
+  - file: src/client/components/cron/CronJobDetail.tsx
+    description: |
+      Import { motion, AnimatePresence } from 'motion/react'. Wrap tab content
+      panels with <AnimatePresence mode="wait"> and replace tab panel divs with
+      <motion.div> using opacity+y enter/exit variants for smooth tab transitions.
+      Add layout animation to the detail header for smooth resize.
+    change_type: modify
+
+  - file: src/client/components/cron/CronRunNowOutput.tsx
+    description: |
+      Import { motion, AnimatePresence } from 'motion/react'. Wrap the output
+      panel with <AnimatePresence>. Use <motion.div> with opacity+height
+      enter/exit animation so the output panel fades in when a run starts and
+      fades out when dismissed/completed.
+    change_type: modify
+
+  - file: src/client/components/cron/CronTimeline.tsx
+    description: |
+      Import { motion, AnimatePresence } from 'motion/react'. Wrap timeline
+      entries with <AnimatePresence> and replace entry elements with <motion.div>
+      using staggered enter animation (staggerChildren) and opacity+y variants.
+      Timeline bar height changes should use layout animation for smooth resize.
+    change_type: modify
+
+  - file: src/client/components/cron/CronEmptyState.tsx
+    description: |
+      Import { motion } from 'motion/react'. Wrap the empty state container with
+      <motion.div> using opacity+scale enter animation (initial={{ opacity:0,
+      scale:0.95 }}, animate={{ opacity:1, scale:1 }}). This provides a gentle
+      appearance when no cron jobs are configured.
+    change_type: modify
+
+  # ── GAP-05: Concurrent-run guard ────────────────────────────────────
+
+  - file: src/server/handlers/cronHandlers.ts
+    description: |
+      Add a `const activeManualRuns = new Set<string>()` in the createCronHandlers
+      closure scope (alongside clientCount at line 65-66).
+
+      At the top of handleCronJobRunNow (line 262), before generating runId, add:
+        if (activeManualRuns.has(jobId)) {
+          ctx.send(ws, { type: 'error', message: `Job ${jobId} is already running` })
+          return
+        }
+        activeManualRuns.add(jobId)
+
+      In the async execution block, wrap the run logic in try/finally and delete
+      jobId from activeManualRuns in the finally block (around lines 297-300 where
+      cron-run-completed is sent). Ensure both the success path (cron-run-completed)
+      and the error/failure path (cron-run-failed) clear the Set entry.
+
+      This follows the workflowWsHandlers.ts countActiveRuns guard pattern
+      (lines 85-90) adapted for Set-based single-job tracking.
+    change_type: modify
+
+  # ── GAP-06: Cleanup scheduling ──────────────────────────────────────
+
+  - file: src/server/index.ts
+    description: |
+      Add a cronCleanupInterval variable alongside workflowCleanupInterval.
+
+      After cronManager initialization (around line 296), add:
+      1. An initial deferred cleanup call that runs after the first poll completes
+         (guard with `if (cronManager.jobCache.size > 0)` to avoid deleting valid
+         prefs before the cache is populated):
+           cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+           cronManager.pruneRunHistory()
+      2. A setInterval with both calls at the same cleanupIntervalMs cadence
+         (24 hours) used by the existing workflow/session cleanup intervals.
+
+      In cleanupAllTerminals() (around line 472), clear the cronCleanupInterval
+      alongside the existing interval cleanup calls.
+
+      Optionally also invoke cleanOrphanedPrefs at the end of each poll cycle
+      for more timely orphan removal, but the interval alone satisfies REQ-98/101.
+    change_type: modify
+
+  # ── GAP-08: Session linking ─────────────────────────────────────────
+
+  - file: src/client/components/cron/CronSessionLink.tsx
+    description: |
+      Three sub-fixes to make session linking functional:
+
+      1. Session dropdown population:
+         - Import useSessionStore (or the appropriate session data hook)
+         - In the dropdown body (line 58), replace the hardcoded "No active sessions"
+           with a map over active sessions showing session id + project name
+         - On session click, send WS message:
+           sendWs({ type: 'cron-job-link-session', jobId, sessionId: session.id })
+
+      2. Session chip navigation:
+         - Add an onClick handler to the linked session chip (lines 31-35) that
+           navigates to the linked session (e.g., calls a store action to select
+           the session, scrolling to it in the session list or opening it in the
+           terminal view)
+         - Add cursor-pointer styling and hover feedback to the chip
+
+      3. Accept additional props or use the cron store to get the session list
+         and handle the unlink case (clicking the linked session again or an
+         explicit unlink button)
+    change_type: modify
+
+  - file: src/client/components/cron/CronJobDetail.tsx
+    description: |
+      Replace the static managed icon/indicator (lines 106-110) with an
+      interactive toggle element (button or checkbox) that:
+      1. Shows the current isManagedByAgentboard state visually
+      2. On click, sends WS message:
+         sendWs({ type: 'cron-job-set-managed', jobId, managed: !job.isManagedByAgentboard })
+      3. Applies optimistic UI update in the cron store for immediate feedback
+      4. Handles the returning cron-job-update broadcast to confirm server state
+    change_type: modify
+
+  - file: src/client/stores/cronStore.ts
+    description: |
+      Ensure the cron store handles the managed toggle optimistically:
+      1. Add an action to toggle the managed state locally before the WS
+         round-trip completes (if not already present)
+      2. Verify the cron-job-update WS handler correctly updates the managed
+         field and linkedSessionId when the server broadcasts changes
+      3. If session navigation requires cross-store coordination, add a
+         selectSession action or dispatch to the session store
+    change_type: modify
+
+acceptance_criteria:
+  # GAP-04: Animations
+  - "All cron job list rows animate in/out with opacity+height transitions when jobs are added/removed/filtered"
+  - "CronJobDetail tab content crossfades with opacity+y animation when switching tabs"
+  - "CronTimeline entries appear with staggered enter animation"
+  - "CronRunNowOutput panel fades in when a run starts and fades out when dismissed"
+  - "CronEmptyState appears with gentle opacity+scale animation"
+  - "All animations are disabled when prefers-reduced-motion is active (useReducedMotion check)"
+  - "Animation patterns are consistent with existing SessionList.tsx and PendingReviewDashboard.tsx usage"
+
+  # GAP-05: Concurrent-run guard
+  - "Sending two rapid cron-run-now WS messages for the same jobId results in only one run — the second returns an error message"
+  - "The activeManualRuns Set is cleared after job completion (success path)"
+  - "The activeManualRuns Set is cleared after job failure (error path)"
+  - "Different jobs can still run concurrently (the guard is per-job, not global)"
+  - "Scheduled crontab runs are not blocked by the manual-run guard (REQ-40 is manual-only)"
+
+  # GAP-06: Cleanup scheduling
+  - "cleanOrphanedPrefs() is called periodically via setInterval (at least once per 24h)"
+  - "pruneRunHistory() is called periodically via setInterval (at least once per 24h)"
+  - "Both cleanup methods are also called shortly after server startup (after first poll)"
+  - "The cleanup interval is cleared during server shutdown (cleanupAllTerminals)"
+  - "cleanOrphanedPrefs is NOT called with empty jobCache keys (guarded to prevent deleting valid prefs)"
+
+  # GAP-08: Session linking
+  - "CronSessionLink dropdown shows real active sessions with id and project name (not hardcoded)"
+  - "Selecting a session from the dropdown sends cron-job-link-session WS message"
+  - "Clicking a linked session chip navigates to that session in the UI"
+  - "CronJobDetail managed toggle is interactive — clicking it sends cron-job-set-managed WS message"
+  - "Managed toggle shows immediate optimistic feedback and reconciles with server broadcast"
+
+  # Cross-cutting
+  - "bun run lint passes with no new errors"
+  - "bun run typecheck passes with no new errors"
+  - "bun run test passes with no new failures"
+
+regression_risks:
+  - "GAP-04 Animation layout shift: motion.div wrappers with height:'auto' exit animation may cause layout jumps if parent CSS uses fixed heights or overflow:hidden incorrectly. Test with varying numbers of job rows."
+  - "GAP-04 Bundle size: framer-motion is already installed but adding imports to 6 new files may increase chunk size. Verify tree-shaking works correctly with 'motion/react' import path."
+  - "GAP-05 Permanent block on error: If the activeManualRuns Set is not cleared on all error paths (exception, process crash, timeout), the job becomes permanently unrunnable until server restart. Must use try/finally pattern."
+  - "GAP-05 Race window: There is a tiny race window between the Set check and the Set add if two WS messages arrive near-simultaneously on the same event loop tick. Node.js single-threaded model should prevent this, but verify."
+  - "GAP-06 Premature cleanup on startup: If cleanOrphanedPrefs runs before the first poll populates jobCache, it could delete preferences for valid jobs. Must guard with jobCache.size > 0 or defer until after first poll."
+  - "GAP-06 Cleanup interval leak: If the interval is not cleared in all shutdown paths (SIGTERM, uncaught exception), it could keep the process alive. Ensure clearInterval is in cleanupAllTerminals."
+  - "GAP-08 Session store shape: useSessionStore may not expose session data in the format CronSessionLink needs (id + project name). May require adding a selector or derived value to the session store."
+  - "GAP-08 Cross-component navigation: Navigating to a session from CronSessionLink requires coordination with the terminal view and session list components. If the navigation mechanism doesn't exist yet, this may require additional plumbing."
+  - "GAP-08 Managed toggle optimistic update: If the server rejects the managed toggle (e.g., job not found), the optimistic UI state must be rolled back. Ensure error handling reverts the local state."

@@ -1,0 +1,68 @@
+id: WU-004
+title: "Server Wiring & Lifecycle"
+description: |
+  Wire CronAiService into the agentboard server. Register HTTP routes on the Hono app
+  under /api/cron-ai/*, add WS message handlers to wsRouter for all cron-ai-* message
+  types, instantiate CronAiService in index.ts, and hook into server startup (config
+  generation) and shutdown (AI window cleanup) lifecycle.
+
+layer: 2
+dependencies:
+  - WU-003
+
+files:
+  modified:
+    - path: src/server/index.ts
+      changes:
+        - "Import and instantiate CronAiService with cronManager, historyService, logService, sessionManager, config"
+        - "Register /api/cron-ai/* Hono routes (GET /jobs, /jobs/:id, /jobs/:id/history, /jobs/:id/logs, /jobs/search, /health, /health/failing, /schedule/conflicts, /schedule/load, /jobs/:id/duration-trends, /context, /sessions, POST /proposals) — delegates to CronAiService handler methods"
+        - "Add auth middleware on /api/cron-ai/* routes using CronAiService.validateAuth()"
+        - "Add cronAiService to wsHandlers object entries for: onCronAiContextUpdate, onCronAiProposalResponse, onCronAiDrawerOpen, onCronAiDrawerClose, onCronAiNewConversation, onCronAiMcpRegister, onCronAiNavigate"
+        - "Add CronAiService WS lifecycle hooks: on client connect (cron-ai-mcp-register), on client disconnect (unregisterMcpClient)"
+        - "Startup: call cronAiService.generateMcpConfig(port) and cronAiService.generateSkillFile()"
+        - "Shutdown: call cronAiService.killAiSession() before process exit"
+    - path: src/server/wsRouter.ts
+      changes:
+        - "Add WsHandlers interface entries (all optional): onCronAiContextUpdate?, onCronAiProposalResponse?, onCronAiDrawerOpen?, onCronAiDrawerClose?, onCronAiNewConversation?, onCronAiMcpRegister?, onCronAiNavigate?"
+        - "Add handleMessage switch cases for: 'cron-ai-context-update', 'cron-ai-proposal-response', 'cron-ai-drawer-open', 'cron-ai-drawer-close', 'cron-ai-new-conversation', 'cron-ai-mcp-register', 'cron-ai-navigate'"
+
+cross_wu_interfaces:
+  exports:
+    - "HTTP API contract (/api/cron-ai/*) — consumed by WU-005-008 (MCP server HTTP client)"
+    - "WS protocol entries — consumed by WU-008 (MCP server WS client), WU-012 (UI client)"
+  imports:
+    - "CronAiService from WU-003 — instantiated and methods called"
+    - "WsHandlers interface pattern from wsRouter.ts (existing)"
+
+acceptance_criteria:
+  - id: AC-004-1
+    type: contract
+    description: "All 14 GET routes and 1 POST route under /api/cron-ai/* are registered and return correct HTTP status codes (200 for success, 400/401/404 for errors)."
+  - id: AC-004-2
+    type: contract
+    description: "Auth middleware applies to ALL /api/cron-ai/* routes when AGENTBOARD_AUTH_TOKEN is configured."
+  - id: AC-004-3
+    type: contract
+    description: "All 7 cron-ai-* WS message types are handled in wsRouter switch and dispatched to correct handlers."
+  - id: AC-004-4
+    type: behavioral
+    description: "On server startup, MCP config and skill files are generated (or regenerated if port changed)."
+  - id: AC-004-5
+    type: behavioral
+    description: "On graceful server shutdown (SIGTERM/SIGINT), cronAiService.killAiSession() is called."
+
+requirements_covered:
+  - REQ-15   # MCP config generated at startup
+  - REQ-16   # config regenerated on port change
+  - REQ-67   # auth on /api/cron-ai/* routes
+  - REQ-70   # shutdown kills AI window
+
+tests:
+  - TEST-ID: route-registration
+    description: "All /api/cron-ai/* routes respond (not 404). Auth middleware blocks unauthenticated requests."
+    spec_tests: [TEST-54, TEST-59]
+  - TEST-ID: ws-routing
+    description: "WS messages with cron-ai-* types are dispatched to correct handlers."
+  - TEST-ID: lifecycle
+    description: "Startup generates config files. Shutdown calls killAiSession."
+    spec_tests: [TEST-35, TEST-36]

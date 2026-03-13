@@ -1,0 +1,12 @@
+```yaml
+affected_areas:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts (FakeWebSocket test mock)"
+bug_summary: |
+  The `FakeWebSocket` test mock in `webSocketSendReturnBoolean.test.ts` incorrectly initializes its `readyState` to `OPEN` (1) instead of the correct `CONNECTING` (0). This causes `WebSocketManager.send()` to return `true` immediately after `connect()` is called, even before the connection is established, leading to test failures. Production code is not affected.
+reproduction_summary: |
+  Execute `bun test src/client/__tests__/webSocketSendReturnBoolean.test.ts`. Observe that the tests 'FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)' and 'send() returns false before connection is established' both fail. Environment: Bun 1.x, TypeScript 5.x.
+severity_assessment: |
+  Minor. The bug is isolated to a test mock and does not impact production code or user-facing functionality. Its effect is limited to causing specific unit tests related to WebSocket connection state to fail, giving a false sense of incorrect behavior in the system under test.
+suggested_investigation_areas:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts: Specifically, examine the `FakeWebSocket` mock's constructor or initialization logic to ensure `readyState` is set to `FakeWebSocket.CONNECTING` (0) by default, matching real WebSocket behavior."
+```

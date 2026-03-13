@@ -1,0 +1,37 @@
+id: WU-008
+title: "Zustand Store"
+description: |
+  Implement the cronStore Zustand store: all WS message handlers (handleCronJobs,
+  handleJobUpdate, handleJobRemoved, handleJobDetail, handleOperationResult,
+  handleRunStarted, handleRunOutput, handleRunCompleted, handleBulkProgress,
+  handleNotification). Implement actions (selectJob, setSort, setFilter, toggleGroup,
+  setSearch, toggleBulkSelect, selectRange, clearSelection, setActiveTab,
+  toggleTimeline, setTimelineRange). Implement derived selectors (filteredJobs,
+  groupedJobs, selectedJob, allTags). Implement localStorage persistence with
+  custom Set serialization for collapsedGroups and selectedJobIds.
+files:
+  - path: src/client/stores/cronStore.ts
+    action: modify
+    description: "Implement all store state, actions, WS handlers, persistence"
+dependencies: []
+requirements:
+  - REQ-89
+acceptance_criteria:
+  - type: unit_test
+    description: "WS message handlers update state correctly"
+  - type: unit_test
+    description: "filteredJobs applies search, sort, filter correctly"
+  - type: unit_test
+    description: "groupedJobs groups by projectGroup; System always last"
+  - type: unit_test
+    description: "localStorage persistence works with Set serialization"
+  - type: unit_test
+    description: "Bulk selection with Shift+click range selection"
+  - type: unit_test
+    description: "Sort persists; health order: critical > warning > healthy > unknown"
+interfaces:
+  exports:
+    - "useCronStore: Zustand store hook"
+    - "filteredJobs selector"
+    - "groupedJobs selector"
+estimated_loc: 300

@@ -1,0 +1,518 @@
+schema_version: "decomposition_v1.0"
+spec_ref: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24-r4/refined-spec.yaml
+project_root: /home/andrew-cooke/tools/agentboard
+feature: "Cron & Systemd Timer Manager"
+
+summary:
+  total_work_units: 19
+  total_files_new: 25
+  total_files_modified: 6
+  total_files: 31
+  max_parallel_width: 4
+  critical_path: [WU-001, WU-002, WU-003, WU-004, WU-007]
+  critical_path_length: 5
+
+constraints_validated:
+  max_work_units: { limit: 20, actual: 19, pass: true }
+  max_files_per_wu: { limit: 5, actual_max: 4, pass: true }
+  max_direct_deps: { limit: 3, actual_max: 3, pass: true }
+  total_files: { limit: 50, actual: 31, pass: true }
+  dag_acyclic: true
+
+work_units:
+  - id: WU-001
+    title: "Shared Types & Data Model"
+    layer: 0
+    dependencies: []
+
+  - id: WU-002
+    title: "Database Schema & Settings Store"
+    layer: 1
+    dependencies: [WU-001]
+
+  - id: WU-003
+    title: "CronManager - Discovery & Parsing"
+    layer: 1
+    dependencies: [WU-001, WU-002]
+
+  - id: WU-004
+    title: "CronManager - Polling, Diff & Health"
+    layer: 2
+    dependencies: [WU-003]
+
+  - id: WU-005
+    title: "CronManager - Operations & Credential Cache"
+    layer: 2
+    dependencies: [WU-003]
+
+  - id: WU-006
+    title: "History & Log Services"
+    layer: 1
+    dependencies: [WU-001, WU-002]
+
+  - id: WU-007
+    title: "WebSocket Handlers & Server Wiring"
+    layer: 3
+    dependencies: [WU-004, WU-005, WU-006]
+
+  - id: WU-008
+    title: "Frontend Zustand Store"
+    layer: 1
+    dependencies: [WU-001]
+
+  - id: WU-009
+    title: "App Integration & CronManager Shell"
+    layer: 2
+    dependencies: [WU-008]
+
+  - id: WU-010
+    title: "List Pane Core"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-011
+    title: "Bulk Selection & Actions"
+    layer: 4
+    dependencies: [WU-010]
+
+  - id: WU-012
+    title: "Detail Pane & Overview Tab"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-013
+    title: "History & Logs Tabs"
+    layer: 4
+    dependencies: [WU-012]
+
+  - id: WU-014
+    title: "Script Tab & Job Controls"
+    layer: 4
+    dependencies: [WU-012]
+
+  - id: WU-015
+    title: "Job Creation Modal"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-016
+    title: "Privilege Escalation & Destructive Confirms"
+    layer: 5
+    dependencies: [WU-014]
+
+  - id: WU-017
+    title: "Tags & Avatars"
+    layer: 4
+    dependencies: [WU-010, WU-012]
+
+  - id: WU-018
+    title: "Schedule Timeline"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-019
+    title: "Session Integration & Notifications"
+    layer: 4
+    dependencies: [WU-010, WU-012]
+
+dependency_graph:
+  # Layer 0 — Foundation (no deps)
+  # WU-001: Types
+  #
+  # Layer 1 — Backend & Frontend foundations (parallel)
+  # WU-002: DB schema (← WU-001)
+  # WU-003: Discovery (← WU-001, WU-002)
+  # WU-006: History/Log services (← WU-001, WU-002)
+  # WU-008: Frontend store (← WU-001)
+  #
+  # Layer 2 — Backend extensions + Frontend shell (parallel)
+  # WU-004: Polling/Diff/Health (← WU-003)
+  # WU-005: Operations/Creds (← WU-003)
+  # WU-009: App integration (← WU-008)
+  #
+  # Layer 3 — Backend wiring + Frontend panels (parallel)
+  # WU-007: WS handlers + server wiring (← WU-004, WU-005, WU-006)
+  # WU-010: List pane (← WU-009)
+  # WU-012: Detail pane (← WU-009)
+  # WU-015: Create modal (← WU-009)
+  # WU-018: Timeline (← WU-009)
+  #
+  # Layer 4 — Feature components (parallel)
+  # WU-011: Bulk actions (← WU-010)
+  # WU-013: History/Logs tabs (← WU-012)
+  # WU-014: Script tab & controls (← WU-012)
+  # WU-017: Tags & avatars (← WU-010, WU-012)
+  # WU-019: Session integration (← WU-010, WU-012)
+  #
+  # Layer 5 — Final
+  # WU-016: Sudo/Delete confirms (← WU-014)
+
+  adjacency:
+    WU-001: []
+    WU-002: [WU-001]
+    WU-003: [WU-001, WU-002]
+    WU-004: [WU-003]
+    WU-005: [WU-003]
+    WU-006: [WU-001, WU-002]
+    WU-007: [WU-004, WU-005, WU-006]
+    WU-008: [WU-001]
+    WU-009: [WU-008]
+    WU-010: [WU-009]
+    WU-011: [WU-010]
+    WU-012: [WU-009]
+    WU-013: [WU-012]
+    WU-014: [WU-012]
+    WU-015: [WU-009]
+    WU-016: [WU-014]
+    WU-017: [WU-010, WU-012]
+    WU-018: [WU-009]
+    WU-019: [WU-010, WU-012]
+
+parallel_groups:
+  - name: "Layer 0 — Foundation"
+    units: [WU-001]
+  - name: "Layer 1 — Backend & Frontend Foundations"
+    units: [WU-002, WU-003, WU-006, WU-008]
+    note: "WU-003 and WU-006 depend on WU-002; WU-008 can run in parallel with all"
+  - name: "Layer 2 — Backend Extensions + Frontend Shell"
+    units: [WU-004, WU-005, WU-009]
+  - name: "Layer 3 — Wiring + Frontend Panels"
+    units: [WU-007, WU-010, WU-012, WU-015, WU-018]
+  - name: "Layer 4 — Feature Components"
+    units: [WU-011, WU-013, WU-014, WU-017, WU-019]
+  - name: "Layer 5 — Final"
+    units: [WU-016]
+
+cross_wu_interfaces:
+  - name: "CronJob type family"
+    defined_in: WU-001
+    consumed_by: [WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008, WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+    contract: "CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, SystemdCreateConfig interfaces in src/shared/types.ts"
+
+  - name: "WebSocket message protocol"
+    defined_in: WU-001
+    consumed_by: [WU-007, WU-008, WU-009]
+    contract: "ServerMessage and ClientMessage discriminated unions extended with cron-* message types"
+
+  - name: "CronManager class API"
+    defined_in: WU-003
+    extended_by: [WU-004, WU-005]
+    consumed_by: [WU-007]
+    contract: "CronManager class with discovery, polling, operations, and health methods"
+
+  - name: "CronHistoryService API"
+    defined_in: WU-006
+    consumed_by: [WU-007]
+    contract: "getRunHistory(jobId, limit, before?) and recordManualRun(jobId, result) methods"
+
+  - name: "CronLogService API"
+    defined_in: WU-006
+    consumed_by: [WU-007]
+    contract: "getLogs(jobId, lines, offset?) and tailLogs(jobId) methods"
+
+  - name: "Database tables"
+    defined_in: WU-002
+    consumed_by: [WU-003, WU-004, WU-005, WU-006]
+    contract: "cron_job_prefs and cron_run_history tables with defined schemas"
+
+  - name: "cronStore Zustand API"
+    defined_in: WU-008
+    consumed_by: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+    contract: "useCronStore hook with state, WS handlers, and actions"
+
+  - name: "CronManager shell component"
+    defined_in: WU-009
+    consumed_by: [WU-010, WU-012, WU-015, WU-018]
+    contract: "CronManager component renders list pane, detail pane, timeline, and create modal slots"
+
+  - name: "Settings store cron fields"
+    defined_in: WU-002
+    consumed_by: [WU-004, WU-005, WU-008, WU-009, WU-010, WU-017, WU-018, WU-019]
+    contract: "cronPollInterval, cronAvatarStyle, cronSudoGracePeriod, notification toggles, timeline defaults in settingsStore"
+
+requirement_coverage:
+  # View & Navigation: REQ-01..REQ-03
+  REQ-01: WU-009
+  REQ-02: WU-009
+  REQ-03: WU-009
+  # Job Discovery: REQ-04..REQ-07
+  REQ-04: WU-003
+  REQ-05: WU-003  # type defined in WU-001
+  REQ-06: WU-003
+  REQ-07: WU-003
+  # Polling & Real-Time: REQ-08..REQ-10
+  REQ-08: WU-004  # wired in WU-007
+  REQ-09: WU-004  # wired in WU-007
+  REQ-10: WU-010
+  # Avatar System: REQ-11..REQ-13
+  REQ-11: WU-017  # URL generated in WU-003
+  REQ-12: WU-017
+  REQ-13: WU-017
+  # List Pane: REQ-14..REQ-20
+  REQ-14: WU-010
+  REQ-15: WU-010
+  REQ-16: WU-010
+  REQ-17: WU-010
+  REQ-18: WU-010
+  REQ-19: WU-011
+  REQ-20: WU-011
+  # Detail Pane Header: REQ-21
+  REQ-21: WU-012
+  # Overview Tab: REQ-22..REQ-25
+  REQ-22: WU-012
+  REQ-23: WU-012
+  REQ-24: WU-012
+  REQ-25: WU-012
+  # History Tab: REQ-26..REQ-30
+  REQ-26: WU-013
+  REQ-27: WU-013
+  REQ-28: WU-013
+  REQ-29: WU-013
+  REQ-30: WU-013  # backend in WU-006
+  # Logs Tab: REQ-31..REQ-33
+  REQ-31: WU-013  # backend in WU-006
+  REQ-32: WU-013
+  REQ-33: WU-013
+  # Script Tab: REQ-34..REQ-36
+  REQ-34: WU-014
+  REQ-35: WU-014
+  REQ-36: WU-014
+  # Run Now: REQ-37..REQ-40
+  REQ-37: WU-014  # backend in WU-005
+  REQ-38: WU-014
+  REQ-39: WU-005  # UI in WU-014
+  REQ-40: WU-014  # backend in WU-005
+  # Pause/Resume: REQ-41..REQ-42
+  REQ-41: WU-014  # backend in WU-005
+  REQ-42: WU-014
+  # Edit Frequency: REQ-43..REQ-45
+  REQ-43: WU-014
+  REQ-44: WU-014
+  REQ-45: WU-005
+  # Delete: REQ-46..REQ-49
+  REQ-46: WU-016  # UI trigger in WU-014
+  REQ-47: WU-005
+  REQ-48: WU-005
+  REQ-49: WU-014
+  # Job Creation: REQ-50..REQ-53
+  REQ-50: WU-015
+  REQ-51: WU-015
+  REQ-52: WU-015
+  REQ-53: WU-015
+  # Bulk Operations: REQ-54..REQ-57
+  REQ-54: WU-011
+  REQ-55: WU-011  # backend in WU-005
+  REQ-56: WU-011
+  REQ-57: WU-011
+  # Health: REQ-58..REQ-63
+  REQ-58: WU-004
+  REQ-59: WU-004
+  REQ-60: WU-004
+  REQ-61: WU-004
+  REQ-62: WU-004  # data from WU-006
+  REQ-63: WU-012
+  # Tags: REQ-64..REQ-67
+  REQ-64: WU-017
+  REQ-65: WU-017
+  REQ-66: WU-017
+  REQ-67: WU-017
+  # Notifications: REQ-68..REQ-71
+  REQ-68: WU-019
+  REQ-69: WU-019
+  REQ-70: WU-019
+  REQ-71: WU-019
+  # Session Integration: REQ-72..REQ-76
+  REQ-72: WU-019
+  REQ-73: WU-019
+  REQ-74: WU-019
+  REQ-75: WU-019
+  REQ-76: WU-019
+  # Schedule Timeline: REQ-77..REQ-80
+  REQ-77: WU-018
+  REQ-78: WU-018
+  REQ-79: WU-018
+  REQ-80: WU-018
+  # Privilege Escalation: REQ-81..REQ-84
+  REQ-81: WU-005  # type in WU-001
+  REQ-82: WU-016
+  REQ-83: WU-005  # UI in WU-016
+  REQ-84: WU-005  # UI in WU-016
+  # Schedule Display: REQ-85..REQ-86
+  REQ-85: WU-003
+  REQ-86: WU-003
+  # Database: REQ-87..REQ-89
+  REQ-87: WU-002
+  REQ-88: WU-002
+  REQ-89: WU-008
+  # Settings: REQ-90
+  REQ-90: WU-017
+  # Performance: REQ-91..REQ-93
+  REQ-91: WU-003
+  REQ-92: WU-010
+  REQ-93: WU-018
+  # Accessibility: REQ-94..REQ-95
+  REQ-94: WU-010
+  REQ-95: WU-010
+  # Refined requirements: REQ-96..REQ-99
+  REQ-96: WU-005
+  REQ-97: WU-003  # UI in WU-015
+  REQ-98: WU-004  # schema in WU-002
+  REQ-99: WU-016
+
+test_coverage:
+  # Discovery tests
+  TEST-01: WU-003
+  TEST-02: WU-003
+  TEST-03: WU-003
+  TEST-04: WU-003
+  TEST-05: WU-003
+  TEST-06: WU-003  # type in WU-001
+  TEST-07: WU-003
+  TEST-08: WU-003
+  # Avatar tests
+  TEST-09: WU-017
+  TEST-10: WU-017
+  TEST-11: WU-017
+  # Polling tests
+  TEST-12: WU-004
+  TEST-13: WU-004
+  TEST-14: WU-004
+  # List pane tests
+  TEST-15: WU-010
+  TEST-16: WU-010
+  TEST-17: WU-010
+  TEST-18: WU-010
+  TEST-19: WU-010
+  TEST-20: WU-010
+  TEST-21: WU-011
+  TEST-22: WU-011
+  # Detail pane tests
+  TEST-23: WU-012
+  TEST-24: WU-012
+  TEST-25: WU-014
+  TEST-26: WU-014
+  TEST-27: WU-012
+  # Run Now tests
+  TEST-28: WU-014
+  TEST-29: WU-014
+  TEST-30: WU-005
+  TEST-31: WU-014
+  # History tab tests
+  TEST-32: WU-013
+  TEST-33: WU-013
+  TEST-34: WU-013
+  TEST-35: WU-013
+  TEST-36: WU-013
+  # Logs tab tests
+  TEST-37: WU-013
+  TEST-38: WU-013
+  TEST-39: WU-013
+  TEST-40: WU-013
+  # Creation tests
+  TEST-41: WU-015
+  TEST-42: WU-015
+  TEST-43: WU-015
+  TEST-44: WU-015
+  # Bulk tests
+  TEST-45: WU-011
+  TEST-46: WU-011
+  TEST-47: WU-011
+  TEST-48: WU-011
+  # Health tests
+  TEST-49: WU-004
+  TEST-50: WU-004
+  TEST-51: WU-004
+  TEST-52: WU-004
+  TEST-53: WU-004
+  TEST-54: WU-010
+  TEST-55: WU-010
+  # Duration tests
+  TEST-56: WU-012
+  TEST-57: WU-012
+  TEST-58: WU-013
+  # Tag tests
+  TEST-59: WU-017
+  TEST-60: WU-017
+  TEST-61: WU-017
+  TEST-62: WU-017
+  TEST-63: WU-017
+  # Notification tests
+  TEST-64: WU-019
+  TEST-65: WU-019
+  TEST-66: WU-019
+  TEST-67: WU-019
+  TEST-68: WU-019
+  # Session integration tests
+  TEST-69: WU-019
+  TEST-70: WU-019
+  TEST-71: WU-019
+  TEST-72: WU-019
+  TEST-73: WU-019
+  # Timeline tests
+  TEST-74: WU-018
+  TEST-75: WU-018
+  TEST-76: WU-018
+  TEST-77: WU-018
+  TEST-78: WU-018
+  # Privilege tests
+  TEST-79: WU-016
+  TEST-80: WU-016
+  TEST-81: WU-016
+  TEST-82: WU-016
+  # Settings tests
+  TEST-83: WU-017
+  TEST-84: WU-017
+  TEST-85: WU-017
+  TEST-86: WU-017
+  # WS protocol tests
+  TEST-87: WU-007
+  TEST-88: WU-007
+  TEST-89: WU-007
+  TEST-90: WU-007
+  # Accessibility tests
+  TEST-91: WU-010
+  TEST-92: WU-014
+  TEST-93: WU-010
+  # Refined tests
+  TEST-94: WU-003
+  TEST-95: WU-005
+  TEST-96: WU-005
+  TEST-97: WU-005
+
+file_index:
+  new_files:
+    # Backend (4)
+    - src/server/cronManager.ts                              # WU-003, WU-004, WU-005
+    - src/server/cronHistoryService.ts                       # WU-006
+    - src/server/cronLogService.ts                           # WU-006
+    - src/server/handlers/cronHandlers.ts                    # WU-007
+    # Frontend store (1)
+    - src/client/stores/cronStore.ts                         # WU-008
+    # Frontend components (20)
+    - src/client/components/cron/CronManager.tsx             # WU-009
+    - src/client/components/cron/CronEmptyState.tsx          # WU-009
+    - src/client/components/cron/CronJobList.tsx             # WU-010
+    - src/client/components/cron/CronJobRow.tsx              # WU-010
+    - src/client/components/cron/CronHealthBadge.tsx         # WU-010
+    - src/client/components/cron/CronBulkActions.tsx         # WU-011
+    - src/client/components/cron/CronJobDetail.tsx           # WU-012
+    - src/client/components/cron/CronOverviewTab.tsx         # WU-012
+    - src/client/components/cron/CronHistoryTab.tsx          # WU-013
+    - src/client/components/cron/CronLogsTab.tsx             # WU-013
+    - src/client/components/cron/CronScriptTab.tsx           # WU-014
+    - src/client/components/cron/CronJobControls.tsx         # WU-014
+    - src/client/components/cron/CronRunNowOutput.tsx        # WU-014
+    - src/client/components/cron/CronScheduleEditor.tsx      # WU-015
+    - src/client/components/cron/CronCreateModal.tsx         # WU-015
+    - src/client/components/cron/CronSudoPrompt.tsx          # WU-016
+    - src/client/components/cron/CronDeleteConfirm.tsx       # WU-016
+    - src/client/components/cron/CronTagInput.tsx            # WU-017
+    - src/client/components/cron/CronTimeline.tsx            # WU-018
+    - src/client/components/cron/CronSessionLink.tsx         # WU-019
+  modified_files:
+    - src/shared/types.ts                                    # WU-001
+    - src/server/db.ts                                       # WU-002
+    - src/client/stores/settingsStore.ts                     # WU-002
+    - src/client/App.tsx                                     # WU-009
+    - src/server/index.ts                                    # WU-007
+    - src/client/components/SessionList.tsx                   # WU-019

@@ -1,0 +1,71 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  bun test v1.3.9 (cf6cdbbb)
+
+  src/client/__tests__/webSocketSendReturnBoolean.test.ts:
+  110 |   test('FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)', () => {
+  111 |     const ws = new FakeWebSocket('ws://localhost:1234/ws')
+  112 |
+  113 |     // Real WebSocket: readyState is 0 (CONNECTING) after construction
+  114 |     // BUG (current code): FakeWebSocket initializes readyState to 1 (OPEN)
+  115 |     expect(ws.readyState).toBe(0) // WebSocket.CONNECTING
+                                  ^
+  error: expect(received).toBe(expected)
+
+  Expected: 0
+  Received: 1
+
+  (fail) FakeWebSocket mock lifecycle regression > FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)
+
+  118 |   test('FakeWebSocket.readyState transitions to OPEN only after triggerOpen()', () => {
+  119 |     const ws = new FakeWebSocket('ws://localhost:1234/ws')
+  120 |
+  121 |     // Initially CONNECTING
+  122 |     expect(ws.readyState).toBe(0)
+                                  ^
+  error: expect(received).toBe(expected)
+
+  Expected: 0
+  Received: 1
+
+  (fail) FakeWebSocket mock lifecycle regression > FakeWebSocket.readyState transitions to OPEN only after triggerOpen()
+
+  172 |     const message: ClientMessage = { type: 'session-refresh' }
+  173 |     const result = manager.send(message)
+  174 |
+  175 |     // After fix: send() returns false while connecting
+  176 |     // BUG (current code): send() returns void (undefined)
+  177 |     expect(result).toBe(false)
+                           ^
+  error: expect(received).toBe(expected)
+
+  Expected: false
+  Received: true
+
+  (fail) BUG-1: WebSocketManager.send() return value > send() returns false before connection is established
+
+   3 pass
+   3 fail
+   8 expect() calls
+  Ran 6 tests across 1 file. [11.00ms]
+
+notes: |
+  Bug is consistently reproducible. All three tests mentioned in the bug spec fail:
+
+  1. "FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)" - FAILS
+     Expected: readyState = 0 (CONNECTING)
+     Actual: readyState = 1 (OPEN)
+
+  2. "FakeWebSocket.readyState transitions to OPEN only after triggerOpen()" - FAILS
+     Expected: readyState = 0 before triggerOpen()
+     Actual: readyState = 1 already set
+
+  3. "send() returns false before connection is established" - FAILS
+     Expected: send() returns false (connection not established)
+     Actual: send() returns true (because readyState was incorrectly 1)
+
+  The bug spec is accurate: FakeWebSocket initializes readyState to OPEN (1)
+  instead of CONNECTING (0), which does not match real WebSocket behavior.
+
+  Test environment: Bun v1.3.9, TypeScript 5.x

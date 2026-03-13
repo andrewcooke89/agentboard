@@ -1,0 +1,510 @@
+schema_version: "scaffold_report_v1.0"
+generated_at: "2026-02-24T00:00:00Z"
+manifest_ref: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24-r4/decomposition/manifest.yaml
+project_root: /home/andrew-cooke/tools/agentboard
+feature: "Cron & Systemd Timer Manager"
+
+summary:
+  files_created: 21
+  files_requiring_modification: 6
+  total_files: 27
+  scaffold_status: complete
+  typecheck_ready: false  # stubs use throw/TODO, types not yet added to shared/types.ts
+
+# ── New Files Created (Stubs) ─────────────────────────────────────────────
+
+new_files:
+  # Backend (4 files)
+  - path: src/server/cronManager.ts
+    work_units: [WU-003, WU-004, WU-005]
+    status: stub
+    description: >
+      CronManager class with full API surface: discovery (4 sources), ID generation,
+      schedule parsing, polling/diff/health, all operations (run/pause/resume/edit/delete/create),
+      bulk operations, sudo credential cache. Methods throw 'Not implemented' with TODO markers
+      referencing specific WU and REQ numbers.
+    exports:
+      - "CronManager (class)"
+      - "HealthStatus, HealthResult, JobDiff, JobsChangedCallback (types)"
+    patterns_followed:
+      - "Class-based service (matches SessionManager pattern)"
+      - "AsyncGenerator for streaming output (runJobNow, bulkPause/Resume/Delete)"
+      - "Destroy method for cleanup (matches existing cleanup patterns)"
+
+  - path: src/server/cronHistoryService.ts
+    work_units: [WU-006]
+    status: stub
+    description: >
+      CronHistoryService class: getRunHistory (paginated, merges DB + system logs),
+      recordManualRun, getRecentDurations for rolling averages.
+    exports:
+      - "CronHistoryService (class)"
+
+  - path: src/server/cronLogService.ts
+    work_units: [WU-006]
+    status: stub
+    description: >
+      CronLogService class: getLogs (unified viewer), tailLogs (AsyncGenerator for live streaming).
+    exports:
+      - "CronLogService (class)"
+      - "LogEntry (interface)"
+
+  - path: src/server/handlers/cronHandlers.ts
+    work_units: [WU-007]
+    status: stub
+    description: >
+      createCronHandlers factory function following existing handler pattern (matches
+      createTaskHandlers/createSessionHandlers). All cron-* WS message handlers, client
+      count tracking for polling lifecycle, onClientConnected/Disconnected hooks.
+    exports:
+      - "createCronHandlers (factory function)"
+      - "CronHandlerDeps (interface)"
+    patterns_followed:
+      - "Factory function returning handler object (matches createTaskHandlers)"
+      - "ctx.send for targeted, ctx.broadcast for state changes"
+      - "Guard-clause validation style"
+
+  # Frontend Store (1 file)
+  - path: src/client/stores/cronStore.ts
+    work_units: [WU-008]
+    status: stub
+    description: >
+      useCronStore Zustand store with persist middleware. Full state (jobs, selection,
+      filters, UI), setters, WS message handler, derived selectors (filteredJobs,
+      groupedJobs, allTags, selectedJobs). Persists UI preferences via partialize.
+    exports:
+      - "useCronStore (Zustand hook)"
+      - "CronSortMode, CronFilterMode, CronFilterSource, CronDetailTab, TimelineRange (types)"
+      - "CronJobGroup (interface)"
+    patterns_followed:
+      - "create<State>()(persist((set, get) => ({...}), {...})) — matches taskStore/settingsStore"
+      - "safeStorage via createJSONStorage — matches all stores"
+      - "partialize for UI-only persistence — matches taskStore"
+
+  # Frontend Components (16 files)
+  - path: src/client/components/cron/CronManager.tsx
+    work_units: [WU-009]
+    status: stub
+    description: >
+      Master-detail shell. Horizontal split pane with resizable list (320px default,
+      180-500px range), detail pane, timeline slot, create modal slot.
+    exports:
+      - "CronManager (React component)"
+
+  - path: src/client/components/cron/CronEmptyState.tsx
+    work_units: [WU-009]
+    status: stub
+    description: "Empty state with counts, Create Job button."
+    exports:
+      - "CronEmptyState (React component)"
+
+  - path: src/client/components/cron/CronJobList.tsx
+    work_units: [WU-010]
+    status: stub
+    description: >
+      Grouped list with collapsible headers, search/sort/filter, keyboard nav,
+      animated entry/exit, virtualized for >100 jobs.
+    exports:
+      - "CronJobList (React component)"
+
+  - path: src/client/components/cron/CronJobRow.tsx
+    work_units: [WU-010]
+    status: stub
+    description: >
+      Single job row: avatar, name, schedule, health badge, status dot, tag pills,
+      managed icon, linked session icon, bulk checkbox, shift+click.
+    exports:
+      - "CronJobRow (React component)"
+
+  - path: src/client/components/cron/CronHealthBadge.tsx
+    work_units: [WU-010]
+    status: stub
+    description: "Health icon + color with tooltip and aria-label. 4 levels."
+    exports:
+      - "CronHealthBadge (React component)"
+
+  - path: src/client/components/cron/CronBulkActions.tsx
+    work_units: [WU-011]
+    status: stub
+    description: >
+      Floating bulk action bar with Pause/Resume/Delete All, progress tracking,
+      confirmation dialog, group context menu.
+    exports:
+      - "CronBulkActions (React component)"
+
+  - path: src/client/components/cron/CronJobDetail.tsx
+    work_units: [WU-012]
+    status: stub
+    description: >
+      Detail pane container with persistent header (avatar 48x48, badges, tags,
+      managed toggle, session link) and 4-tab switcher.
+    exports:
+      - "CronJobDetail (React component)"
+
+  - path: src/client/components/cron/CronOverviewTab.tsx
+    work_units: [WU-012]
+    status: stub
+    description: >
+      Schedule section with live countdown, duration stats with trend indicator,
+      raw config with syntax highlighting.
+    exports:
+      - "CronOverviewTab (React component)"
+
+  - path: src/client/components/cron/CronHistoryTab.tsx
+    work_units: [WU-013]
+    status: stub
+    description: >
+      Scrollable timeline newest first, expandable log snippets, failure streak
+      highlighting, duration sparkline SVG, Load More pagination.
+    exports:
+      - "CronHistoryTab (React component)"
+
+  - path: src/client/components/cron/CronLogsTab.tsx
+    work_units: [WU-013]
+    status: stub
+    description: >
+      Unified log viewer: line numbers, live tail with green indicator,
+      Cmd+F search with highlighting, Copy All, monospace dark background.
+    exports:
+      - "CronLogsTab (React component)"
+
+  - path: src/client/components/cron/CronScriptTab.tsx
+    work_units: [WU-014]
+    status: stub
+    description: >
+      Read-only syntax-highlighted script viewer with auto-detected language,
+      line numbers, file path breadcrumb, Open in Terminal, raw command fallback.
+    exports:
+      - "CronScriptTab (React component)"
+
+  - path: src/client/components/cron/CronJobControls.tsx
+    work_units: [WU-014]
+    status: stub
+    description: >
+      Control strip: Run Now (spinner, lock icon), Pause/Resume, Edit Frequency
+      (inline editor), Delete (red). Sudo credential cache checks.
+    exports:
+      - "CronJobControls (React component)"
+
+  - path: src/client/components/cron/CronRunNowOutput.tsx
+    work_units: [WU-014]
+    status: stub
+    description: "Mini-terminal panel for streaming Run Now output with auto-scroll and dismissal."
+    exports:
+      - "CronRunNowOutput (React component)"
+
+  - path: src/client/components/cron/CronCreateModal.tsx
+    work_units: [WU-015]
+    status: stub
+    description: >
+      Creation modal: Quick (cron) and Advanced (systemd) tabs. Advanced hidden
+      if !systemdAvailable. Input validation, duplicate detection.
+    exports:
+      - "CronCreateModal (React component)"
+
+  - path: src/client/components/cron/CronScheduleEditor.tsx
+    work_units: [WU-015]
+    status: stub
+    description: >
+      Reusable schedule editor: text input, live human-readable preview,
+      green/red validation. Used in create modal and inline edit.
+    exports:
+      - "CronScheduleEditor (React component)"
+
+  - path: src/client/components/cron/CronSudoPrompt.tsx
+    work_units: [WU-016]
+    status: stub
+    description: >
+      Sudo credential prompt modal. Password input, grace period note,
+      plain WS warning banner, cancel aborts operation.
+    exports:
+      - "CronSudoPrompt (React component)"
+
+  - path: src/client/components/cron/CronDeleteConfirm.tsx
+    work_units: [WU-016]
+    status: stub
+    description: >
+      Destructive confirmation dialog. Simple confirm for cron/user jobs,
+      enhanced type-to-confirm for systemd-system units.
+    exports:
+      - "CronDeleteConfirm (React component)"
+
+  - path: src/client/components/cron/CronTagInput.tsx
+    work_units: [WU-017]
+    status: stub
+    description: >
+      Tag input with autocomplete, free-text entry, deterministic color pills,
+      auto-tag suggestions from command heuristics.
+    exports:
+      - "CronTagInput (React component)"
+
+  - path: src/client/components/cron/CronTimeline.tsx
+    work_units: [WU-018]
+    status: stub
+    description: >
+      Collapsible horizontal bar chart. 24h/7d range toggle, stacked bars by
+      health, hover tooltip, click-to-select, capped at 500 data points.
+    exports:
+      - "CronTimeline (React component)"
+
+  - path: src/client/components/cron/CronSessionLink.tsx
+    work_units: [WU-019]
+    status: stub
+    description: >
+      Bidirectional session linking: linked session chip, Link to Session dropdown,
+      auto-link matching, notification system with rate limiting.
+    exports:
+      - "CronSessionLink (React component)"
+
+# ── Existing Files Requiring Modification ─────────────────────────────────
+
+modified_files:
+  - path: src/shared/types.ts
+    work_units: [WU-001]
+    status: not_modified
+    modifications_needed:
+      - description: "Add JobSource, JobStatus, HealthStatus type aliases"
+        location: "After existing type aliases (line ~5)"
+      - description: "Add CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, SystemdCreateConfig, BulkProgress interfaces"
+        location: "Before ServerMessage union"
+      - description: "Extend ServerMessage union with 11 cron-* variants"
+        location: "ServerMessage union (line 62)"
+        variants:
+          - "cron-job-list"
+          - "cron-job-diff"
+          - "cron-job-detail"
+          - "cron-run-output"
+          - "cron-run-complete"
+          - "cron-history"
+          - "cron-logs"
+          - "cron-log-line"
+          - "cron-sudo-result"
+          - "cron-create-result"
+          - "cron-error"
+      - description: "Extend ClientMessage union with 17 cron-* variants"
+        location: "ClientMessage union (line 124)"
+        variants:
+          - "cron-job-list-request"
+          - "cron-job-detail-request"
+          - "cron-run-now"
+          - "cron-pause"
+          - "cron-resume"
+          - "cron-edit-frequency"
+          - "cron-delete"
+          - "cron-create-cron"
+          - "cron-create-systemd"
+          - "cron-bulk-pause"
+          - "cron-bulk-resume"
+          - "cron-bulk-delete"
+          - "cron-history-request"
+          - "cron-logs-request"
+          - "cron-log-tail"
+          - "cron-sudo-auth"
+          - "cron-job-set-tags"
+          - "cron-job-link-session"
+          - "cron-job-set-managed"
+
+  - path: src/server/db.ts
+    work_units: [WU-002]
+    status: not_modified
+    modifications_needed:
+      - description: "Add cron_job_prefs table: id, job_id, display_name, tags (JSON), is_managed, linked_session_id, avatar_style, auto_tag_dismissed, last_seen (datetime default now)"
+        location: "After existing CREATE TABLE statements"
+        sql: "CREATE TABLE IF NOT EXISTS cron_job_prefs (...)"
+      - description: "Add cron_run_history table: id, job_id (FK to cron_job_prefs CASCADE), trigger, exit_code, duration_ms, output, started_at, completed_at"
+        location: "After cron_job_prefs table"
+        sql: "CREATE TABLE IF NOT EXISTS cron_run_history (...)"
+      - description: "Add indexes on job_id for both tables"
+      - description: "Add prepared statements for CRUD operations"
+      - description: "Export initCronTables(db) function following initPoolTables pattern"
+
+  - path: src/client/stores/settingsStore.ts
+    work_units: [WU-002]
+    status: not_modified
+    modifications_needed:
+      - description: "Add 14 cron settings fields with defaults"
+        fields:
+          - "cronPollInterval: 5000 (ms, min 2000, max 30000)"
+          - "cronAvatarStyle: 'bottts'"
+          - "cronSudoGracePeriod: 300000 (5 minutes)"
+          - "cronNotifyFailure: true"
+          - "cronNotifyConsecutiveFailures: true"
+          - "cronNotifyMissedRun: true"
+          - "cronNotifyManualComplete: true"
+          - "cronNotifyDesktop: false (opt-in)"
+          - "cronTimelineDefaultRange: '24h'"
+          - "cronTimelineVisible: false"
+          - "cronDefaultSort: 'name'"
+          - "cronDefaultFilter: 'all'"
+          - "cronListWidth: 320"
+          - "cronAutoTagSuggestions: true"
+      - description: "Add setters for each field"
+      - description: "Bump persist version and add migration"
+
+  - path: src/client/App.tsx
+    work_units: [WU-009]
+    status: not_modified
+    modifications_needed:
+      - description: "Add 'cron-manager' to activeView union type"
+        location: "useState<'sessions' | ...> declaration"
+      - description: "Add Cmd+Shift+C keyboard shortcut"
+        location: "handleKeyDown useEffect"
+        code: "if (isShortcut && event.shiftKey && code === 'KeyC') setActiveView('cron-manager')"
+      - description: "Add WS message subscriptions for all cron-* types"
+        location: "subscribe useEffect"
+      - description: "Add render block for cron-manager view"
+        location: "Conditional rendering section"
+      - description: "Add header button/icon to navigate to cron manager"
+
+  - path: src/server/index.ts
+    work_units: [WU-007]
+    status: not_modified
+    modifications_needed:
+      - description: "Import CronManager, CronHistoryService, CronLogService, createCronHandlers"
+        location: "Import section (top of file)"
+      - description: "Instantiate singletons: cronManager, cronHistoryService, cronLogService"
+        location: "After existing singletons (line ~95)"
+      - description: "Detect systemd availability"
+      - description: "Create cron handlers via createCronHandlers factory"
+        location: "After taskHandlers creation"
+      - description: "Add cron handlers to wsHandlers object"
+        location: "wsHandlers object (line ~322)"
+      - description: "Call cronHandlers.onClientConnected in websocket.open"
+        location: "websocket open handler (line ~384)"
+      - description: "Call cronHandlers.onClientDisconnected in websocket.close"
+        location: "websocket close handler (line ~418)"
+      - description: "Add cronManager.destroy() to cleanupAllTerminals"
+        location: "cleanup function (line ~436)"
+
+  - path: src/server/wsRouter.ts
+    work_units: [WU-007]
+    status: not_modified
+    modifications_needed:
+      - description: "Add optional cron handler methods to WsHandlers interface"
+        methods:
+          - "onCronJobList?: (ws) => void"
+          - "onCronJobDetail?: (ws, jobId: string) => void"
+          - "onCronRunNow?: (ws, jobId: string) => void"
+          - "onCronPause?: (ws, jobId: string) => void"
+          - "onCronResume?: (ws, jobId: string) => void"
+          - "onCronEditFrequency?: (ws, jobId: string, schedule: string) => void"
+          - "onCronDelete?: (ws, jobId: string) => void"
+          - "onCronCreate?: (ws, message: unknown) => void"
+          - "onCronBulkAction?: (ws, message: unknown) => void"
+          - "onCronHistory?: (ws, jobId: string) => void"
+          - "onCronLogs?: (ws, jobId: string) => void"
+          - "onCronLogTail?: (ws, jobId: string) => void"
+          - "onCronSudoAuth?: (ws, message: unknown) => void"
+          - "onCronSetTags?: (ws, jobId: string, tags: string[]) => void"
+          - "onCronLinkSession?: (ws, jobId: string, sessionId: string | null) => void"
+          - "onCronSetManaged?: (ws, jobId: string, managed: boolean) => void"
+      - description: "Add case statements in handleMessage switch for all cron-* message types"
+        location: "switch (message.type) block"
+
+  - path: src/client/components/SessionList.tsx
+    work_units: [WU-019]
+    status: not_modified
+    modifications_needed:
+      - description: "Add clock icon to sessions with linked cron jobs"
+      - description: "Click navigates to cron-manager filtered to linked jobs (REQ-75)"
+
+# ── Cross-File Interface Contracts ────────────────────────────────────────
+
+interface_contracts:
+  - name: "CronJob type family"
+    defined_in: src/shared/types.ts
+    consumed_by_files:
+      - src/server/cronManager.ts
+      - src/server/cronHistoryService.ts
+      - src/server/cronLogService.ts
+      - src/server/handlers/cronHandlers.ts
+      - src/client/stores/cronStore.ts
+      - "src/client/components/cron/*.tsx (all)"
+    status: pending  # Types not yet added to shared/types.ts
+
+  - name: "WebSocket cron-* message protocol"
+    defined_in: src/shared/types.ts
+    consumed_by_files:
+      - src/server/wsRouter.ts
+      - src/server/handlers/cronHandlers.ts
+      - src/client/stores/cronStore.ts
+      - src/client/App.tsx
+
+  - name: "CronManager class API"
+    defined_in: src/server/cronManager.ts
+    consumed_by_files:
+      - src/server/handlers/cronHandlers.ts
+      - src/server/index.ts
+
+  - name: "useCronStore hook"
+    defined_in: src/client/stores/cronStore.ts
+    consumed_by_files:
+      - "src/client/components/cron/*.tsx (all)"
+      - src/client/App.tsx
+
+  - name: "Database cron tables"
+    defined_in: src/server/db.ts
+    consumed_by_files:
+      - src/server/cronManager.ts
+      - src/server/cronHistoryService.ts
+      - src/server/cronLogService.ts
+
+# ── Implementation Order (Recommended) ───────────────────────────────────
+
+implementation_order:
+  - phase: 1
+    name: "Foundation"
+    work_units: [WU-001]
+    description: "Add all shared types to types.ts — unblocks everything else"
+
+  - phase: 2
+    name: "Backend & Frontend Foundations"
+    work_units: [WU-002, WU-003, WU-006, WU-008]
+    description: "DB tables, discovery, history/log services, frontend store (parallel)"
+    notes: "WU-003 and WU-006 depend on WU-002; WU-008 can run fully parallel"
+
+  - phase: 3
+    name: "Backend Extensions + Frontend Shell"
+    work_units: [WU-004, WU-005, WU-009]
+    description: "Polling/diff/health, operations/creds, app integration (parallel)"
+
+  - phase: 4
+    name: "Wiring + Frontend Panels"
+    work_units: [WU-007, WU-010, WU-012, WU-015, WU-018]
+    description: "WS handlers, list pane, detail pane, create modal, timeline (parallel)"
+
+  - phase: 5
+    name: "Feature Components"
+    work_units: [WU-011, WU-013, WU-014, WU-017, WU-019]
+    description: "Bulk actions, history/logs tabs, script/controls, tags, session link (parallel)"
+
+  - phase: 6
+    name: "Final"
+    work_units: [WU-016]
+    description: "Sudo prompt and delete confirmation dialogs"
+
+# ── Dependencies (npm packages needed) ────────────────────────────────────
+
+dependencies_needed:
+  - package: cronstrue
+    reason: "Human-readable cron expression conversion (REQ-85)"
+    work_unit: WU-003
+
+  - package: highlight.js
+    reason: "Syntax highlighting for systemd INI files and scripts (REQ-24, REQ-34)"
+    work_units: [WU-012, WU-014]
+
+  - package: motion
+    reason: "Animated list entry/exit (REQ-10) — motion/react"
+    work_unit: WU-010
+    note: "Check if already installed as framer-motion"
+
+# ── Scaffold Validation ──────────────────────────────────────────────────
+
+validation:
+  all_work_units_covered: true
+  all_new_files_created: true
+  all_exports_declared: true
+  all_modification_points_documented: true
+  patterns_consistent: true
+  cross_references_complete: true

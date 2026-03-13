@@ -1,0 +1,40 @@
+verdict: pass
+
+title: "Fix: TEST-39 expects stale conformance-report schema fields in verification template"
+
+description: |
+  Update TEST-39 in orchestratorTemplates.test.ts to assert field names from the
+  current criterion-verification-v1.0 schema instead of the old conformance-report
+  schema. The verification template was intentionally rewritten; only the test
+  assertions are stale. Also update the test description to reflect the new schema name.
+
+changes:
+  - file: "src/server/__tests__/orchestratorTemplates.test.ts"
+    description: |
+      In TEST-39 (lines 79-89), make these changes:
+
+      1. Update test description (line 79):
+           'Verification template includes conformance report schema'
+         → 'Verification template includes criterion-verification schema'
+
+      2. Update comment (line 83):
+           '// Verify conformance report structure'
+         → '// Verify criterion-verification schema structure'
+
+      3. Replace the five expect() assertions (lines 84-88):
+           expect(content).toContain('overall_status')        → expect(content).toContain('overall_verdict')
+           expect(content).toContain('acceptance_criteria')    → expect(content).toContain('criterion_verifications')
+           expect(content).toContain('constitution_checks')    → expect(content).toContain('techniques')
+           expect(content).toContain('verified')               → expect(content).toContain('VERIFIED')
+           expect(content).toContain('unverified')             → expect(content).toContain('NEEDS_FIX')
+    change_type: modify
+
+acceptance_criteria:
+  - "TEST-39 passes when run with: bun test src/server/__tests__/orchestratorTemplates.test.ts"
+  - "All five assertions check strings that exist in the current ~/.claude/orchestrator-templates/verification.md"
+  - "Test description references 'criterion-verification' not 'conformance report'"
+  - "No other tests in orchestratorTemplates.test.ts are modified or broken"
+
+regression_risks:
+  - "Risk 1: If the verification template is edited again in the future, these content-based assertions could become stale again. This is inherent to content-matching tests and not introduced by this fix."
+  - "Risk 2: The 'VERIFIED' assertion (uppercase) could false-match on a different occurrence of that string. Low risk — matching on presence is the existing test strategy and the string is distinctive enough."

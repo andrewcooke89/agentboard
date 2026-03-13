@@ -1,0 +1,12 @@
+title: "Test bug"
+description: "Test bug submitted for pipeline validation. No actual defect identified."
+reproduction:
+  steps:
+    - "N/A - test bug for pipeline validation"
+  environment: "Bun 1.x, TypeScript 5.x, Linux"
+expected: "Pipeline processes bug spec correctly"
+actual: "Pipeline processes bug spec correctly"
+affected_files: []
+severity: minor
+affected_spec: "{{ affected_spec_path }}"
+verdict: pass

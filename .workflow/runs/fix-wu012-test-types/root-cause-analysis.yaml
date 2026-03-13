@@ -1,0 +1,143 @@
+verdict: pass
+
+root_cause: |
+  Test fixture objects in three WU-012 test files were written against an earlier
+  version of the CronAiProposal interface and CronJob/JobSource types. The types
+  in src/shared/types.ts were subsequently refactored (field renames, removals,
+  and value changes) but the test fixtures were never updated to match. Additionally,
+  one test passes `null` where the function signature expects `string | undefined`.
+
+location:
+  file: "src/shared/types.ts"
+  line_range: "760-869"
+  function: "CronAiProposal interface, JobSource type, CronJob interface"
+
+mechanism: |
+  Type drift between production type definitions and test fixture data. Five
+  distinct mismatches:
+
+  1. CronAiProposal.type -> CronAiProposal.operation (field rename)
+     - Tests use `type: 'create_job'` / `type: 'edit_job'`
+     - Interface now has `operation: CronAiProposalOperation` where valid values
+       are 'create' | 'edit_frequency' | 'pause' | 'resume' | 'delete' | 'set_tags' | 'link_session'
+     - Files: app.WU012.test.tsx:229,505; CronManager.WU012.test.tsx:211,598
+
+  2. CronAiProposal.title removed
+     - Tests use `title: 'Create new backup job'` etc.
+     - Field does not exist on current interface
+     - Files: app.WU012.test.tsx:230; CronManager.WU012.test.tsx:212,598
+
+  3. CronAiProposal.payload replaced with individual fields
+     - Tests use `payload: { name, command, schedule }` object
+     - Interface now has flat fields: jobId, jobName, jobAvatarUrl, diff, feedback, resolvedAt
+     - Files: app.WU012.test.tsx:234-238; CronManager.WU012.test.tsx:216-221
+
+  4. JobSource values changed
+     - Tests use `source: 'cron'`
+     - JobSource is now 'user-crontab' | 'system-crontab' | 'user-systemd' | 'systemd-system'
+     - Files: app.WU012.test.tsx:217; CronManager.WU012.test.tsx:199
+
+  5. null vs undefined in handleCronOperationResult
+     - Test passes `null` as 4th argument: `store.handleCronOperationResult('job-123', 'create', true, null)`
+     - Function signature is `(jobId: string, operation: string, success: boolean, error?: string)`
+     - `error?: string` means `string | undefined`, not `string | null`
+     - File: cronStoreCreateOperation.test.ts:65,89
+
+  Also: CronJob fixtures are missing several required fields added to the interface
+  (scheduleHuman, scriptPath, healthReason, lastRunDuration, lastExitCode,
+  consecutiveFailures, avgDuration, user, requiresSudo, avatarUrl, unitFile,
+  description, linkedSessionId). TypeScript may not report these if the object
+  is typed with explicit annotation, but they represent incomplete fixtures.
+
+affected_files:
+  - path: "src/client/__tests__/app.WU012.test.tsx"
+    errors:
+      - line: 217
+        issue: "source: 'cron' not assignable to JobSource"
+        fix: "Change to 'user-crontab'"
+      - line: 229
+        issue: "'type' does not exist on CronAiProposal"
+        fix: "Rename to 'operation' with valid CronAiProposalOperation value"
+      - line: 230
+        issue: "'title' does not exist on CronAiProposal"
+        fix: "Remove field"
+      - line: 234-238
+        issue: "'payload' does not exist on CronAiProposal"
+        fix: "Replace with jobId, jobName, jobAvatarUrl, diff, feedback, resolvedAt"
+      - line: 505
+        issue: "type/title/payload on spread proposal"
+        fix: "Use operation and current fields"
+      - line: 518
+        issue: "proposals[0]?.type accessed but field is now 'operation'"
+        fix: "Change to proposals[0]?.operation"
+
+  - path: "src/client/components/cron/__tests__/CronManager.WU012.test.tsx"
+    errors:
+      - line: 199
+        issue: "source: 'cron' not assignable to JobSource"
+        fix: "Change to 'user-crontab'"
+      - line: 211
+        issue: "'type' does not exist on CronAiProposal"
+        fix: "Rename to 'operation' with valid CronAiProposalOperation value"
+      - line: 212
+        issue: "'title' does not exist on CronAiProposal"
+        fix: "Remove field"
+      - line: 216-221
+        issue: "'payload' does not exist on CronAiProposal"
+        fix: "Replace with jobId, jobName, jobAvatarUrl, diff, feedback, resolvedAt"
+      - line: 598
+        issue: "spread with title on CronAiProposal"
+        fix: "Remove title, use current interface fields"
+
+  - path: "src/client/stores/__tests__/cronStoreCreateOperation.test.ts"
+    errors:
+      - line: 65
+        issue: "null not assignable to string | undefined"
+        fix: "Change null to undefined"
+      - line: 89
+        issue: "null not assignable to string | undefined (same pattern)"
+        fix: "Change 'Invalid cron schedule' is fine, but the null on line 65 needs to be undefined"
+
+fix_approach: |
+  Update all three test files to use current type definitions:
+
+  1. In baseCronJob fixtures (app.WU012.test.tsx:212-225, CronManager.WU012.test.tsx:194-207):
+     - Change `source: 'cron'` to `source: 'user-crontab'`
+     - Add missing required CronJob fields: scheduleHuman, scriptPath, healthReason,
+       lastRunDuration, lastExitCode, consecutiveFailures, avgDuration, user,
+       requiresSudo, avatarUrl, unitFile, description, linkedSessionId
+
+  2. In baseProposal fixtures (app.WU012.test.tsx:227-239, CronManager.WU012.test.tsx:209-222):
+     - Rename `type` to `operation` with valid value (e.g. 'create')
+     - Remove `title` field
+     - Remove `payload` object
+     - Add required fields: jobId, jobName, jobAvatarUrl, diff, feedback, resolvedAt
+
+  3. In editProposal spread (app.WU012.test.tsx:502-508):
+     - Rename `type: 'edit_job'` to `operation: 'edit_frequency'`
+     - Remove `title`
+     - Remove `payload`, use current interface fields instead
+
+  4. In app.WU012.test.tsx:518:
+     - Change `proposals[0]?.type` to `proposals[0]?.operation`
+
+  5. In CronManager.WU012.test.tsx:598:
+     - Remove `title` from the spread override
+
+  6. In cronStoreCreateOperation.test.ts:65:
+     - Change `null` to `undefined` in handleCronOperationResult call
+
+  Run `bun run typecheck` to verify zero type errors remain in these files.
+
+risk_assessment: |
+  LOW RISK. All changes are confined to test fixture data — no production code
+  is modified. The fixes are mechanical field renames and value updates.
+
+  Potential risks:
+  - Test assertions that check `.type` need updating to `.operation` (line 518)
+  - Removing `title` from proposals may affect tests that assert on title content
+    (line 598 spread) — need to verify the test still makes semantic sense
+  - The CronJob fixture additions (missing required fields) should use sensible
+    defaults (null for nullable fields, empty string/0 for required ones)
+  - If any test logic depends on the old field names for behavior verification
+    (not just type compliance), the test logic itself may need updating

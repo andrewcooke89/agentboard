@@ -1,0 +1,65 @@
+title: "Create Job button not wired, no duplicate detection, no concurrent-run guard"
+severity: critical
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronManager.tsx
+  - src/client/components/cron/CronEmptyState.tsx
+  - src/client/components/cron/CronCreateModal.tsx
+  - src/server/handlers/cronHandlers.ts
+
+recreation:
+  steps:
+    - "Navigate to Cron Manager"
+    - "Try to find a 'Create Job' button in empty state or header"
+    - "Observe: button exists but onClick is not wired"
+    - "Create a job with duplicate name/schedule as existing job"
+    - "Observe: no duplicate warning"
+    - "Click 'Run Now' multiple times rapidly on same job"
+    - "Observe: multiple runs execute simultaneously"
+  environment: "Any"
+
+expected: |
+  - Create Job button opens CronCreateModal
+  - Duplicate jobs are detected and rejected
+  - Only one run of a job can execute at a time
+
+actual: |
+  - Create Job button has no onClick handler
+  - No duplicate detection in create flow
+  - Multiple concurrent runs allowed
+
+affected_requirements:
+  - REQ-50 # Create Job button wired
+  - REQ-53 # Duplicate detection
+  - REQ-40 # Concurrent-run guard
+
+root_cause_hints: |
+  1. CronEmptyState.tsx expects `onCreateJob` prop but CronManager.tsx doesn't pass it
+  2. CronCreateModal.tsx validates form but doesn't check against existing jobs
+  3. handleCronJobRunNow in cronHandlers.ts doesn't check if job already running
+
+fix_approach: |
+  1. Wire Create button:
+     - Add `handleCreateJob()` action to cronStore.ts
+     - Pass `onCreateJob={handleCreateJob}` to CronEmptyState
+     - Add Create button to CronManager header
+
+  2. Duplicate detection:
+     - In createJob handler, check existing jobs for same name/schedule/command
+     - Return error if duplicate found
+     - Show error in UI
+
+  3. Concurrent-run guard:
+     - Add `runningJobs: Set<string>` to track active runs
+     - Before run-now, check if job ID in Set
+     - If yes, return error "Job already running"
+     - Add to Set on start, remove on completion
+     - Use Set in cronManager or cronHandlers for thread safety
+
+acceptance_criteria:
+  - "Create Job button in empty state opens CronCreateModal"
+  - "Create Job button in header (optional) also works"
+  - "Creating a duplicate job (same name) shows error and prevents creation"
+  - "Clicking Run Now while job is already running shows error"
+  - "Running jobs list is visible or inferred from state"

@@ -1,0 +1,22 @@
+```yaml
+affected_areas:
+  - src/client/components/StepNode.tsx
+  - src/client/components/ParallelGroupNode.tsx
+  - src/client/__tests__/pipelineDiagram.test.tsx
+  - src/client/__tests__/ParallelGroupNode.test.tsx
+bug_summary: |
+  Two bugs affecting pipeline diagram components:
+  1.  `StepNode`: 'skipped' status uses an incorrect gray background (bg-gray-500) instead of the intended yellow (bg-yellow-500), making it indistinguishable from cancelled steps.
+  2.  `ParallelGroupNode`:
+      a.  Dependency text for pending child steps lacks proper spacing (e.g., "(depends_on:independent)" instead of "depends_on: independent").
+      b.  Renders "No steps" for both empty and undefined `childSteps` arrays, instead of the expected "0/0 complete".
+reproduction_summary: |
+  1.  Run `bun test src/client/__tests__/pipelineDiagram.test.tsx` to observe the `StepNode` skipped status color failure.
+  2.  Run `bun test src/client/__tests__/ParallelGroupNode.test.tsx` to observe the three `ParallelGroupNode` failures: incorrect dependency text spacing, and "No steps" for empty/undefined childSteps.
+severity_assessment: |
+  Minor. The bugs primarily affect visual presentation and information clarity in the UI. While they don't block core functionality, they can lead to user confusion regarding step statuses and pipeline progress.
+suggested_investigation_areas:
+  - **StepNode.tsx (line 10)**: Update the `STATUS_CLASSES` map for the 'skipped' status from `bg-gray-500` to `bg-yellow-500`.
+  - **ParallelGroupNode.tsx (lines 228-229, and potentially 255)**: Add a space after the colon in the dependency info text, likely by adjusting the JSX structure or adding an explicit space character.
+  - **ParallelGroupNode.tsx (line 187)**: Modify the ternary condition for the progress summary to correctly display "0/0 complete" when `total` is 0 (which occurs for empty or undefined `childSteps`). This might involve ensuring `total` correctly defaults to 0 if `childSteps` is undefined or empty before the check.
+```

@@ -1,0 +1,189 @@
+verdict: PASS
+
+reviewer: spec-reviewer
+reviewed_at: "2026-02-25"
+spec_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-25/refined-spec.yaml
+
+constitution_checks:
+  security:
+    result: pass
+    notes: |
+      Credential handling is defense-in-depth and well-specified:
+      - Uint8Array storage with explicit `fill(0)` zeroing on expiry (REQ-83). Correctly avoids
+        immutable JS strings that cannot be wiped from the V8 heap.
+      - Serialization bridge (REQ-104): JSON string from WebSocket immediately converted to
+        Uint8Array via TextEncoder; intermediate string overwritten before any async operation.
+        TEST-102 verifies the bridge. The spec acknowledges the inherent JS limitation — GC
+        controls actual reclamation — but minimizes the exposure window, which is appropriate.
+      - Sudo invocation via `-S` flag with stdin piping (REQ-102). Credentials never appear in
+        CLI arguments (visible via `ps aux`). TEST-100 verifies spawn args and stdin piping.
+      - WSS-only enforcement in production with warning for plain WS dev (REQ-84).
+      - Consistent `sudoCredential` naming avoids secret-detection regex false positives.
+      - Auto-expiry via configurable setTimeout grace period (default 5 min).
+      - TEST-97 (buffer zeroing), TEST-100 (stdin piping), TEST-102 (bridge) cover all paths.
+
+      Input sanitization prevents injection:
+      - REQ-96: Rejects newline (\n, \r) and null byte characters in cron job commands,
+        preventing multi-line crontab injection payloads. TEST-95 covers this.
+      - REQ-52: Systemd unit name validated against /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/,
+        preventing path traversal (e.g., `../escape`). TEST-96 covers this.
+      - REQ-44: Schedule expression validated before applying (cron 5-field format or
+        systemd calendar via `systemd-analyze calendar`).
+
+      Destructive operation safety:
+      - REQ-48 (invariant): backup-before-modify for all destructive/edit operations.
+        Crontab snapshots to ~/.agentboard/backups/crontab-{timestamp}, unit files copied.
+      - REQ-46: Delete confirmation dialog listing job name.
+      - REQ-99: Type-to-confirm for system-level systemd unit deletion — appropriate friction
+        for high-risk operations affecting system services.
+      - REQ-56: Bulk delete confirmation listing all selected job names.
+      - REQ-40 (invariant): Only one manual run per job at a time.
+
+      No credential patterns detected in code blocks or field names.
+
+  architecture:
+    result: pass
+    notes: |
+      Scope is well-defined with explicit file lists and no wildcard patterns:
+      - 4 new backend files (cronManager.ts, cronHistoryService.ts, cronLogService.ts,
+        handlers/cronHandlers.ts)
+      - 20 new frontend components under src/client/components/cron/ (including CronEmptyState
+        and CronSessionLink beyond the original 18)
+      - 1 new Zustand store (cronStore.ts)
+      - 6 modified files with clear justification (App.tsx for view routing, types.ts for
+        new types, index.ts for handler registration, db.ts for new tables,
+        settingsStore.ts for cron settings, SessionList.tsx for clock icon integration)
+      - 3 explicitly excluded files (SessionManager.ts, Terminal.tsx, sessionStore.ts)
+
+      Follows existing agentboard conventions consistently:
+      - Hono backend with WebSocket message protocol matching existing session pattern
+      - React 18 frontend with Zustand state management (localStorage persistence)
+      - SQLite database via existing agentboard.db and initDatabase()
+      - motion/react animations consistent with SessionList entry/exit pattern
+      - Tailwind CSS styling throughout
+      - Component file structure mirrors existing src/client/components/ organization
+
+      Data model separation is clean:
+      - System state from discovery only, never persisted to DB (REQ-87)
+      - User preferences in cron_job_prefs table (never stores job state)
+      - Health always derived from live run history data, never persisted (REQ-59)
+      - Manual runs in cron_run_history DB; scheduled run data from system logs (REQ-88)
+      - Deterministic job IDs from source+name+command (not schedule) — preserves continuity
+        of prefs, tags, and history when users edit job frequency (REQ-05)
+
+      Resource management is sound:
+      - CronManager singleton lifecycle: polling starts on first WS client, pauses with none
+      - Run Now child processes survive WS disconnects (REQ-103) — no lost results
+      - Orphaned prefs cleaned with 24-hour grace period (REQ-98)
+      - Run history retention: 90-day max, 500 records per job (REQ-101)
+      - FK cascade: cron_run_history ON DELETE CASCADE from cron_job_prefs — history is
+        cleaned up when orphaned prefs are eventually removed, which is correct behavior
+
+      WebSocket protocol is well-namespaced ('cron-' prefix avoids collision with existing
+      session messages), with 12 server and 14 client message types fully documented.
+      Protocol includes streaming (Run Now output chunks) and pagination (logs, history).
+
+      Dependencies are justified and bounded:
+      - cronstrue + cron-parser: core to schedule display and timeline projection
+      - motion/react: consistent with existing project pattern
+      - highlight.js: needed for script/unit file syntax highlighting; languages scoped to
+        bash, python, javascript, typescript, ruby, perl, ini for tree-shaking
+      - DiceBear: client-side only, fallback specified (REQ-13), CSP note documented
+
+  quality:
+    result: pass
+    notes: |
+      105 acceptance criteria (REQ-01 through REQ-105) with valid type annotations:
+      - behavioral (25+): UI interactions, animations, navigation, confirmations
+      - contract (40+): backend/protocol guarantees, data contracts, API behaviors
+      - invariant (8): REQ-05, 40, 48, 59, 70, 96, 102, 104 — safety properties
+      - benchmark (4): REQ-80, 91, 92, 93 — measurable performance targets
+      - property (4): REQ-83, 84, 94, 95 — system-wide characteristics
+      All types match the valid_acceptance_types in the feature_spec_v1 schema.
+      Types are appropriately assigned: safety properties as invariants, measurable targets
+      as benchmarks, protocol guarantees as contracts, UI behaviors as behavioral.
+
+      103 test specifications (TEST-01 through TEST-103) with comprehensive coverage:
+      - Discovery & resilience: TEST-01..06, TEST-94 (7 tests)
+      - Project grouping: TEST-07..08 (2 tests)
+      - Avatars: TEST-09..11 (3 tests)
+      - Polling & diffs: TEST-12..14 (3 tests)
+      - List pane (search, sort, filter, bulk): TEST-15..22 (8 tests)
+      - Detail pane: TEST-23..27 (5 tests)
+      - Run Now: TEST-28..31, TEST-101 (5 tests)
+      - History: TEST-32..36 (5 tests)
+      - Logs: TEST-37..40 (4 tests)
+      - Job creation: TEST-41..44 (4 tests)
+      - Bulk operations: TEST-45..48 (4 tests)
+      - Health & failure detection: TEST-49..55 (7 tests)
+      - Duration tracking: TEST-56..58 (3 tests)
+      - Tags: TEST-59..63 (5 tests)
+      - Notifications: TEST-64..68 (5 tests)
+      - Session integration: TEST-69..73 (5 tests)
+      - Schedule timeline: TEST-74..78 (5 tests)
+      - Privilege escalation: TEST-79..82 (4 tests)
+      - Settings: TEST-83..86 (4 tests)
+      - WebSocket protocol: TEST-87..90 (4 tests)
+      - Accessibility: TEST-91..93 (3 tests)
+      - Security: TEST-95..97, TEST-100, TEST-102 (5 tests)
+      - Data retention: TEST-98..99 (2 tests)
+      - FK integrity: TEST-103 (1 test)
+      Every refined requirement (REQ-96..105) has a corresponding test specification.
+
+      4 risks (RISK-01 through RISK-04) with concrete mitigations, all traceable to
+      requirements and tests. RISK-04 (non-systemd) was added during refinement with
+      REQ-97 and TEST-94.
+
+      NFRs are well-specified with measurable targets:
+      - Performance: 2s discovery cap (REQ-91), smooth 200-job rendering (REQ-92),
+        100ms timeline render (REQ-93), 500-point data cap (REQ-80)
+      - Accessibility: full keyboard navigation (REQ-94), aria-labels (REQ-95)
+
+      Refinement tracing is thorough: 10 new requirements, 10 new tests, 8 amended
+      requirements, 2 new types, 1 new risk, 3 reviewer observations addressed.
+      No open questions remain.
+
+feedback: |
+  The refined spec passes all three constitution sections (security, architecture, quality).
+
+  **Strengths:**
+  - Credential handling is defense-in-depth: Uint8Array storage, explicit zeroing, stdin
+    piping via `-S` flag (REQ-102), serialization bridge with immediate string overwrite
+    (REQ-104), WSS enforcement, and consistent `sudoCredential` naming. Five dedicated
+    tests cover credential lifecycle end-to-end.
+  - Input sanitization (REQ-96) prevents crontab injection; systemd unit name regex (REQ-52)
+    prevents path traversal. Both have dedicated tests with edge cases.
+  - Backup-before-modify invariant (REQ-48) and type-to-confirm for system unit deletion
+    (REQ-99) provide layered safety for destructive operations.
+  - Graceful degradation for non-systemd systems (REQ-97, RISK-04) prevents hard failures
+    on WSL1, containers, and older distros — UI adapts by hiding systemd-specific features.
+  - Clean data model separation: system state always from discovery, user prefs in DB,
+    health always derived from live data. No stale-data risk from caching derived state.
+  - Deterministic job IDs from source+name+command (not schedule) preserves preference and
+    history continuity across schedule edits.
+  - Resource management: Run Now disconnect resilience (REQ-103), orphaned prefs cleanup
+    (REQ-98), run history retention (REQ-101), FK auto-upsert (REQ-105).
+  - Comprehensive test coverage (103 tests) spanning security, accessibility, performance,
+    and all functional areas. Every refined requirement has a corresponding test.
+  - All 4 risks have concrete mitigations traceable to requirements.
+  - Spec is fully self-contained with no external dependencies. Sections 4-12 are covered
+    by the 105 acceptance criteria and 103 test specifications.
+  - No open questions remain.
+
+  **Minor observations (non-blocking):**
+  - No rate limiting on `cron-sudo-auth` WebSocket messages. A local attacker could
+    brute-force sudo credentials via rapid WebSocket messages. Mitigated by: (a) agentboard
+    is a localhost development tool with a limited threat model, (b) sudo itself applies
+    rate limiting via pam_faildelay, and (c) the attacker would need local access to the
+    WebSocket already. Non-blocking for a local tool.
+  - The intermediate JS string from `cron-sudo-auth` JSON deserialization cannot be truly
+    wiped from the V8 heap — only made eligible for GC. The spec correctly acknowledges
+    this and minimizes the exposure window. This is a fundamental JS runtime limitation,
+    not a spec deficiency.
+  - The CASCADE delete from `cron_job_prefs` to `cron_run_history` means orphan cleanup
+    (REQ-98, 24-hour grace) will delete associated run history. This is intentional — if
+    a job has been gone for 24+ hours, its manual run history is unlikely to be useful.
+    If retention is ever needed beyond job lifetime, a separate archival mechanism would
+    be required, but this is out of scope for the current feature.
+
+  Overall: The spec is production-quality and ready for decomposition.

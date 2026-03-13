@@ -1,0 +1,52 @@
+id: WU-004
+title: "Polling, Diff & Health Computation"
+description: |
+  Implement polling lifecycle: start/stop based on WS client count, configurable
+  interval (default 5s). Compute incremental diffs between poll cycles (additions,
+  removals, updates). Compute health status server-side: healthy/warning/critical/unknown
+  with healthReason strings. Detect missed runs (time since last > 2x interval).
+  Track duration stats (lastRunDuration, avgDuration rolling 10-run avg).
+  Implement orphaned prefs cleanup and run history pruning on hourly schedule.
+files:
+  - path: src/server/cronManager.ts
+    action: modify
+    description: "Implement polling, diff, health, cleanup methods"
+dependencies:
+  - WU-003
+requirements:
+  - REQ-08
+  - REQ-09
+  - REQ-58
+  - REQ-59
+  - REQ-60
+  - REQ-61
+  - REQ-62
+  - REQ-63
+  - REQ-98
+  - REQ-101
+acceptance_criteria:
+  - type: unit_test
+    description: "Polling starts on first client, pauses when no clients"
+  - type: unit_test
+    description: "Diff correctly identifies additions, removals, and changes"
+  - type: unit_test
+    description: "Health computed: healthy when last 10 all succeeded"
+  - type: unit_test
+    description: "Health computed: warning when last run failed or duration >2x avg"
+  - type: unit_test
+    description: "Health computed: critical when 2+ consecutive failures"
+  - type: unit_test
+    description: "Missed run detected when gap > 2x expected interval"
+  - type: unit_test
+    description: "avgDuration computed as rolling 10-run average"
+  - type: unit_test
+    description: "Orphaned prefs cleaned up after 24h hourly"
+  - type: unit_test
+    description: "Run history pruned: >90 days deleted, capped at 500/job"
+interfaces:
+  exports:
+    - "startPolling(intervalMs: number): void"
+    - "stopPolling(): void"
+    - "computeDiff(prev, curr): { added, removed, updated }"
+    - "computeHealth(job, history): { health, healthReason }"
+estimated_loc: 250

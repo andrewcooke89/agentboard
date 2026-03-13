@@ -1,0 +1,15 @@
+```yaml
+affected_areas:
+  - src/server/geminiClient.ts
+  - src/server/dagEngine.ts
+  - src/server/__tests__/geminiClient.test.ts
+  - src/server/__tests__/dagEngine.test.ts
+bug_summary: "Gemini graceful degradation fails when no API key is set. Specifically, `geminiClient.ts` returns `undefined` instead of a structured skip indicator, and `dagEngine.ts` fails to check for this indicator, causing `gemini_offload` steps to fail instead of skip."
+reproduction_summary: "Unset `GEMINI_API_KEY` and clear any override. Call `callGemini` and observe it returns `undefined`. Run a DAG with a `gemini_offload` step and observe it fails instead of skipping. Two specific tests are failing."
+severity_assessment: "Major. Core functionality related to external API integration (Gemini) does not degrade gracefully, leading to outright failures in workflows instead of expected skips. This indicates a robustness issue and impacts user experience for configurations without an API key."
+suggested_investigation_areas:
+  - "Implement early API key check in `geminiClient.ts`'s `callGemini()` to return `{ skipped: true, reason: 'no_api_key' }`."
+  - "Modify `dagEngine.ts`'s `executeGeminiOffload()` to check for `response.skipped` and update `stepState.status` to 'skipped' with the appropriate reason."
+  - "Update `src/server/__tests__/geminiClient.test.ts` to assert for the `skipped:true` response."
+  - "Update `src/server/__tests__/dagEngine.test.ts` to assert for `status === 'skipped'` for offload steps when no API key is present."
+```

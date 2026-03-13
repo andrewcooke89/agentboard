@@ -1,0 +1,52 @@
+id: WU-013
+title: "History & Logs Tabs"
+description: |
+  Implement CronHistoryTab: scrollable vertical timeline newest-first, each entry
+  with timestamp, exit code badge, duration, trigger type. Expandable log snippet
+  per entry. Consecutive failure streaks with red left-border band and count.
+  Duration trend sparkline chart (last 20 runs). Default 50 runs with "Load more"
+  pagination. Implement CronLogsTab: log viewer with line display, live tail
+  toggle (auto-scroll + 2s poll, green "Live" indicator), in-log search (Cmd+F /
+  Ctrl+F) with highlighting, "Copy all" button, toggleable line numbers.
+files:
+  - path: src/client/components/cron/CronHistoryTab.tsx
+    action: modify
+    description: "Implement history timeline with sparkline and pagination"
+  - path: src/client/components/cron/CronLogsTab.tsx
+    action: modify
+    description: "Implement log viewer with live tail and search"
+dependencies:
+  - WU-011
+requirements:
+  - REQ-26
+  - REQ-27
+  - REQ-28
+  - REQ-29
+  - REQ-30
+  - REQ-31
+  - REQ-32
+  - REQ-33
+acceptance_criteria:
+  - type: unit_test
+    description: "History timeline shows entries newest-first"
+  - type: unit_test
+    description: "Exit code badges colored (green 0, red non-zero)"
+  - type: unit_test
+    description: "Log snippet expandable per entry"
+  - type: unit_test
+    description: "Failure streaks highlighted with red border and count"
+  - type: unit_test
+    description: "Sparkline chart renders last 20 runs"
+  - type: unit_test
+    description: "Load more pagination fetches next 50 runs"
+  - type: unit_test
+    description: "Live tail auto-scrolls with 2s poll interval"
+  - type: unit_test
+    description: "In-log search highlights matches"
+  - type: unit_test
+    description: "Copy all copies log content to clipboard"
+interfaces:
+  exports:
+    - "CronHistoryTab component"
+    - "CronLogsTab component"
+estimated_loc: 250

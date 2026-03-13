@@ -1,0 +1,73 @@
+id: WU-002
+title: "CronAi Store & Settings Extensions"
+description: |
+  Create the CronAi Zustand store for managing AI drawer state, proposals, and session
+  status. Extend the existing settingsStore with 4 new AI-specific settings. The store
+  follows the same persist pattern as cronStore (partial persistence of UI prefs only).
+
+layer: 1
+dependencies:
+  - WU-001
+
+files:
+  new:
+    - path: src/client/stores/cronAiStore.ts
+      description: |
+        Zustand store with persist middleware. State includes:
+        - drawerOpen (boolean, default false)
+        - drawerWidth (number, default 480, range 360-640)
+        - sessionStatus ('offline' | 'starting' | 'working' | 'waiting')
+        - sessionWindowId (string | null)
+        - proposals (CronAiProposal[])
+        - pendingProposalCount (number, derived)
+        - autoStartSession (boolean, default true)
+        Actions: toggleDrawer, setDrawerWidth, setSessionStatus, setSessionWindowId,
+        addProposal, resolveProposal, expireProposal, clearProposals,
+        handleCronAiProposal (WS handler), handleCronAiProposalResolved (WS handler),
+        handleCronAiSessionStatus (WS handler), handleCronAiMcpStatus (WS handler).
+        Persisted keys: drawerWidth, autoStartSession.
+  modified:
+    - path: src/client/stores/settingsStore.ts
+      changes:
+        - "Add cronAiEnabled: boolean (default true) + setCronAiEnabled setter"
+        - "Add cronAiDrawerWidth: number (default 480) + setCronAiDrawerWidth setter"
+        - "Add cronAiAutoGreet: boolean (default true) + setCronAiAutoGreet setter"
+        - "Add cronAiProposalTimeout: number (default 300000) + setCronAiProposalTimeout setter"
+
+cross_wu_interfaces:
+  exports:
+    - "useCronAiStore — used by WU-009 (drawer), WU-011 (card), WU-012 (App.tsx dispatch)"
+    - "useCronAiStore.getState().handleCronAi* — WS message handlers called from WU-012 (App.tsx)"
+    - "useSettingsStore cronAi* fields — used by WU-009 (drawer width), WU-012 (cronAiEnabled)"
+
+acceptance_criteria:
+  - id: AC-002-1
+    type: behavioral
+    description: "cronAiStore initializes with drawerOpen=false, sessionStatus='offline', proposals=[], drawerWidth=480."
+  - id: AC-002-2
+    type: behavioral
+    description: "toggleDrawer() flips drawerOpen. setDrawerWidth() clamps to 360-640 range."
+  - id: AC-002-3
+    type: behavioral
+    description: "addProposal() appends to proposals array. resolveProposal(id, status, feedback?) updates matching proposal. expireProposal(id) sets status to 'expired'."
+  - id: AC-002-4
+    type: behavioral
+    description: "pendingProposalCount returns count of proposals with status='pending'."
+  - id: AC-002-5
+    type: behavioral
+    description: "drawerWidth and autoStartSession persist across page reloads via Zustand persist middleware."
+  - id: AC-002-6
+    type: behavioral
+    description: "settingsStore has cronAiEnabled (default true), cronAiDrawerWidth (default 480), cronAiAutoGreet (default true), cronAiProposalTimeout (default 300000) with corresponding setters."
+
+requirements_covered:
+  - REQ-02   # drawer width persistence
+  - REQ-49   # proposals persisted in store (session-scoped)
+  - REQ-50   # AI settings in settings store
+  - REQ-51   # cronAiEnabled controls button visibility
+
+tests:
+  - TEST-ID: cronAiStore-unit
+    description: "Unit tests for store initialization, drawer toggle, proposal lifecycle (add, resolve, expire), width clamping, persistence."
+  - TEST-ID: settingsStore-ai
+    description: "Unit tests for new AI settings defaults and setters."

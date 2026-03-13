@@ -1,0 +1,40 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  bun run typecheck returns 5 specific errors in CronAi component test files:
+
+  1. src/client/components/cron/__tests__/CronAiDrawer.test.tsx(134,25): error TS2677: A type predicate's type must be assignable to its parameter's type.
+     Type 'string | number' is not assignable to type 'string | ReactTestInstance'.
+     Type 'number' is not assignable to type 'string | ReactTestInstance'.
+
+  2. src/client/components/cron/__tests__/CronAiProposalCard.test.tsx(117,25): error TS2677: A type predicate's type must be assignable to its parameter's type.
+     Type 'string | number' is not assignable to type 'string | ReactTestInstance'.
+     Type 'number' is not assignable to type 'string | ReactTestInstance'.
+
+  3. src/client/components/cron/__tests__/CronAiProposalCard.test.tsx(130,25): error TS2677: A type predicate's type must be assignable to its parameter's type.
+     Type 'string | number' is not assignable to type 'string | ReactTestInstance'.
+     Type 'number' is not assignable to type 'string | ReactTestInstance'.
+
+  4. src/client/components/cron/__tests__/CronAiStatusBar.test.tsx(59,25): error TS2677: A type predicate's type must be assignable to its parameter's type.
+     Type 'string | number' is not assignable to type 'string | ReactTestInstance'.
+     Type 'number' is not assignable to type 'string | ReactTestInstance'.
+
+  5. src/client/components/cron/__tests__/CronAiTerminal.test.tsx(156,9): error TS2322: Type '(type: string, handler: (msg: Record<string, unknown>) => void) => () => void' is not assignable to type 'SubscribeServerMessage'.
+     Target signature provides too few arguments. Expected 2 or more, but got 1.
+
+notes: |
+  Bug reproduction successful. All 5 errors specified in the bug spec are confirmed present:
+
+  - 4x TS2677 errors: Type predicate `c is string | number` fails because `number` is not
+    assignable to `ReactTestInstance | string` (the actual type of ReactTestInstance.children).
+
+  - 1x TS2322 error: Subscribe mock uses `(type, handler)` signature but SubscribeServerMessage
+    expects a single `(listener)` parameter.
+
+  Note: The codebase has many other TypeScript errors beyond these 5 (in other test files),
+  but those are outside the scope of this specific bug report which focuses only on the
+  CronAi component tests.
+
+  Root cause analysis and fix strategy from the bug spec appear accurate:
+  1. Change `c is string | number` to `c is string` in the filter predicates
+  2. Rewrite subscribe stub to single-argument signature matching SubscribeServerMessage

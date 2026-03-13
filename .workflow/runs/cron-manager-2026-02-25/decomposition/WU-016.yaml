@@ -1,0 +1,42 @@
+id: WU-016
+title: "Bulk Operations"
+description: |
+  Implement CronBulkActions: floating bottom bar shown when items selected,
+  displaying selected count, Pause All, Resume All, Delete All, Deselect buttons.
+  Integrate bulk selection into CronJobList: checkboxes visible on hover or
+  "Select" toggle mode, Shift+click for range selection. Implement right-click
+  group header context menu: "Pause all", "Resume all", "Select all in group".
+  Bulk operations show progress via cron-bulk-operation-progress messages.
+files:
+  - path: src/client/components/cron/CronBulkActions.tsx
+    action: modify
+    description: "Implement floating bulk action bar"
+  - path: src/client/components/cron/CronJobList.tsx
+    action: modify
+    description: "Add bulk selection mode, checkboxes, context menu"
+dependencies:
+  - WU-010
+requirements:
+  - REQ-19
+  - REQ-20
+  - REQ-54
+  - REQ-55
+  - REQ-56
+  - REQ-57
+acceptance_criteria:
+  - type: unit_test
+    description: "Floating bar appears when items selected"
+  - type: unit_test
+    description: "Shift+click selects range of jobs"
+  - type: unit_test
+    description: "Bulk Pause/Resume sends correct WS messages"
+  - type: unit_test
+    description: "Bulk Delete shows confirmation listing all job names"
+  - type: unit_test
+    description: "Progress bar updates from cron-bulk-operation-progress"
+  - type: unit_test
+    description: "Right-click group context menu works"
+interfaces:
+  exports:
+    - "CronBulkActions component"
+estimated_loc: 150

@@ -1,0 +1,41 @@
+```yaml
+affected_areas:
+  - "Cron Manager subsystem"
+  - "API handlers for job retrieval (cronAiService.ts)"
+  - "Scheduled tasks (orphan cleanup, history pruning)"
+  - "Job caching and health enrichment logic (cronManager.ts)"
+  - "Application startup and WebSocket client connection lifecycle (index.ts, cronHandlers.ts)"
+  - "Database pruning functions (db.ts) (unreachable)"
+
+bug_summary: |
+  Three critical issues in the Cron Manager:
+  1.  **Health Computation Failure**: Primary API handlers (`handleGetJobs`, `handleSearchJobs`, `handleGetJobDetail`) in `cronAiService.ts` bypass the health-enriched job cache, always returning jobs with `health: 'unknown'`. Other health-related handlers also return zero counts when the cache is empty.
+  2.  **Orphan Cleanup Gated**: The `cleanOrphanedPrefs()` task is scheduled but only executes if `cronManager.jobCache.size > 0`. This cache is only populated after the first WebSocket client connects, meaning cleanup never runs in a headless environment.
+  3.  **History Pruning Gated**: Similarly, `pruneRunHistory()` is blocked by the same `jobCache.size > 0` guard, preventing essential history management from running without a connected WebSocket client.
+  (Note: The hardcoded poll interval issue has been fixed.)
+
+reproduction_summary:
+  - Start the server without opening the web UI (no WebSocket client connection).
+  - Observe that scheduled `cron_cleanup_initial` logs do not appear after 30+ seconds, indicating cleanup/pruning did not run.
+  - Connect a WebSocket client and call `handleGetJobs`; observe jobs returned with `health: 'unknown'`.
+  - Call `handleGetHealth` before the first polling cycle completes; observe all health counts are zero.
+  - Even after polling starts, `handleGetJobs` and `handleSearchJobs` still return unenriched data.
+
+severity_assessment: |
+  **Major**. This bug significantly impacts the reliability and functionality of the Cron Manager subsystem.
+  -   Users cannot accurately determine job health via primary API endpoints.
+  -   Critical maintenance tasks like orphan cleanup and history pruning are not executed reliably, potentially leading to stale data, resource accumulation, and performance degradation over time, especially in environments without continuous UI interaction.
+  -   The system's operational state is misrepresented, hindering monitoring and troubleshooting.
+
+suggested_investigation_areas:
+  - **`src/server/cronAiService.ts`**:
+    -   Modify `handleGetJobs` (line 293), `handleSearchJobs` (line 302), and `handleGetJobDetail` (line 313) to read from `jobCache` (if populated) and ensure `enrichAllJobsWithHealth()` is called for data returned from `discoverAllJobs()` if the cache is empty or bypassed.
+    -   Review `handleGetHealth`, `handleGetFailingJobs`, `handleGetScheduleConflicts`, `handleGetScheduleLoad` to ensure they consistently use the enriched cache.
+  - **`src/server/index.ts`**:
+    -   Address the `jobCache.size > 0` guards (lines 319, 329) for `cleanOrphanedPrefs()` and `pruneRunHistory()` (lines 321, 331). These scheduled tasks should run independently of the cache state or WS client connections.
+    -   Consider if `cleanOrphanedPrefs` or `pruneRunHistory` need their own lightweight job discovery mechanism if they truly require job data, or if they can operate purely on DB state. The specification notes `pruneRunHistory` does not need the cache.
+  - **`src/server/cronManager.ts`**:
+    -   Ensure `enrichAllJobsWithHealth()` is invoked consistently for all paths that return job data, not just the polling loop.
+  - **`src/server/handlers/cronHandlers.ts`**:
+    -   Understand the `startPollingLifecycle()` trigger and its implications for cache population at startup vs. on-demand.
+```

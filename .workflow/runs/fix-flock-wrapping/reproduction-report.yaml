@@ -1,0 +1,75 @@
+verdict: pass
+reproduced: true
+
+reproduction_output: |
+  == Test File 1: cronFlockWrapping.test.ts ==
+  Ran 6 tests, 6 failures (0 pass)
+
+  Failures in 'BUG-3: flock wrapping for OS-level concurrent-run guard':
+  1. createCronJob wraps command with flock for mutual exclusion
+     Expected: /flock\s+-n\s+\/tmp\/agentboard-cron-[\w-]+\.lock/
+     Received: "\n0 9 * * * /usr/local/bin/backup.sh # daily backup\n"
+
+  2. flock lock file uses consistent jobId-based naming
+     Expected to contain: "1f1e2402ceae89cc"
+     Received: "\n0 9 * * * /usr/local/bin/backup.sh # daily backup\n"
+
+  3. flock uses non-blocking mode (-n flag)
+     Expected: /flock\s+-n\b/
+     Received: "\n*/5 * * * * /usr/local/bin/check-health.sh # health check\n"
+
+  4. flock wrapping preserves original command as the wrapped target
+     Expected: /flock\s+-n\s+\/tmp\/[\w.-]+\s+\/usr\/bin\/docker/
+     Received: "\n0 0 * * * /usr/bin/docker run --rm my-backup-image # docker backup\n"
+
+  5. flock lock files use /tmp directory for cross-process visibility
+     Expected to contain: "/tmp/agentboard-cron-"
+     Received: "\n@hourly /usr/local/bin/hourly-task.sh\n"
+
+  6. multiple jobs get different lock files
+     Expected lock paths to be different, got: null (no lock paths found)
+
+  == Test File 2: cronJobCreationRegression.test.ts ==
+  Ran 11 tests, 5 failures (6 pass)
+
+  Failures in 'Bug 3: createCronJob should wrap commands with flock':
+  1. crontab entry includes flock wrapping for concurrent-run protection
+     Expected to contain: "flock"
+     Received: "# existing\n*/5 * * * * /usr/bin/long-running-task # runs every 5 min\n"
+
+  2. flock uses non-blocking mode (-n flag) for fail-fast behavior
+     Expected: /flock\s+-n/
+     Received: "# existing\n0 * * * * /usr/bin/task\n"
+
+  == Source Code Inspection (cronManager.ts:1029-1040) ==
+  async createCronJob(config: CronCreateConfig): Promise<string> {
+    this.validateCronCommand(config.command)
+
+    const crontab = await this.readCrontab()
+    const comment = config.comment ? ` # ${config.comment}` : ''
+    const newLine = `${config.schedule} ${config.command}${comment}`  // <-- NO FLOCK
+    const updated = crontab.endsWith('\n') ? crontab + newLine + '\n' : crontab + '\n' + newLine + '\n'
+    await this.writeCrontab(updated)
+
+    const name = this.deriveJobName(config.command)  // <-- computed AFTER line built
+    return this.generateJobId('user-crontab', name, config.command)  // <-- only used for return
+  }
+
+notes: |
+  Bug consistently reproducible. All 8 flock-related tests fail across both test files.
+
+  Root cause confirmed: In createCronJob(), the crontab line is built at line 1034
+  without any flock wrapping. The name and jobId are computed at lines 1038-1039
+  but only used for the return value, not for lock file construction.
+
+  The fix requires:
+  1. Move name/jobId computation BEFORE building the crontab line
+  2. Construct lock file path: /tmp/agentboard-cron-${jobId}.lock
+  3. Wrap command: flock -n ${lockFile} ${config.command}
+  4. Use wrapped command in the newLine construction
+
+  Test output shows commands are written to crontab as bare commands:
+    "0 9 * * * /usr/local/bin/backup.sh # daily backup"
+
+  Expected format with fix:
+    "0 9 * * * flock -n /tmp/agentboard-cron-1f1e2402ceae89cc.lock /usr/local/bin/backup.sh # daily backup"

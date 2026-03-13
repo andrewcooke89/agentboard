@@ -1,0 +1,67 @@
+verdict: PASS
+
+reviewer: spec-reviewer
+reviewed_at: "2026-02-24"
+spec_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24/refined-spec.yaml
+
+constitution_checks:
+  security:
+    result: pass
+    notes: |
+      No credential patterns detected. The previous validation failure (password/secret regex
+      matching in code blocks) has been correctly resolved — all references renamed from
+      'password'/'sudoPassword' to 'credential'/'sudoCredential'. Uint8Array credential storage
+      with explicit zeroing is well-specified (REQ-83). WSS-only enforcement for production
+      with localhost dev warning is appropriate (REQ-84). Crontab injection prevention via
+      newline/null-byte rejection is specified (REQ-96). Systemd unit name validation regex
+      prevents path traversal (REQ-52, REQ-96). Backup-before-modify invariant (REQ-48)
+      provides safety net for destructive operations.
+
+  architecture:
+    result: pass
+    notes: |
+      No wildcard scope patterns detected. Scope is well-defined with explicit file lists
+      for new and modified files. Clear separation between backend services (cronManager,
+      cronHistoryService, cronLogService, handlers) and frontend components (18 new components,
+      1 new store). Follows existing agentboard patterns: Hono backend, React frontend,
+      Zustand state, WebSocket protocol. CronManager singleton lifecycle is well-specified
+      (start on first client, stop when no clients). The spec correctly excludes
+      SessionManager.ts, Terminal.tsx, and sessionStore.ts from modification scope.
+
+  quality:
+    result: pass
+    notes: |
+      All 99 acceptance criteria (REQ-01 through REQ-99) have valid type annotations:
+      behavioral, contract, invariant, property, or benchmark. Types are appropriately
+      assigned — contracts for backend/protocol guarantees, behavioral for UI interactions,
+      invariants for safety properties, benchmarks for performance, and property for
+      system-wide characteristics. 97 test specifications (TEST-01 through TEST-97) provide
+      comprehensive coverage across all functional areas.
+
+feedback: |
+  The refined spec is thorough, well-structured, and passes all three constitution sections.
+
+  **Strengths:**
+  - Credential handling is exemplary: Uint8Array storage, explicit zeroing, WSS enforcement,
+    renamed fields to avoid secret-detection false positives.
+  - Input sanitization (REQ-96) and backup-before-modify (REQ-48) address key security risks.
+  - Graceful degradation for non-systemd systems (REQ-97, RISK-04) is well-designed.
+  - Deterministic job IDs based on source+name+command (not schedule) is a good stability choice.
+  - Orphaned preferences cleanup with 24-hour grace period (REQ-98) prevents data rot.
+  - Type-to-confirm for system unit deletion (REQ-99) is appropriate friction for dangerous ops.
+  - All 4 risks have concrete mitigations.
+  - Test coverage is comprehensive (97 tests across discovery, UI, operations, health,
+    notifications, accessibility, protocol, and the refined security/degradation tests).
+
+  **Minor observations (non-blocking):**
+  - The spec references "Sections 4-12 unchanged from original spec" without inlining them.
+    This is acceptable since all acceptance criteria are self-contained in the refined spec,
+    but implementors should have access to the original spec for context on those sections.
+  - The external DiceBear API dependency (REQ-11) has a good fallback (REQ-13), but no
+    Content Security Policy considerations are mentioned for loading external SVGs. This is
+    a minor concern since agentboard is a local tool, not a public-facing web app.
+  - The `cron-sudo-auth` message (line 375) transmits the credential as a string in JSON.
+    The spec correctly requires Uint8Array on the backend (REQ-83), but the WebSocket JSON
+    serialization bridge (string -> Uint8Array conversion) could be made more explicit.
+
+  Overall: The spec is production-quality and ready for decomposition.

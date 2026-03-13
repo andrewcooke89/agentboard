@@ -1,0 +1,52 @@
+title: "TypeScript errors in cron test files: missing tags field and private member access"
+
+description: |
+  Two test files fail TypeScript type checking due to two categories of errors:
+
+  1. Missing required `tags` field in CronCreateConfig objects.
+     The `CronCreateConfig` interface (src/shared/types.ts:820-825) requires four fields:
+     `command`, `schedule`, `comment`, and `tags: string[]`. Both test files construct
+     CronCreateConfig objects without the `tags` property, causing TS2741 errors.
+
+  2. Accessing private members of CronManager.
+     `readCrontab` and `writeCrontab` are declared `private` in CronManager
+     (src/server/cronManager.ts:752, 760). The duplicate-detection test directly
+     reassigns these as properties on the instance, causing TS2341 errors. The
+     flock-wrapping test extends CronManager and attempts to override them with
+     `protected`, which also fails because a subclass cannot widen a private member.
+
+  Fix approach:
+  - Add `tags: []` to every CronCreateConfig literal in both test files.
+  - In cronDuplicateDetection.test.ts, cast to `(instance as any)` for private access
+    or restructure to use a testable subclass pattern.
+  - In cronFlockWrapping.test.ts, either change the base class members to `protected`
+    or use the `as any` cast pattern.
+  - Run `bun run typecheck` to verify zero errors.
+
+reproduction:
+  steps:
+    - "Clone the repository and install dependencies with `bun install`"
+    - "Run `bun run typecheck` from the project root"
+    - "Observe TypeScript errors in src/server/__tests__/cronDuplicateDetection.test.ts and src/server/__tests__/cronFlockWrapping.test.ts"
+  environment: "Bun 1.x, TypeScript 5.x, any OS"
+
+expected: "`bun run typecheck` passes with zero errors in the cron test files"
+
+actual: |
+  TypeScript reports errors in both files:
+  - TS2741: Property 'tags' is missing in type '{ command: string; schedule: string; comment: string; }' but required in type 'CronCreateConfig'.
+  - TS2341: Property 'readCrontab' is private and only accessible within class 'CronManager'.
+  - TS2341: Property 'writeCrontab' is private and only accessible within class 'CronManager'.
+  - TS2415: Class 'TestableCronManager' incorrectly extends base class 'CronManager' (cannot override private members).
+
+affected_files:
+  - "src/server/__tests__/cronDuplicateDetection.test.ts"
+  - "src/server/__tests__/cronFlockWrapping.test.ts"
+  - "src/shared/types.ts"
+  - "src/server/cronManager.ts"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

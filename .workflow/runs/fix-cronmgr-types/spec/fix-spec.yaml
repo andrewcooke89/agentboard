@@ -1,0 +1,35 @@
+verdict: pass
+title: "Fix: CronManager avgDuration/lastRunDuration use undefined instead of null"
+description: |
+  Change the two ternary fallback values for avgDuration and lastRunDuration
+  from `undefined` to `null` in the listJobs() method of cronManager.ts.
+  This aligns the implementation with the CronJob interface which defines
+  both fields as `number | null`, resolving two TS2322 type errors.
+
+changes:
+  - file: "src/server/cronManager.ts"
+    description: |
+      In the listJobs() method (around lines 564-567), change the fallback
+      values in two ternary expressions from `undefined` to `null`:
+
+        Before:
+          const avgDuration = durations.length > 0
+            ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+            : undefined
+          const lastRunDuration = durations.length > 0 ? durations[0] : undefined
+
+        After:
+          const avgDuration = durations.length > 0
+            ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+            : null
+          const lastRunDuration = durations.length > 0 ? durations[0] : null
+    change_type: modify
+
+acceptance_criteria:
+  - "`bun run typecheck` passes with zero errors in src/server/cronManager.ts"
+  - "avgDuration falls back to `null` (not `undefined`) when durations array is empty"
+  - "lastRunDuration falls back to `null` (not `undefined`) when durations array is empty"
+  - "`bun run test` continues to pass with no regressions"
+
+regression_risks:
+  - "Minimal: changing undefined to null has no functional impact — both are falsy, and JSON serialization already converts undefined to null. All consumers handle number | null per the CronJob interface."

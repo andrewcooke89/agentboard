@@ -1,0 +1,42 @@
+verdict: pass
+
+test_files_created:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts (existing)"
+
+test_count: 3
+
+description: |
+  The regression tests already exist in webSocketSendReturnBoolean.test.ts
+  and correctly fail with the current buggy code.
+
+  Tests that FAIL with the bug (readyState initialized to OPEN):
+  1. "FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)"
+     - Expects readyState=0 after construction
+     - Gets readyState=1 due to buggy initialization
+
+  2. "FakeWebSocket.readyState transitions to OPEN only after triggerOpen()"
+     - Expects readyState=0 initially, then 1 after triggerOpen()
+     - Gets readyState=1 immediately due to buggy initialization
+
+  3. "send() returns false before connection is established"
+     - Expects send() to return false when socket is connecting
+     - Gets true because mock already reports readyState=OPEN
+
+  Tests that PASS (unaffected by the bug):
+  - "send() returns true when socket is open" (calls triggerOpen() first)
+  - "send() returns false when socket is closed" (calls triggerOpen() then sets CLOSED)
+  - "send() returns false when manager has no WebSocket instance"
+
+  The fix (changing readyState init from OPEN to CONNECTING) will make
+  all 6 tests pass without any test modifications needed.
+
+run_command: "bun test src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+
+current_results: |
+  3 pass
+  3 fail
+  8 expect() calls
+
+expected_results_after_fix: |
+  6 pass
+  0 fail

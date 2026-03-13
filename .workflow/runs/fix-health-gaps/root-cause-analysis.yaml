@@ -1,0 +1,207 @@
+# Root Cause Analysis: Health computation unwired, poll interval hardcoded,
+#                      orphan cleanup and history pruning not scheduled
+# Generated: 2026-02-27
+
+verdict: pass
+
+bugs:
+  # ─── Bug 1: Health computation unwired ──────────────────────────────────────
+
+  - id: bug-1
+    title: "Health computation unwired from polling loop; health endpoint bypasses enriched cache"
+    root_cause: |
+      Two separate wiring gaps prevent health data from reaching consumers:
+
+      (a) startPolling() calls discoverAllJobs() → computeDiff() but never calls
+          computeHealth(). Health enrichment only happens in cronHandlers.ts:enrichJobsWithHealth()
+          which is invoked for diffed jobs via the onJobsChanged callback. Unchanged jobs never
+          get health recomputed even when their run history changes.
+
+      (b) handleGetHealth() in cronAiService.ts:349 calls cm.discoverAllJobs() directly,
+          which returns raw jobs with health='unknown' (the default from parseCrontabLines).
+          It never reads from cronManager.jobCache where enriched jobs live. Result: the
+          health endpoint always returns { healthy: 0, warning: 0, critical: 0 }.
+
+      Additionally, computeDiff() at line 583 compares cached (enriched) jobs against newly
+      discovered (raw) jobs using JSON.stringify. Since enriched jobs have extra fields
+      (health, avgDuration, lastRunDuration, consecutiveFailures) that raw jobs lack, every
+      job appears "updated" on every poll tick, causing spurious cron-job-update broadcasts
+      every 5 seconds. The cache is then overwritten with raw jobs (line 596:
+      this.jobCache = newJobMap), losing enrichment, and the cycle repeats.
+
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "531-548"
+      function: "startPolling"
+    secondary_locations:
+      - file: "src/server/cronAiService.ts"
+        line_range: "349-359"
+        function: "handleGetHealth"
+      - file: "src/server/cronManager.ts"
+        line_range: "565-599"
+        function: "computeDiff"
+      - file: "src/server/handlers/cronHandlers.ts"
+        line_range: "70-89"
+        function: "onJobsChanged callback (enrichJobsWithHealth)"
+    mechanism: |
+      Missing call + cache bypass. startPolling() never invokes computeHealth(), so the
+      polling loop produces raw unenriched jobs. computeDiff() then compares enriched cache
+      entries (from initial startPollingLifecycle enrichment) against raw discovered jobs,
+      finding spurious differences every tick. The cache is overwritten with raw jobs,
+      destroying enrichment. handleGetHealth() compounds this by calling discoverAllJobs()
+      directly instead of reading the enriched jobCache.
+    fix_approach: |
+      1. In startPolling(), after discoverAllJobs(), call enrichJobsWithHealth() on ALL
+         discovered jobs before passing them to computeDiff(). This ensures the cache
+         always contains enriched data and diff comparisons are apples-to-apples.
+      2. In handleGetHealth() (and handleGetFailingJobs, handleGetScheduleConflicts,
+         handleGetScheduleLoad), read from cronManager.jobCache instead of calling
+         discoverAllJobs(). Fall back to discoverAllJobs() only if cache is empty.
+      3. computeDiff() comparison will then be stable because both sides are enriched.
+    risk_assessment: |
+      Low risk. The enrichment call adds DB reads per tick (one getRunHistory per job),
+      which may increase load. Mitigate by checking if run history has changed since last
+      enrichment before recomputing. Reading from jobCache in cronAiService is safe since
+      the cache is populated before any client can call the endpoint.
+
+  # ─── Bug 2: Poll interval hardcoded ─────────────────────────────────────────
+
+  - id: bug-2
+    title: "Cron poll interval hardcoded to 5000ms with no env var configuration"
+    root_cause: |
+      cronHandlers.ts:138 calls cronManager.startPolling(5000) with a hardcoded integer
+      literal. config.ts has no CRON_POLL_INTERVAL_MS entry. Every other poll interval in
+      the system (TASK_POLL_INTERVAL_MS at config.ts:101, WORKFLOW_POLL_INTERVAL_MS at
+      config.ts:156) follows a consistent env-var-driven pattern, but cron polling was
+      never wired into this pattern. The client-side cronPollInterval setting in
+      settingsStore.ts is stored in localStorage and never sent to the server.
+    location:
+      file: "src/server/handlers/cronHandlers.ts"
+      line_range: "138-138"
+      function: "startPollingLifecycle"
+    secondary_locations:
+      - file: "src/server/config.ts"
+        line_range: "101-104"
+        function: "N/A (missing CRON_POLL_INTERVAL_MS alongside existing *_POLL_INTERVAL_MS vars)"
+    mechanism: |
+      Missing configuration. Magic number 5000 is an integer literal with no override
+      mechanism. Follows a different pattern from every other poll interval in the codebase.
+    fix_approach: |
+      1. Add CRON_POLL_INTERVAL_MS to config.ts following the same pattern as
+         TASK_POLL_INTERVAL_MS (env var with sensible default of 5000ms).
+      2. In cronHandlers.ts:138, replace the literal 5000 with config.cronPollIntervalMs.
+    risk_assessment: |
+      Minimal risk. Purely additive config change. Default value of 5000ms preserves
+      current behavior. Only risk is a user setting an extremely low value causing
+      excessive polling; document minimum recommended value.
+
+  # ─── Bug 3: Orphan cleanup not effective ────────────────────────────────────
+
+  - id: bug-3
+    title: "Orphan cleanup silently no-ops because setDb() is deferred until first WS client connects"
+    root_cause: |
+      CronManager is instantiated at index.ts:116 with this.db = null (no db argument).
+      setDb() is only called at cronHandlers.ts:126 inside startPollingLifecycle(), which
+      only runs when the first WebSocket client connects (cronHandlers.ts:160-162).
+
+      The cleanup timer at index.ts:317 fires after 30 seconds. If no WS client has
+      connected by then, cronManager.db is still null. cleanOrphanedPrefs() at
+      cronManager.ts:668-669 has the guard `if (!this.db) return` and silently exits.
+
+      The periodic 24h cleanup (index.ts:327-333) has the same vulnerability: it also
+      checks jobCache.size > 0, which is empty until a client connects and triggers
+      startPollingLifecycle(). Both the null-db guard AND the empty-cache guard conspire
+      to make cleanup a permanent no-op in headless/API-only deployments.
+    location:
+      file: "src/server/index.ts"
+      line_range: "116-116"
+      function: "N/A (CronManager instantiation — db not injected)"
+    secondary_locations:
+      - file: "src/server/handlers/cronHandlers.ts"
+        line_range: "125-126"
+        function: "startPollingLifecycle (where setDb is actually called, too late)"
+      - file: "src/server/cronManager.ts"
+        line_range: "668-671"
+        function: "cleanOrphanedPrefs (null guard)"
+      - file: "src/server/index.ts"
+        line_range: "317-323"
+        function: "N/A (30s cleanup setTimeout)"
+    mechanism: |
+      Timing mismatch. DB injection is tied to client connection lifecycle (lazy) but
+      cleanup timers are tied to server startup lifecycle (eager). The eager timers fire
+      before the lazy initialization completes, and null guards cause silent early returns.
+    fix_approach: |
+      Call cronManager.setDb(db.db) immediately after instantiation at index.ts:116,
+      e.g. at line 117. This ensures the db is available when cleanup timers fire.
+      The setDb() call in startPollingLifecycle() becomes a harmless no-op (it just
+      reassigns the same reference).
+    risk_assessment: |
+      Very low risk. setDb() is a simple assignment (this.db = db). Calling it early
+      has no side effects. The db instance (db.db) is already initialized at that point
+      in index.ts since it's used for cronHistoryService and cronLogService on lines
+      117-118. The only consideration is ensuring the cleanup timer also handles the
+      case where jobCache is empty (no jobs discovered yet), which it already does via
+      the jobCache.size > 0 guard at index.ts:318.
+
+  # ─── Bug 4: History pruning not effective ───────────────────────────────────
+
+  - id: bug-4
+    title: "History pruning silently no-ops due to identical null-db timing issue"
+    root_cause: |
+      Identical to Bug 3. pruneRunHistory() at cronManager.ts:674-675 has the same
+      `if (!this.db) return` guard. It is called from the same 30s setTimeout and 24h
+      setInterval in index.ts:320 and 330. The db.ts SQL (pruneDbRunHistory) with the
+      90-day DELETE and 500-record-per-job cap via ROW_NUMBER() window function is
+      correctly implemented but unreachable due to the null db.
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "674-677"
+      function: "pruneRunHistory"
+    secondary_locations:
+      - file: "src/server/index.ts"
+        line_range: "320-320"
+        function: "N/A (pruneRunHistory called from 30s timer)"
+    mechanism: |
+      Same as Bug 3: timing mismatch between eager timer and lazy DB injection.
+    fix_approach: |
+      Same fix as Bug 3 — calling setDb() at server startup resolves both bugs.
+      No additional changes needed for pruneRunHistory itself.
+    risk_assessment: |
+      Same as Bug 3 — very low risk.
+
+# ─── Overall Summary ──────────────────────────────────────────────────────────
+
+root_cause: |
+  Four wiring gaps in the Cron Manager subsystem:
+  (1) startPolling() never calls computeHealth(), and computeDiff() compares enriched
+      cache against raw discovery causing spurious diffs every tick. handleGetHealth()
+      bypasses the enriched cache entirely.
+  (2) Cron poll interval is a hardcoded magic number 5000, inconsistent with the
+      env-var-driven pattern used by all other poll intervals.
+  (3-4) cronManager.setDb() is deferred to first WS client connection, but cleanup/prune
+      timers fire at server startup when db is still null, causing silent no-ops.
+
+location:
+  file: "src/server/cronManager.ts"
+  line_range: "531-548"
+  function: "startPolling"
+
+mechanism: |
+  Missing wiring + timing mismatch. The polling loop lacks health enrichment, the health
+  endpoint reads raw data instead of cached data, a config value is hardcoded instead of
+  env-var-driven, and DB injection happens on the wrong lifecycle trigger (client connection
+  instead of server startup).
+
+fix_approach: |
+  1. Enrich all discovered jobs with health data inside the polling loop before computing
+     diffs, so cache always contains enriched data and comparisons are stable.
+  2. Make cronAiService read from jobCache instead of calling discoverAllJobs().
+  3. Add CRON_POLL_INTERVAL_MS to config.ts; use it in cronHandlers.ts.
+  4. Call cronManager.setDb(db.db) at server startup (index.ts:117) instead of deferring
+     to first WS client connection. This single change fixes both Bug 3 and Bug 4.
+
+risk_assessment: |
+  Overall low risk. Bug 1 fix adds per-tick DB reads for health enrichment (mitigate
+  with caching). Bug 2 fix is purely additive config. Bugs 3-4 fix is a one-line
+  reorder of an existing call. All fixes are backwards-compatible — default behavior
+  is preserved, only wiring is corrected.

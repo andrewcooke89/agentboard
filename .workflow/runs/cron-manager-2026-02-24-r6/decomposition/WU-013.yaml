@@ -1,0 +1,92 @@
+id: WU-013
+title: "History & Logs Tabs"
+description: |
+  Implement the History tab with scrollable run timeline, expandable log snippets,
+  failure streak highlighting, duration sparkline chart, and pagination. Implement the
+  Logs tab with unified log viewer, live tail mode, search within logs, copy all, and
+  line number toggling.
+
+dependencies: [WU-012]
+
+files:
+  created:
+    - path: src/client/components/cron/CronHistoryTab.tsx
+      changes: |
+        - Scrollable vertical timeline of past runs, newest first
+        - Each entry: timestamp, exit code badge (green=0, red=non-zero), duration, trigger type badge
+        - Expandable entries: click to show logSnippet (~500 chars)
+        - Consecutive failure streaks: red left-border band
+        - Current consecutive failure count at top of tab if > 0
+        - Duration trend sparkline chart at top (last 20 runs)
+        - Default: show last 50 runs
+        - "Load more" button for pagination (sends cron-job-history with before cursor)
+        - Request history via cron-job-history WS message on tab mount
+
+    - path: src/client/components/cron/CronLogsTab.tsx
+      changes: |
+        - Unified log viewer showing recent output lines
+        - Line numbers (enabled by default, toggleable)
+        - "Live tail" toggle with green "Live" indicator when active
+        - Live tail: auto-scroll, auto-refresh via polling every 2 seconds
+        - Search within logs: Cmd+F / Ctrl+F with match highlighting and match count
+        - "Copy all" button: copies all visible logs to clipboard
+        - Request logs via cron-job-logs WS message on tab mount
+        - Monospace font, dark background, scrollable container
+
+acceptance_criteria:
+  - req: REQ-26
+    type: behavioral
+    check: "History shows scrollable timeline newest first; entries have timestamp, exit code, duration, trigger type"
+  - req: REQ-27
+    type: behavioral
+    check: "History entries expandable to show logSnippet"
+  - req: REQ-28
+    type: behavioral
+    check: "Consecutive failure streaks highlighted with red left-border; failure count shown at top"
+  - req: REQ-29
+    type: behavioral
+    check: "Duration sparkline chart at top of History tab (last 20 runs)"
+  - req: REQ-30
+    type: contract
+    check: "Last 50 runs by default; 'Load more' for pagination; manual runs merged from DB"
+  - req: REQ-31
+    type: contract
+    check: "Logs from journalctl for systemd, syslog for cron; unified viewer"
+  - req: REQ-32
+    type: behavioral
+    check: "Live tail toggle: auto-scroll, auto-refresh every 2s, green 'Live' indicator"
+  - req: REQ-33
+    type: behavioral
+    check: "Log search with Cmd+F, match highlighting, match count, 'Copy all' button, toggleable line numbers"
+
+test_specs:
+  - id: TEST-32
+    description: "History shows 10 entries (8 success, 2 failure) newest first"
+  - id: TEST-33
+    description: "History entry expands to show logSnippet"
+  - id: TEST-34
+    description: "3 consecutive failures highlighted with red border and count"
+  - id: TEST-35
+    description: "Duration sparkline renders for 20 runs"
+  - id: TEST-36
+    description: "Pagination: 50 shown, Load more loads remaining 25"
+  - id: TEST-37
+    description: "Systemd logs from journalctl displayed with line numbers"
+  - id: TEST-38
+    description: "Live tail: green indicator, auto-scroll, new lines appear"
+  - id: TEST-39
+    description: "Log search with match highlighting"
+  - id: TEST-40
+    description: "Copy all copies log lines to clipboard"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-012
+      name: "Tab slot in CronJobDetail"
+
+implementation_notes: |
+  The sparkline chart can be a simple SVG polyline — no charting library needed.
+  For the log search, use a simple indexOf or regex match on each line with
+  <mark> highlighting. Live tail uses setInterval(2000) to re-fetch logs; clear on
+  unmount or when toggle disabled. The "Load more" pagination uses a cursor (the
+  oldest timestamp in the current set) sent as the `before` param.

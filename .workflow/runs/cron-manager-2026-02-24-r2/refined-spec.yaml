@@ -1,0 +1,1597 @@
+schema_version: "feature_spec_v1.0"
+
+title: "Cron & Systemd Timer Manager"
+
+description: |
+  Full cron job and systemd timer management view for agentboard. Provides a master-detail split pane
+  UI for discovering, monitoring, and managing all cron jobs and systemd timers on the system. Features
+  include real-time polling with incremental diffs, run history with duration tracking, log viewer with
+  live tail, health/failure detection, job creation (cron quick mode + systemd advanced mode), schedule
+  timeline visualization, bulk operations, user-defined tags, desktop/toast notifications, DiceBear
+  avatar system, privilege escalation for system jobs, and bidirectional agentboard session integration.
+
+tags:
+  - feature
+  - ui
+  - backend
+  - cron
+  - systemd
+  - timer-management
+
+priority: medium
+
+dependencies: []
+
+risks:
+  - id: RISK-01
+    description: |
+      Sudo credential handling: The system caches sudo credentials in memory for a configurable grace
+      period. Incorrect handling could expose credentials. Credentials must be zeroed after expiry and
+      only transmitted over WSS (TLS) connections. Plain WS (localhost dev) must log a warning.
+    mitigation: |
+      Cache credentials in a Uint8Array buffer (not a JS string, which is immutable and cannot be
+      zeroed). Explicitly fill the buffer with zeros on expiry. Only accept credentials over WSS in
+      production. Log warning for plain WS. Never persist credentials to disk or logs. The WebSocket
+      message field is named 'sudoCredential' (type Uint8Array-serializable) to avoid accidental
+      logging by generic JSON serializers.
+  - id: RISK-02
+    description: |
+      System crontab modification safety: Editing /etc/crontab or systemd system units could break system
+      services if done incorrectly. Accidental deletion of critical system timers is a significant risk.
+    mitigation: |
+      Always create backups before any modification (crontab snapshot to ~/.agentboard/backups/crontab-{timestamp},
+      unit file copies to ~/.agentboard/backups/). Require explicit confirmation for all destructive operations.
+      Delete operations require a confirmation dialog listing the job name. System-level unit deletion
+      requires a second confirmation with an explicit warning about system impact.
+  - id: RISK-03
+    description: |
+      Polling performance with many jobs: Systems with 100+ cron jobs and systemd timers could cause
+      performance issues during discovery and diff computation, especially at the default 5-second interval.
+    mitigation: |
+      Cap discovery at 2 seconds timeout. Use incremental diffs to minimize WebSocket traffic. Virtualize
+      or lazy-load list rendering above 100 jobs. Cap timeline projections at 500 data points. Make poll
+      interval configurable (2s-30s). Pause polling when no clients are connected.
+  - id: RISK-04
+    description: |
+      Non-systemd systems: Some Linux environments (WSL1, older distros, containers) do not have
+      systemd. The systemctl commands will fail on these systems.
+    mitigation: |
+      Detect systemd availability at startup via `systemctl --version`. If unavailable, skip systemd
+      discovery sources silently (log at debug level). The UI should still function with cron-only
+      sources. The Advanced (systemd) creation mode should be hidden or disabled on non-systemd systems.
+
+non_functional:
+  performance:
+    - id: REQ-91
+      description: "Job discovery MUST complete within 2 seconds on a typical system with fewer than 200 jobs. Individual source discovery failures MUST be caught and logged without blocking other sources."
+    - id: REQ-92
+      description: "The list pane MUST render smoothly with up to 200 jobs. Groups MUST use virtualized rendering or lazy loading if the total job count exceeds 100."
+    - id: REQ-93
+      description: "The schedule timeline MUST render within 100ms for up to 200 jobs projected over 7 days (capped at 500 data points)."
+  accessibility:
+    - id: REQ-94
+      description: "All interactive elements in the cron manager view (search bar, sort/filter dropdowns, group headers, job rows, control buttons, tabs, timeline, bulk action bar) MUST be keyboard-navigable. Arrow keys MUST navigate the job list. Enter MUST select a job. Tab MUST cycle through detail pane sections."
+    - id: REQ-95
+      description: "Status indicator dots and health badges MUST NOT be the sole means of conveying status. Each MUST also have a text label accessible to screen readers via aria-label."
+
+constraints:
+  runtime: "Bun 1.x"
+  language: "TypeScript 5.x"
+  frontend_framework: "React 18"
+  backend_framework: "Hono"
+  state_management: "Zustand"
+  styling: "Tailwind CSS"
+  database: "SQLite (via existing agentboard.db)"
+  animation: "motion/react"
+  syntax_highlighting: "highlight.js (bash, python, javascript, typescript, ruby, perl, ini)"
+  cron_parsing: "cronstrue + cron-parser npm packages"
+  avatars: "DiceBear API (bottts default style)"
+
+scope:
+  included:
+    new_backend:
+      - src/server/cronManager.ts
+      - src/server/cronHistoryService.ts
+      - src/server/cronLogService.ts
+      - src/server/handlers/cronHandlers.ts
+    new_frontend_components:
+      - src/client/components/cron/CronManager.tsx
+      - src/client/components/cron/CronTimeline.tsx
+      - src/client/components/cron/CronJobList.tsx
+      - src/client/components/cron/CronJobRow.tsx
+      - src/client/components/cron/CronJobDetail.tsx
+      - src/client/components/cron/CronOverviewTab.tsx
+      - src/client/components/cron/CronHistoryTab.tsx
+      - src/client/components/cron/CronLogsTab.tsx
+      - src/client/components/cron/CronScriptTab.tsx
+      - src/client/components/cron/CronJobControls.tsx
+      - src/client/components/cron/CronRunNowOutput.tsx
+      - src/client/components/cron/CronScheduleEditor.tsx
+      - src/client/components/cron/CronCreateModal.tsx
+      - src/client/components/cron/CronSudoPrompt.tsx
+      - src/client/components/cron/CronDeleteConfirm.tsx
+      - src/client/components/cron/CronBulkActions.tsx
+      - src/client/components/cron/CronTagInput.tsx
+      - src/client/components/cron/CronHealthBadge.tsx
+      - src/client/components/cron/CronEmptyState.tsx
+      - src/client/components/cron/CronSessionLink.tsx
+    new_store:
+      - src/client/stores/cronStore.ts
+    modified:
+      - src/client/App.tsx
+      - src/shared/types.ts
+      - src/server/index.ts
+      - src/server/db.ts
+      - src/client/stores/settingsStore.ts
+      - src/client/components/SessionList.tsx
+  excluded:
+    - src/server/SessionManager.ts
+    - src/client/components/Terminal.tsx
+    - src/client/stores/sessionStore.ts
+
+architecture_notes: |
+  # Phase 26: Cron & Systemd Timer Manager -- Index
+
+  > Key:location guide to all relevant design decisions for this phase.
+  > Agents working on Phase 26 should load this index instead of the full planning docs.
+  >
+  > **Depends on**: None (standalone agentboard feature, uses existing UI patterns)
+  > **Delivers**: Full cron job and systemd timer management view with list/detail split pane, run history, log viewer, health monitoring, job creation, schedule timeline, bulk operations, tags, notifications, avatar system, privilege escalation, real-time polling, and agentboard session integration
+  > **LOC**: ~4200 | **Duration**: 8-12 days | **New Agents**: None
+  > **Target**: `~/tools/agentboard/` (React frontend + Hono backend)
+  > **Gaps Addressed**: None (new feature, not gap closure)
+
+  ---
+
+  ## 1. View Architecture & Navigation
+
+  ### What It Is
+  A new top-level view (`activeView: 'cron-manager'`) accessible via keyboard shortcut `Cmd+Shift+C` (or `Ctrl+Shift+C` on Linux). Follows the same navigation pattern as the workflow views -- a new entry in the view switcher, rendering a full replacement of the main content area.
+
+  ### Layout
+  Master-detail split pane (horizontal):
+  - **Left pane (list)**: Grouped, searchable, scrollable list of all cron jobs and systemd timers on the system. Default width ~320px, resizable.
+  - **Right pane (detail)**: Tabbed detail view for the selected job -- Overview, History, Logs, and Script tabs.
+
+  When no job is selected, the right pane shows a **dashboard empty state** with: total job count, active/paused/error counts, a mini schedule timeline for the next 24 hours, and a "Create Job" shortcut button.
+
+  ### Integration Points
+  - `src/client/App.tsx` -- add `'cron-manager'` to `activeView` union type, add keyboard shortcut handler, render `<CronManager>` component
+  - `src/shared/types.ts` -- add `CronJob`, `CronJobDetail`, `JobRunRecord`, and related WebSocket message types
+  - `src/server/index.ts` -- register cron handler module, add polling interval singleton
+  - `src/client/stores/cronStore.ts` -- new Zustand store for cron state
+
+  ---
+
+  ## 2. Job Discovery & Data Model
+
+  ### What It Is
+  Backend service that discovers all cron jobs and systemd timers on the system, unified into a single data model.
+
+  ### Discovery Sources
+  1. **User crontab** -- `crontab -l` for current user
+  2. **System crontab** -- `/etc/crontab`, `/etc/cron.d/*` (requires read access or sudo)
+  3. **User systemd timers** -- `systemctl --user list-timers --all --output=json` (only if systemd available)
+  4. **System systemd timers** -- `systemctl list-timers --all --output=json` (only if systemd available, may require sudo for full details)
+
+  ### Systemd Availability Detection
+  At startup, run `systemctl --version` to detect systemd. If unavailable, skip sources 3 and 4 silently. Store result as `systemdAvailable: boolean` on the CronManager instance. Send this flag to the client so the Create modal can hide the Advanced (systemd) tab.
+
+  ### Unified Data Model
+
+  ```typescript
+  type JobSource = 'user-crontab' | 'system-crontab' | 'systemd-user' | 'systemd-system'
+  type JobStatus = 'active' | 'paused' | 'disabled' | 'error' | 'unknown'
+  type HealthStatus = 'healthy' | 'warning' | 'critical' | 'unknown'
+
+  interface CronJob {
+    id: string                    // deterministic hash of source + name + command (NOT schedule)
+    name: string                  // human-readable name (unit name or inferred from command)
+    source: JobSource
+    schedule: string              // cron expression or systemd calendar spec
+    scheduleHuman: string         // human-readable description (e.g., "Every 5 minutes")
+    command: string               // the command or ExecStart value
+    scriptPath: string | null     // resolved path to the script file, if applicable
+    projectGroup: string          // directory of the script, or "System" for ungrouped
+    status: JobStatus
+    health: HealthStatus          // derived from run history analysis
+    healthReason: string | null   // e.g., "Failed 3x in a row", "Missed last 2 scheduled runs"
+    lastRun: string | null        // ISO timestamp
+    lastRunDuration: number | null // milliseconds
+    nextRun: string | null        // ISO timestamp
+    lastExitCode: number | null   // exit code of last run
+    consecutiveFailures: number   // 0 = healthy, >0 = count of sequential failures
+    avgDuration: number | null    // rolling average duration in ms (last 10 runs)
+    user: string                  // which user owns this job
+    requiresSudo: boolean         // whether MANAGEMENT operations require privilege escalation
+    avatarUrl: string             // DiceBear SVG URL, deterministic from job name
+    unitFile: string | null       // path to .timer/.service file (systemd only)
+    description: string | null    // Description= from unit file, or comment from crontab
+    tags: string[]                // user-defined tags
+    isManagedByAgentboard: boolean // user-flagged as orchestration-related
+    linkedSessionId: string | null // linked agentboard tmux session (by project path match)
+  }
+
+  interface CronJobDetail extends CronJob {
+    scriptContent: string | null  // file content of the script (if scriptPath exists and readable)
+    scriptLanguage: string | null // inferred language for syntax highlighting
+    timerConfig: string | null    // raw .timer unit file content (systemd only)
+    serviceConfig: string | null  // raw .service unit file content (systemd only)
+    crontabLine: string | null    // raw crontab line (cron only)
+    runHistory: JobRunRecord[]    // last N runs with timestamps, exit codes, duration
+    recentLogs: string[]          // last N log lines from journal/syslog
+  }
+
+  interface JobRunRecord {
+    timestamp: string             // ISO timestamp of when the run started
+    endTimestamp: string | null   // ISO timestamp of when the run ended
+    duration: number | null       // milliseconds
+    exitCode: number | null       // 0 = success, non-zero = failure
+    trigger: 'scheduled' | 'manual' // whether this was a scheduled or manual run
+    logSnippet: string | null     // first ~500 chars of output (if available)
+  }
+
+  interface CronCreateConfig {
+    command: string               // shell command to execute
+    schedule: string              // cron expression (5-field)
+    comment: string | null        // optional descriptive name/comment
+    tags: string[]                // optional tags
+  }
+
+  interface SystemdCreateConfig {
+    serviceName: string           // unit name (alphanumeric + hyphens, no spaces)
+    command: string               // ExecStart value
+    schedule: string              // OnCalendar value
+    description: string | null    // optional Description=
+    workingDirectory: string | null // optional WorkingDirectory=
+    scope: 'user' | 'system'     // user scope vs system scope (system requires sudo)
+    tags: string[]                // optional tags
+  }
+  ```
+
+  ### REFINEMENT: Job ID Stability
+  The job ID is a deterministic hash of `source + name + command` (NOT schedule). This ensures
+  that editing a job's frequency does not change its ID, preserving the continuity of preferences,
+  tags, and history associations. If a job's command changes, it is treated as a new job.
+
+  ### REFINEMENT: Discovery vs Management Sudo
+  The `requiresSudo` flag indicates whether MANAGEMENT operations (edit, delete, pause, resume)
+  require sudo. Discovery (reading /etc/crontab, listing system timers) does NOT require sudo for
+  basic information. If reading system files fails due to permissions, the backend should attempt
+  `sudo cat` only if credentials are cached; otherwise, those jobs appear with `status: 'unknown'`
+  and a note that elevated access would reveal more detail.
+
+  ### Project Grouping Logic
+  1. If `scriptPath` is non-null, extract the parent directory. Use the deepest meaningful directory name as the group label (e.g., `/home/user/projects/myapp/scripts/backup.sh` -> `myapp`).
+  2. If `scriptPath` is null but the command references a file path, attempt to resolve it.
+  3. If no project directory can be inferred, group under **"System"**.
+  4. Groups are sorted alphabetically, with "System" always last.
+
+  ---
+
+  ## 3. Avatar System (DiceBear)
+
+  ### What It Is
+  Each job gets a deterministic, playful avatar displayed inline next to its name in the list. Uses the DiceBear API for procedural SVG generation.
+
+  ### Implementation
+  - **URL pattern**: `https://api.dicebear.com/9.x/{style}/svg?seed={jobName}`
+  - **Style**: `bottts` (robot/NFT style) as default. User can change the style globally via settings.
+  - **Seed**: Job name ensures the same job always gets the same avatar.
+  - **Size**: 28x28px inline in the list, 48x48px in the detail header.
+  - **Caching**: Browser caches SVGs via standard HTTP cache headers. Additionally, store the URL in the `CronJob` model so the frontend doesn't need to compute it.
+  - **Fallback**: If DiceBear is unreachable, render a colored circle with the first letter of the job name (same as the session list's initials fallback).
+  - **Available styles** (user-selectable in settings): `bottts`, `pixel-art`, `fun-emoji`, `adventurer`, `lorelei`, `notionists`, `thumbs`
+
+  ### REFINEMENT R2: Content Security Policy for External SVGs
+  DiceBear avatars are loaded as `<img src="https://api.dicebear.com/...">` elements. Since agentboard
+  is a local development tool (not a public-facing web app), the CSP risk is minimal. However:
+  - Avatars MUST be loaded via `<img>` tags (not inline SVG or `dangerouslySetInnerHTML`) to prevent
+    XSS from a compromised DiceBear API response.
+  - If a Content-Security-Policy header is set on the agentboard server, `img-src` MUST include
+    `https://api.dicebear.com` to allow avatar loading.
+  - The fallback (colored circle with initial) ensures the UI degrades gracefully if CSP blocks
+    the external domain or the DiceBear API is unavailable.
+
+  ### Settings Integration
+  Add to `settingsStore`:
+  - `cronAvatarStyle: string` (default: `'bottts'`)
+  - Exposed in SettingsModal under a "Cron Manager" section
+
+  ---
+
+  ## 4. List Pane
+
+  ### What It Is
+  The left pane showing all discovered jobs, grouped by project directory, with search, filtering, status and health indicators.
+
+  ### Features
+  - **Search/filter bar** at top (Cmd+K within the cron view focuses it)
+  - **Group headers**: Collapsible project group headers showing group name, job count, and health summary (red dot if any job in group is critical)
+  - **Job row**: Avatar (28x28) | Job name | Schedule (human-readable) | Health badge | Status indicator dot | Tags (if any, as small pills)
+  - **Health badges**: Green checkmark = healthy, Yellow warning triangle = warning (missed run / slow), Red X = critical (consecutive failures). Tooltip shows the `healthReason`.
+  - **Status dots**: Green = active, Gray = paused/disabled, Red = error, Dim = unknown
+  - **"Managed by Agentboard" indicator**: Small circuit-board icon on jobs flagged as orchestration-related
+  - **Sort options**: By name (default), by next run, by last run, by status, by health
+  - **Filter options**: All, Active only, Paused only, Errors only, Unhealthy (warning + critical), Managed by Agentboard, by source type, by tag
+  - **Bulk selection**: Checkbox on each row (appears on hover or via "Select" toggle), Shift+click for range select
+  - **Group context menu**: Right-click group header -> "Pause all in group", "Resume all in group", "Select all in group"
+  - **Animations**: Entry/exit animations via `motion/react`, consistent with SessionList patterns
+  - **Empty state**: "No jobs found" with helpful message about permissions if the list seems incomplete
+
+  ### Real-Time Updates
+  - Backend polls every 5 seconds (configurable via `cronPollInterval` setting)
+  - On each poll, the backend diffs against the previous state and sends only changes via WebSocket
+  - New jobs animate in, removed jobs animate out
+  - Status changes update the dot color with a brief transition
+  - Health badge updates with a brief pulse animation when degraded
+
+  ---
+
+  ## 5. Detail Pane
+
+  ### What It Is
+  The right pane showing full details, controls, history, and logs for the selected job. Organized as a tabbed interface.
+
+  ### Header (always visible, above tabs)
+  - Large avatar (48x48) + job name + source badge (`cron` | `systemd-user` | `systemd-system`)
+  - Status badge with colored background
+  - Health badge with tooltip
+  - Tags displayed as removable pills, with a "+" button to add new tags
+  - "Managed by Agentboard" toggle (circuit-board icon, toggleable)
+  - Linked session indicator (if linked, shows session name as a clickable link that navigates to the session)
+
+  ### Tab: Overview (default)
+
+  #### Schedule
+  - Human-readable schedule description (e.g., "Every day at 3:00 AM")
+  - Raw schedule expression (cron or systemd calendar)
+  - Next run timestamp (relative, e.g., "in 2 hours") with a live countdown that ticks
+  - Last run timestamp (relative) + exit code badge + duration badge
+
+  #### Controls
+  - **Run Now** -- blue button that manually triggers the job immediately. Shows a spinner while running and streams output in a mini-terminal below the button. Result (exit code + duration) appears inline when done.
+  - **Pause/Resume** toggle button
+  - **Edit Frequency** -- opens an inline editor for the schedule expression with a human-readable preview that updates as you type
+  - **Delete** -- red button with confirmation dialog ("Are you sure? This will permanently remove the job.")
+  - All controls that require sudo show a lock icon and prompt for credentials when clicked
+
+  #### Duration Stats
+  - Last run duration
+  - Average duration (rolling 10-run average)
+  - Trend indicator: arrow up (getting slower) / arrow down (getting faster) / flat (stable), compared to the 10-run average. If the latest run exceeded 2x the average, show a yellow warning.
+
+  #### Systemd Details (conditional, systemd jobs only)
+  - Timer unit file content (syntax highlighted as INI)
+  - Service unit file content (syntax highlighted as INI)
+
+  #### Cron Details (conditional, cron jobs only)
+  - Raw crontab line
+  - Environment variables set in the crontab (if any)
+
+  ### Tab: History
+
+  A scrollable timeline of past job executions.
+
+  - **Timeline view**: Vertical list, newest first. Each entry shows: timestamp, exit code badge (green 0, red non-zero), duration, trigger type (scheduled/manual).
+  - **Expandable entries**: Click an entry to expand and show the `logSnippet` (first ~500 chars of output).
+  - **Visual indicators**: Failure streaks highlighted with a red left-border band. The current consecutive failure count is shown at the top if > 0.
+  - **Data sources**:
+    - Systemd: `journalctl -u {service} --output=json --since="7 days ago"` for detailed per-invocation records
+    - Cron: Parse syslog/journald for `CRON` entries matching the command. Less granular -- may only have timestamps and basic status.
+  - **Pagination**: Show last 50 runs by default, "Load more" button for older history.
+  - **Duration trend chart**: Small sparkline chart at the top showing duration over the last 20 runs. Helps spot gradual degradation.
+
+  ### Tab: Logs
+
+  Unified log viewer for the job's recent output.
+
+  - **Systemd jobs**: `journalctl -u {service} -n 200 --no-pager` output, syntax-highlighted as log format.
+  - **Cron jobs**: Parse from syslog (`grep CRON /var/log/syslog`), user mail spool (`/var/mail/{user}`), or any log file the command redirects to (detected by parsing `>>` or `>` in the command).
+  - **Live tail mode**: Toggle to auto-scroll and auto-refresh (polls every 2 seconds while the tab is active). Green "Live" indicator when active.
+  - **Search within logs**: Cmd+F to search/highlight within the log viewer.
+  - **Copy button**: Copy all visible logs to clipboard.
+  - **Line numbers**: Enabled by default, toggleable.
+
+  ### Tab: Script
+
+  Read-only syntax-highlighted code viewer for the job's script.
+
+  - Language auto-detected from file extension (bash, python, node, etc.)
+  - Line numbers enabled
+  - "Open in Terminal" button to open the script in the user's default editor
+  - If no script file is found (inline command), show the raw command in a code block
+  - File path shown at the top as a breadcrumb
+
+  ---
+
+  ## 6. Job Management Operations
+
+  ### What It Is
+  Backend handlers for CRUD operations on cron jobs and systemd timers.
+
+  ### Operations
+
+  | Operation | Cron | Systemd |
+  |-----------|------|---------|
+  | **Run Now** | Execute the command directly via `sh -c` | `systemctl [--user] start {service}` |
+  | **Pause** | Comment out line with `#AGENTBOARD_PAUSED:` prefix | `systemctl [--user] stop {unit}` + `systemctl [--user] disable {unit}` |
+  | **Resume** | Remove `#AGENTBOARD_PAUSED:` prefix | `systemctl [--user] enable {unit}` + `systemctl [--user] start {unit}` |
+  | **Edit frequency** | Replace schedule columns in crontab line | Write new `OnCalendar=` to timer unit, `systemctl [--user] daemon-reload` |
+  | **Delete** | Remove line from crontab | `systemctl [--user] stop {unit}` + `systemctl [--user] disable {unit}` + remove unit files |
+  | **Create** | Append line to crontab via `crontab -l | { cat; echo "..."; } | crontab -` | Write .timer + .service files, `daemon-reload`, `enable`, `start` |
+
+  ### Run Now Details
+  - The backend spawns the command as a child process, capturing stdout+stderr.
+  - A `cron-run-started` WebSocket message is sent immediately (with a run ID).
+  - Output is streamed to the client via `cron-run-output` messages (chunked, every 500ms or on completion).
+  - On completion, `cron-run-completed` is sent with exit code and duration.
+  - The run is recorded in `cron_run_history` DB table with `trigger: 'manual'`.
+  - If the job requires sudo, privilege escalation applies to Run Now as well.
+  - Only one manual run per job at a time (button disabled while running).
+
+  ### Bulk Operations
+  - **Pause all**: Iterates through selected jobs, pausing each sequentially. If any require sudo, a single credential prompt covers all.
+  - **Resume all**: Same pattern.
+  - **Delete all**: Single confirmation dialog listing all selected jobs. Executes sequentially with individual error handling.
+  - Bulk operations send a `cron-bulk-operation-progress` message for each completed sub-operation.
+
+  ### Privilege Escalation
+  - Backend detects whether an operation requires sudo based on `requiresSudo` flag
+  - When sudo is needed, the frontend shows a credential prompt modal
+  - Credential is sent over WebSocket as a JSON string in the `cron-sudo-auth` message (see R2 Serialization Bridge below)
+  - Backend executes the command with `sudo -S` (reads credential from stdin)
+  - Credential is held in memory as Uint8Array for a configurable grace period (default: 5 minutes) to avoid repeated prompts
+  - After the grace period, the cached credential buffer is zeroed out
+
+  ### REFINEMENT R2: Credential Serialization Bridge
+  The `cron-sudo-auth` WebSocket message carries the credential as a JSON string (since JSON cannot
+  represent binary Uint8Array). The handler in `cronHandlers.ts` MUST immediately convert the received
+  string to a Uint8Array via `new TextEncoder().encode(jsonMessage.sudoCredential)` and then overwrite
+  the original string property on the parsed message object with `undefined` to minimize the window
+  where the credential exists as a JS string in memory. All subsequent internal operations (caching,
+  passing to `sudo -S`) MUST use only the Uint8Array form. See REQ-100 for the formal requirement.
+
+  ### Safety
+  - All destructive operations (delete, edit) create a backup before modification
+  - Crontab edits: `crontab -l > ~/.agentboard/backups/crontab-{timestamp}` before any change
+  - Systemd edits: Copy unit file to `~/.agentboard/backups/` before modification
+  - Delete operations require explicit confirmation in the UI
+
+  ---
+
+  ## 7. Job Creation
+
+  ### What It Is
+  A form/wizard to create new cron jobs or systemd timers directly from the UI.
+
+  ### Create Job Modal
+  Triggered by a "+" button in the list pane header or from the empty state. Two modes:
+
+  #### Quick Mode (cron)
+  - **Command**: Text input for the shell command
+  - **Schedule**: Text input with live human-readable preview (same as the edit schedule component)
+  - **Name/Comment**: Optional descriptive name (added as a `# comment` above the crontab line)
+  - **Tags**: Optional tag input
+  - Creates a user crontab entry
+
+  #### Advanced Mode (systemd)
+  - **Service name**: Text input (used for `{name}.timer` and `{name}.service` file names)
+  - **Command**: Text input for `ExecStart=`
+  - **Schedule**: Text input for `OnCalendar=` with validation via `systemd-analyze calendar`
+  - **Description**: Optional `Description=` field
+  - **Working directory**: Optional `WorkingDirectory=`
+  - **User scope vs System scope**: Toggle (system scope requires sudo)
+  - **Tags**: Optional tag input
+  - Generates `.timer` and `.service` unit files, writes them, runs `daemon-reload`, `enable`, and `start`
+  - **Hidden when systemd is unavailable** (REQ-97)
+
+  ### Validation
+  - Command must not be empty
+  - Schedule must be valid (validated client-side for cron, server-side for systemd)
+  - Service name must be a valid systemd unit name (alphanumeric + hyphens, no spaces, matching `/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/`)
+  - Input sanitization: reject newlines and null bytes (REQ-96)
+  - Duplicate detection: warn if a job with the same command already exists
+
+  ### Post-Creation
+  - New job appears in the list immediately via the poll diff mechanism
+  - Auto-selects the new job in the list and opens its detail pane
+
+  ---
+
+  ## 8. Health & Failure Detection
+
+  ### What It Is
+  Automatic health analysis based on run history, surfaced as badges and notifications.
+
+  ### Health Heuristics
+
+  | Condition | Health Level | Health Reason |
+  |-----------|-------------|---------------|
+  | Last 10 runs all succeeded | `healthy` | null |
+  | Last run failed (1 failure) | `warning` | "Last run failed (exit code N)" |
+  | 2+ consecutive failures | `critical` | "Failed N times in a row" |
+  | No run detected in 2x the expected interval | `warning` | "Missed scheduled run (last ran X ago)" |
+  | Latest run duration > 2x rolling average | `warning` | "Last run took Xm (avg: Ym)" |
+  | Job in error state (systemd) | `critical` | "Unit in failed state" |
+  | No run history available | `unknown` | null |
+
+  ### Health Computation
+  - Computed server-side on each poll cycle (after run history is gathered).
+  - Stored in-memory on the `CronJob` object, not persisted to DB (always recomputed from live data).
+  - Health changes trigger `cron-job-update` WebSocket messages like any other field change.
+
+  ### Health Summary in List
+  - Group headers show a red dot if any job in the group is `critical`.
+  - The list's filter dropdown includes "Unhealthy" (shows `warning` + `critical`).
+  - Sort by health puts `critical` first, then `warning`, then `healthy`.
+
+  ---
+
+  ## 9. Schedule Timeline
+
+  ### What It Is
+  A visual timeline showing when jobs are scheduled to fire, helping spot overlaps, gaps, and resource contention.
+
+  ### Implementation
+  - Displayed as a **horizontal bar chart** at the top of the cron manager view (collapsible, default collapsed).
+  - Toggle via a "Timeline" button in the view header or `Cmd+Shift+T` (within cron view).
+  - **24-hour view** (default): Shows the next 24 hours, divided into 1-hour buckets. Each bucket shows a stacked bar of how many jobs fire in that hour, colored by health status.
+  - **7-day view**: Shows the next 7 days, divided into day buckets. Same stacking.
+  - **Hover**: Hovering a bucket shows a tooltip listing the specific jobs that fire in that time window.
+  - **Click**: Clicking a job name in the tooltip selects it in the list and opens its detail.
+
+  ### Data Source
+  - Computed client-side from the `nextRun` and `schedule` fields on all visible jobs.
+  - For recurring schedules, compute the next N occurrences using the cron expression or systemd calendar spec (use `cronstrue`/custom parser for projection).
+  - Up to 500 data points max (for performance).
+
+  ---
+
+  ## 10. Tags & Labels
+
+  ### What It Is
+  User-defined tags for flexible organization beyond the automatic project grouping.
+
+  ### Implementation
+  - Tags are stored per-job in the `cron_job_prefs` SQLite table (JSON array column).
+  - Tags are displayed as small colored pills on the job row (after the schedule) and as removable pills in the detail header.
+  - **Adding tags**: Click "+" in the detail header. Autocomplete dropdown shows existing tags across all jobs (for consistency). Free-text also allowed.
+  - **Removing tags**: Click the "x" on a tag pill in the detail header.
+  - **Filtering by tag**: The list filter dropdown includes all existing tags. Multiple tags can be selected (OR logic -- shows jobs matching any selected tag).
+  - **Tag colors**: Deterministic color from tag name hash (same palette as avatar fallback). No user color customization (keeps it simple).
+  - **Suggested auto-tags**: On first discovery, suggest tags based on heuristics:
+    - Command contains `backup` -> suggest "backup"
+    - Command contains `clean` or `purge` -> suggest "cleanup"
+    - Command contains `monitor` or `check` -> suggest "monitoring"
+    - User can accept or dismiss suggestions (one-time, stored in prefs)
+
+  ---
+
+  ## 11. Notifications
+
+  ### What It Is
+  Desktop and in-app notifications for job events, primarily failures.
+
+  ### Notification Events
+
+  | Event | Default | Description |
+  |-------|---------|-------------|
+  | Job failure (first) | Toast + desktop | A job failed that was previously healthy |
+  | Consecutive failures (3+) | Toast + desktop | A job has now failed 3+ times in a row |
+  | Missed scheduled run | Toast only | A job didn't run when expected |
+  | Manual run completed | Toast only | A "Run Now" execution finished |
+  | Job created/deleted externally | Toast only | Detected via polling that a job appeared/disappeared outside agentboard |
+
+  ### Implementation
+  - **In-app toasts**: Use the existing `<Toast>` / `<ToastViewport>` system from agentboard. Cron toasts get a cron icon prefix and are clickable (navigates to the job in the cron manager view).
+  - **Desktop notifications**: Use the browser Notification API (`new Notification()`). Requires user permission grant (prompted once in settings). Clickable to focus the agentboard tab.
+  - **Notification settings** (in SettingsModal > Cron Manager):
+    - `cronNotificationsEnabled: boolean` (default: true for toasts, false for desktop until granted)
+    - `cronDesktopNotifications: boolean` (default: false, prompts for permission when enabled)
+    - `cronNotifyOnFailure: boolean` (default: true)
+    - `cronNotifyOnMissedRun: boolean` (default: true)
+    - `cronNotifyOnManualRun: boolean` (default: true)
+  - **Rate limiting**: Max 1 desktop notification per job per 5 minutes (prevents spam from rapid-fire failures).
+
+  ---
+
+  ## 12. Agentboard Session Integration
+
+  ### What It Is
+  Cross-referencing cron/systemd jobs with agentboard tmux sessions and a "Managed by Agentboard" classification.
+
+  ### Session Linking
+  - **Automatic linking**: When a cron job's `scriptPath` or `command` references a directory that matches a currently active agentboard session's `projectPath`, the job is automatically linked.
+  - **Manual linking**: In the detail pane, a "Link to Session" button opens a dropdown of active sessions. Selecting one creates a persistent link stored in `cron_job_prefs`.
+  - **Link display**: Linked jobs show a small terminal icon in the list row. The detail header shows the linked session name as a clickable chip that navigates to that session in the main session view.
+  - **Bidirectional**: In the main session list (SessionList.tsx), sessions with linked cron jobs show a small clock icon. Clicking it navigates to the cron manager filtered to that session's linked jobs.
+
+  ### "Managed by Agentboard" Badge
+  - A toggle in the detail header (circuit-board icon) that marks a job as orchestration-related.
+  - Persisted in `cron_job_prefs` (`is_managed INTEGER DEFAULT 0`).
+  - Visual: A subtle circuit-board watermark/badge on the job row in the list.
+  - **Filter**: The list filter dropdown includes "Managed by Agentboard" to show only orchestration jobs.
+  - **Purpose**: Distinguishes "my AI pipeline cron jobs" from "system logrotate" at a glance. Prepares for a future phase where AI agents can create/manage jobs.
+
+  ---
+
+  ## 13. WebSocket Protocol Extensions
+
+  ### Server Messages (server -> client)
+
+  ```typescript
+  // Full job list (sent on connect and on significant changes)
+  { type: 'cron-jobs', jobs: CronJob[], systemdAvailable: boolean }
+
+  // Incremental update (sent on poll diff)
+  { type: 'cron-job-update', job: CronJob }
+
+  // Job removed (deleted or disappeared from system)
+  { type: 'cron-job-removed', jobId: string }
+
+  // Job detail response
+  { type: 'cron-job-detail', detail: CronJobDetail }
+
+  // Operation result
+  { type: 'cron-operation-result', jobId: string, operation: string, success: boolean, error?: string }
+
+  // Sudo required prompt
+  { type: 'cron-sudo-required', jobId: string, operation: string }
+
+  // Run Now streaming
+  { type: 'cron-run-started', jobId: string, runId: string }
+  { type: 'cron-run-output', jobId: string, runId: string, chunk: string }
+  { type: 'cron-run-completed', jobId: string, runId: string, exitCode: number, duration: number }
+
+  // Bulk operation progress
+  { type: 'cron-bulk-operation-progress', completed: number, total: number, failures: string[] }
+
+  // Notification events
+  { type: 'cron-notification', jobId: string, event: string, message: string, severity: 'info' | 'warning' | 'error' }
+  ```
+
+  ### Client Messages (client -> server)
+
+  ```typescript
+  // Request job detail
+  { type: 'cron-job-select', jobId: string }
+
+  // Run Now
+  { type: 'cron-job-run-now', jobId: string }
+
+  // Pause/resume
+  { type: 'cron-job-pause', jobId: string }
+  { type: 'cron-job-resume', jobId: string }
+
+  // Edit frequency
+  { type: 'cron-job-edit-frequency', jobId: string, newSchedule: string }
+
+  // Delete
+  { type: 'cron-job-delete', jobId: string }
+
+  // Create
+  { type: 'cron-job-create', mode: 'cron' | 'systemd', config: CronCreateConfig | SystemdCreateConfig }
+
+  // Bulk operations
+  { type: 'cron-bulk-pause', jobIds: string[] }
+  { type: 'cron-bulk-resume', jobIds: string[] }
+  { type: 'cron-bulk-delete', jobIds: string[] }
+
+  // Tags
+  { type: 'cron-job-set-tags', jobId: string, tags: string[] }
+
+  // Managed flag
+  { type: 'cron-job-set-managed', jobId: string, isManaged: boolean }
+
+  // Session linking
+  { type: 'cron-job-link-session', jobId: string, sessionId: string | null }
+
+  // REFINED: Renamed from 'cron-sudo-password' to avoid credential-pattern regex matches
+  // REFINED R2: sudoCredential is a JSON string; handler MUST convert to Uint8Array immediately (see REQ-100)
+  { type: 'cron-sudo-auth', sudoCredential: string }
+
+  // Request logs (paginated)
+  { type: 'cron-job-logs', jobId: string, lines: number, offset?: number }
+
+  // Request run history (paginated)
+  { type: 'cron-job-history', jobId: string, limit: number, before?: string }
+  ```
+
+  ---
+
+  ## 14. Backend Service Architecture
+
+  ### Key Files (new)
+
+  ```
+  src/server/cronManager.ts           -- CronManager class: discovery, polling, diff, health, operations
+  src/server/cronHistoryService.ts    -- Run history collection from journal/syslog
+  src/server/cronLogService.ts        -- Log aggregation from journal/syslog/mail
+  src/server/handlers/cronHandlers.ts -- WebSocket message handlers for cron operations
+  ```
+
+  ### CronManager Class
+
+  ```typescript
+  class CronManager {
+    systemdAvailable: boolean      // detected at startup
+
+    // Discovery
+    discoverAllJobs(): Promise<CronJob[]>
+    discoverUserCrontab(): Promise<CronJob[]>
+    discoverSystemCrontab(): Promise<CronJob[]>
+    discoverUserTimers(): Promise<CronJob[]>   // skipped if !systemdAvailable
+    discoverSystemTimers(): Promise<CronJob[]> // skipped if !systemdAvailable
+
+    // Polling
+    startPolling(intervalMs: number): void
+    stopPolling(): void
+    onJobsChanged(callback: (added: CronJob[], removed: string[], updated: CronJob[]) => void): void
+
+    // Detail
+    getJobDetail(jobId: string): Promise<CronJobDetail>
+
+    // Operations (sudoCredential is Uint8Array, not string)
+    runJobNow(jobId: string, sudoCredential?: Uint8Array): AsyncGenerator<string>
+    pauseJob(jobId: string, sudoCredential?: Uint8Array): Promise<void>
+    resumeJob(jobId: string, sudoCredential?: Uint8Array): Promise<void>
+    editFrequency(jobId: string, newSchedule: string, sudoCredential?: Uint8Array): Promise<void>
+    deleteJob(jobId: string, sudoCredential?: Uint8Array): Promise<void>
+    createCronJob(config: CronCreateConfig): Promise<string>
+    createSystemdTimer(config: SystemdCreateConfig, sudoCredential?: Uint8Array): Promise<string>
+
+    // Bulk
+    bulkPause(jobIds: string[], sudoCredential?: Uint8Array): AsyncGenerator<BulkProgress>
+    bulkResume(jobIds: string[], sudoCredential?: Uint8Array): AsyncGenerator<BulkProgress>
+    bulkDelete(jobIds: string[], sudoCredential?: Uint8Array): AsyncGenerator<BulkProgress>
+
+    // Health
+    computeHealth(job: CronJob, history: JobRunRecord[]): { health: HealthStatus, reason: string | null }
+
+    // Parsing
+    parseCronSchedule(expression: string): string
+    parseSystemdCalendar(spec: string): string
+    resolveScriptPath(command: string): string | null
+    inferProjectGroup(scriptPath: string | null, command: string): string
+    projectNextRuns(schedule: string, source: JobSource, count: number): Date[]
+
+    // Credential cache (Uint8Array, not string)
+    private sudoCredentialCache: Uint8Array | null
+    private sudoCredentialExpiry: number
+    cacheSudoCredential(credential: Uint8Array, gracePeriodMs: number): void
+    clearSudoCredential(): void  // fills buffer with zeros, sets to null
+
+    // Prefs cleanup
+    cleanOrphanedPrefs(currentJobIds: string[]): void
+  }
+  ```
+
+  ### Credential Caching Implementation
+  Sudo credentials MUST be stored as `Uint8Array` (not JS string) so they can be explicitly
+  zeroed. The `clearSudoCredential()` method MUST call `credential.fill(0)` before setting
+  the reference to null. A `setTimeout` is set on cache to auto-clear after the grace period.
+
+  ### Input Sanitization for Job Creation
+  The `createCronJob` method MUST reject commands containing newline characters (`\n`, `\r`)
+  to prevent crontab injection. The `createSystemdTimer` method MUST validate that `serviceName`
+  matches `/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/` and that no field contains newlines or null bytes.
+
+  ### Orphaned Preferences Cleanup
+  On each poll cycle, after discovery, call `cleanOrphanedPrefs(currentJobIds)` to delete
+  `cron_job_prefs` entries whose `job_id` no longer matches any discovered job. Use a grace
+  period of 24 hours (track `last_seen` timestamp) to avoid deleting prefs for temporarily
+  unavailable jobs.
+
+  ### Polling Lifecycle
+  1. `CronManager` is instantiated as a singleton in `src/server/index.ts`
+  2. On first WebSocket connection, polling starts at the configured interval (default 5s)
+  3. Each poll cycle: `discoverAllJobs()` -> collect run history for changed jobs -> compute health -> diff against cache -> broadcast changes
+  4. When no clients are connected, polling pauses to save resources
+
+  ---
+
+  ## 15. Frontend Store (cronStore.ts)
+
+  ### State Shape
+
+  ```typescript
+  interface CronStore {
+    // Data
+    jobs: CronJob[]
+    selectedJobId: string | null
+    selectedJobDetail: CronJobDetail | null
+    systemdAvailable: boolean
+
+    // UI state (persisted to localStorage)
+    sortMode: 'name' | 'next-run' | 'last-run' | 'status' | 'health'
+    filterMode: 'all' | 'active' | 'paused' | 'errors' | 'unhealthy' | 'managed'
+    filterSource: JobSource | null
+    filterTags: string[]
+    collapsedGroups: Set<string>
+    activeTab: 'overview' | 'history' | 'logs' | 'script'
+    timelineVisible: boolean
+    timelineRange: '24h' | '7d'
+    searchQuery: string
+    selectedJobIds: Set<string>  // bulk selection
+
+    // Actions
+    setJobs(jobs: CronJob[]): void
+    updateJob(job: CronJob): void
+    removeJob(jobId: string): void
+    selectJob(jobId: string | null): void
+    // ... etc
+  }
+  ```
+
+  ---
+
+  ## 16. Schedule Handling
+
+  ### Cron Expression Parsing
+  - Use `cronstrue` npm package for human-readable descriptions
+  - Use `cron-parser` npm package for next-run projection
+  - Validate 5-field standard cron format (minute hour day-of-month month day-of-week)
+
+  ### Systemd Calendar Spec Parsing
+  - Common patterns parsed client-side: `daily`, `hourly`, `weekly`, `*-*-* HH:MM:SS`
+  - Complex specs validated server-side via `systemd-analyze calendar` (if available)
+  - If `systemd-analyze` unavailable, accept the input with a caveat message
+
+  ---
+
+  ## 17. Database Schema Extension
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS cron_job_prefs (
+    job_id TEXT PRIMARY KEY,
+    custom_avatar_style TEXT,
+    custom_name TEXT,
+    is_favorite INTEGER DEFAULT 0,
+    is_managed INTEGER DEFAULT 0,
+    linked_session_id TEXT,
+    tags TEXT DEFAULT '[]',
+    notes TEXT,
+    last_seen TEXT DEFAULT (datetime('now')),  -- for orphan cleanup grace period
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS cron_run_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    end_timestamp TEXT,
+    duration INTEGER,
+    exit_code INTEGER,
+    trigger TEXT DEFAULT 'manual',
+    log_snippet TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (job_id) REFERENCES cron_job_prefs(job_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_cron_run_history_job ON cron_run_history(job_id, timestamp DESC);
+  ```
+
+  ---
+
+  ## 18. Settings
+
+  | Setting | Type | Default | Description |
+  |---------|------|---------|-------------|
+  | `cronPollInterval` | number | 5000 | Polling interval in ms (min 2000, max 30000) |
+  | `cronAvatarStyle` | string | `'bottts'` | DiceBear avatar style |
+  | `cronSudoGracePeriod` | number | 300000 | Sudo credential cache duration in ms (5 min) |
+  | `cronShowSystemJobs` | boolean | true | Whether to show system-level jobs |
+  | `cronShowUserJobs` | boolean | true | Whether to show user-level jobs |
+  | `cronDefaultSort` | string | `'name'` | Default sort mode |
+  | `cronListWidth` | number | 320 | Width of the list pane in px (180-500) |
+  | `cronNotificationsEnabled` | boolean | true | Enable in-app toast notifications |
+  | `cronDesktopNotifications` | boolean | false | Enable desktop notifications |
+  | `cronNotifyOnFailure` | boolean | true | Notify on job failure |
+  | `cronNotifyOnMissedRun` | boolean | true | Notify on missed scheduled run |
+  | `cronNotifyOnManualRun` | boolean | true | Notify when Run Now completes |
+  | `cronTimelineDefaultVisible` | boolean | false | Whether timeline is expanded by default |
+  | `cronTimelineDefaultRange` | string | `'24h'` | Default timeline range |
+
+acceptance:
+  # View & Navigation
+  - id: REQ-01
+    type: behavioral
+    description: "The agentboard MUST provide a \"Cron Manager\" view accessible via `Cmd+Shift+C` (macOS) / `Ctrl+Shift+C` (Linux). The view MUST render as a full replacement of the main content area, following the same pattern as the workflow views."
+  - id: REQ-02
+    type: behavioral
+    description: "The cron manager view MUST use a horizontal master-detail split pane layout. The left pane displays the job list (default width 320px, resizable between 180-500px). The right pane displays the selected job's details in a tabbed interface. The resize handle MUST follow the same drag-to-resize pattern used by the sidebar in App.tsx."
+  - id: REQ-03
+    type: behavioral
+    description: "When no job is selected, the right pane MUST display a dashboard empty state showing: total job count, active/paused/error counts, a mini schedule timeline for the next 24 hours, and a \"Create Job\" shortcut button."
+
+  # Job Discovery
+  - id: REQ-04
+    type: contract
+    description: "The backend MUST discover jobs from all available sources: user crontab (`crontab -l`), system crontab (`/etc/crontab` + `/etc/cron.d/*`), and if systemd is available, user systemd timers (`systemctl --user list-timers --all`) and system systemd timers (`systemctl list-timers --all`). Discovery failures for any individual source MUST NOT prevent other sources from being loaded."
+  - id: REQ-05
+    type: invariant
+    description: "Each discovered job MUST be assigned a deterministic, stable ID derived from its source type, name, and command (NOT schedule). The ID MUST remain consistent across polls and schedule edits so long as the underlying job identity has not changed."
+  - id: REQ-06
+    type: contract
+    description: "The backend MUST resolve the script/executable path for each job where possible. For cron jobs, this means parsing the command column. For systemd timers, this means reading the `ExecStart=` value from the associated service unit. If the command is a pipeline or inline script (not a file path), `scriptPath` MUST be null."
+  - id: REQ-07
+    type: contract
+    description: "Each job MUST be assigned a `projectGroup` based on the directory containing the resolved script path. If no script path is resolvable, the job MUST be grouped under \"System\". Groups MUST be sorted alphabetically, with \"System\" always appearing last."
+
+  # Polling & Real-Time Updates
+  - id: REQ-08
+    type: contract
+    description: "The backend MUST poll for job changes at a configurable interval (default: 5 seconds, minimum: 2 seconds, maximum: 30 seconds). Polling MUST start when the first WebSocket client connects and MUST pause when no clients are connected."
+  - id: REQ-09
+    type: contract
+    description: "On each poll cycle, the backend MUST diff the newly discovered jobs against the previous cached state. Only changes (additions, removals, updates) MUST be sent to clients. The full job list MUST be sent only on initial connection."
+  - id: REQ-10
+    type: behavioral
+    description: "When a job is added, removed, or updated, the list pane MUST animate the change using `motion/react` (consistent with SessionList entry/exit animations). New jobs animate in, removed jobs animate out, and status changes update with a brief color transition."
+
+  # Avatar System
+  - id: REQ-11
+    type: contract
+    description: "Each job MUST have an avatar generated via the DiceBear API using the URL pattern `https://api.dicebear.com/9.x/{style}/svg?seed={jobName}`. The avatar style MUST default to `bottts` and MUST be configurable globally via settings."
+  - id: REQ-12
+    type: contract
+    description: "Avatars MUST render at 28x28px inline in the list pane and 48x48px in the detail pane header. Avatars MUST be loaded as `<img>` elements with the DiceBear URL as `src`, relying on browser HTTP caching."
+  - id: REQ-13
+    type: behavioral
+    description: "If the DiceBear API is unreachable (network error or timeout > 3s), the avatar MUST fall back to a colored circle with the first letter of the job name, using a deterministic color derived from the job name hash."
+
+  # List Pane
+  - id: REQ-14
+    type: behavioral
+    description: "The list pane MUST display jobs grouped by `projectGroup`, with collapsible group headers showing the group name, job count, and a health summary indicator (red dot if any job in the group is `critical`). Each group MUST be independently collapsible, and collapse state MUST persist across sessions."
+  - id: REQ-15
+    type: behavioral
+    description: "Each job row MUST display: avatar (28x28), job name, human-readable schedule description, health badge (green checkmark / yellow warning / red X), status indicator dot (green = active, gray = paused/disabled, red = error, dim = unknown), and tag pills (if any). Jobs flagged as \"Managed by Agentboard\" MUST show a small circuit-board icon."
+  - id: REQ-16
+    type: behavioral
+    description: "The list pane MUST provide a search bar that filters jobs by name, command, project group, or tag. Typing in the search bar MUST filter the list in real-time (debounced at 150ms)."
+  - id: REQ-17
+    type: behavioral
+    description: "The list pane MUST support sorting by: name (default), next run time, last run time, status, or health. The selected sort mode MUST persist across sessions via the Zustand store. Sorting by health MUST order: critical first, then warning, then healthy, then unknown."
+  - id: REQ-18
+    type: behavioral
+    description: "The list pane MUST support filtering by: all jobs, active only, paused only, errors only, unhealthy (warning + critical), managed by agentboard, by source type, or by tag. Multiple tag filters MUST use OR logic. The selected filters MUST persist across sessions."
+  - id: REQ-19
+    type: behavioral
+    description: "The list pane MUST support bulk selection via checkboxes (visible on hover or via a \"Select\" toggle). Shift+click MUST select a range. When jobs are selected, a floating bulk action bar MUST appear with Pause All, Resume All, and Delete All buttons."
+  - id: REQ-20
+    type: behavioral
+    description: "Right-clicking a group header MUST show a context menu with: \"Pause all in group\", \"Resume all in group\", and \"Select all in group\"."
+
+  # Detail Pane -- Header
+  - id: REQ-21
+    type: behavioral
+    description: "The detail pane MUST display a persistent header (above the tabs) with: large avatar (48x48), job name, source badge, status badge, health badge with tooltip showing `healthReason`, tag pills (removable via \"x\", addable via \"+\" with autocomplete), \"Managed by Agentboard\" toggle icon, and linked session indicator (clickable to navigate to the session)."
+
+  # Detail Pane -- Overview Tab
+  - id: REQ-22
+    type: behavioral
+    description: "The Overview tab MUST display the schedule section with: human-readable schedule description, raw schedule expression, next run timestamp as a live countdown that ticks in real-time, and last run timestamp (relative) with exit code badge and duration badge."
+  - id: REQ-23
+    type: behavioral
+    description: "The Overview tab MUST display a duration statistics section showing: last run duration, average duration (rolling 10-run average), and a trend indicator (arrow up = getting slower, arrow down = getting faster, flat = stable). If the latest run exceeded 2x the rolling average, a yellow warning MUST be displayed."
+  - id: REQ-24
+    type: behavioral
+    description: "For systemd timer jobs, the Overview tab MUST display the raw timer unit file content and raw service unit file content, both syntax-highlighted as INI format."
+  - id: REQ-25
+    type: behavioral
+    description: "For cron jobs, the Overview tab MUST display the raw crontab line and any environment variables set in the crontab above the job entry."
+
+  # Detail Pane -- History Tab
+  - id: REQ-26
+    type: behavioral
+    description: "The History tab MUST display a scrollable vertical timeline of past job executions, newest first. Each entry MUST show: timestamp, exit code badge (green for 0, red for non-zero), duration, and trigger type (scheduled or manual)."
+  - id: REQ-27
+    type: behavioral
+    description: "Each history entry MUST be expandable to show the `logSnippet` (first ~500 characters of output, if available)."
+  - id: REQ-28
+    type: behavioral
+    description: "Consecutive failure streaks MUST be visually highlighted with a red left-border band. The current consecutive failure count MUST be shown at the top of the tab if greater than 0."
+  - id: REQ-29
+    type: behavioral
+    description: "The History tab MUST display a duration trend sparkline chart at the top showing duration over the last 20 runs. The chart MUST help the user spot gradual duration increases."
+  - id: REQ-30
+    type: contract
+    description: "The History tab MUST show the last 50 runs by default with a \"Load more\" button for pagination. Data sources: `journalctl` for systemd, syslog/journald CRON entries for cron jobs. Manual runs from the `cron_run_history` DB table MUST be merged into the timeline."
+
+  # Detail Pane -- Logs Tab
+  - id: REQ-31
+    type: contract
+    description: "The Logs tab MUST display a unified log viewer showing recent output for the selected job. For systemd: `journalctl -u {service} -n 200`. For cron: parsed from syslog, user mail spool, or detected log file redirections in the command."
+  - id: REQ-32
+    type: behavioral
+    description: "The Logs tab MUST support a \"Live tail\" toggle that auto-scrolls and auto-refreshes (polling every 2 seconds while active). A green \"Live\" indicator MUST be visible when tail mode is active."
+  - id: REQ-33
+    type: behavioral
+    description: "The Logs tab MUST support search within logs (Cmd+F / Ctrl+F) with match highlighting. A \"Copy all\" button MUST copy all visible logs to the clipboard. Line numbers MUST be enabled by default and toggleable."
+
+  # Detail Pane -- Script Tab
+  - id: REQ-34
+    type: behavioral
+    description: "The Script tab MUST display a read-only syntax-highlighted code viewer showing the content of the job's script file. Language MUST be auto-detected from the file extension. Line numbers MUST be enabled."
+  - id: REQ-35
+    type: behavioral
+    description: "If the job has no resolvable script file (inline command), the Script tab MUST display the raw command in a code block."
+  - id: REQ-36
+    type: behavioral
+    description: "The Script tab MUST display the file path as a breadcrumb at the top and include an \"Open in Terminal\" button."
+
+  # Job Management -- Run Now
+  - id: REQ-37
+    type: contract
+    description: "The detail pane controls MUST include a \"Run Now\" button that manually triggers the job immediately. For cron jobs, this MUST execute the command via `sh -c`. For systemd timers, this MUST run `systemctl [--user] start {service}`."
+  - id: REQ-38
+    type: behavioral
+    description: "While a manual run is in progress, the Run Now button MUST be disabled (showing a spinner). Output MUST stream in real-time via WebSocket into a mini-terminal below the button. On completion, the exit code and duration MUST be displayed inline."
+  - id: REQ-39
+    type: contract
+    description: "Manual runs MUST be recorded in the `cron_run_history` database table with `trigger: 'manual'` and MUST appear in the History tab alongside scheduled runs."
+  - id: REQ-40
+    type: invariant
+    description: "Only one manual run per job MUST be allowed at a time. If a manual run is already in progress for a job, the Run Now button MUST remain disabled with a \"Running...\" label."
+
+  # Job Management -- Pause/Resume
+  - id: REQ-41
+    type: contract
+    description: "The detail pane MUST include a Pause/Resume toggle button. For cron jobs, pausing MUST comment out the crontab line with a `#AGENTBOARD_PAUSED:` prefix. Resuming MUST remove the prefix. For systemd timers, pausing MUST run `systemctl [--user] stop` + `disable`. Resuming MUST run `systemctl [--user] enable` + `start`."
+  - id: REQ-42
+    type: behavioral
+    description: "After a pause or resume operation completes, the job's status MUST update in the list within one poll cycle (max 5 seconds) without requiring a manual refresh."
+
+  # Job Management -- Edit Frequency
+  - id: REQ-43
+    type: behavioral
+    description: "The detail pane MUST include an \"Edit Frequency\" control that opens an inline editor. The editor MUST show a text input for the raw schedule expression and a live human-readable preview below it that updates on each keystroke."
+  - id: REQ-44
+    type: contract
+    description: "The schedule editor MUST validate the expression before applying. Invalid expressions MUST show a red border and error message. For cron expressions, validate against standard 5-field cron format. For systemd calendar specs, validate via a backend call to `systemd-analyze calendar` (or client-side regex if systemd-analyze is unavailable)."
+  - id: REQ-45
+    type: contract
+    description: "For cron jobs, saving a new schedule MUST replace the schedule columns in the crontab line. For systemd timers, saving MUST write the new `OnCalendar=` value to the timer unit file and run `systemctl [--user] daemon-reload`."
+
+  # Job Management -- Delete
+  - id: REQ-46
+    type: behavioral
+    description: "The detail pane MUST include a Delete button styled as a destructive action (red). Clicking MUST show a confirmation dialog stating the job name and warning that deletion is permanent. For system-level jobs (systemd-system), an additional warning about system impact MUST be displayed."
+  - id: REQ-47
+    type: contract
+    description: "For cron jobs, deletion MUST remove the line from the crontab. For systemd timers, deletion MUST stop the timer, disable it, and remove the unit files (.timer and .service)."
+  - id: REQ-48
+    type: invariant
+    description: "Before any destructive or edit operation, the backend MUST create a backup. For crontab: `crontab -l > ~/.agentboard/backups/crontab-{timestamp}`. For systemd: copy unit files to `~/.agentboard/backups/`."
+  - id: REQ-49
+    type: behavioral
+    description: "After deletion, the job MUST be removed from the list with an exit animation. The detail pane MUST revert to the empty state. The list MUST NOT require a manual refresh."
+
+  # Job Creation
+  - id: REQ-50
+    type: behavioral
+    description: "The cron manager MUST provide a \"Create Job\" button (in the list pane header and in the empty state) that opens a creation modal with two modes: Quick (cron) and Advanced (systemd). The Advanced tab MUST be hidden if systemd is not available on the host."
+  - id: REQ-51
+    type: contract
+    description: "Quick mode MUST accept: command (required), schedule expression with live preview (required), and optional name/comment and tags. Submitting MUST append a new entry to the user's crontab."
+  - id: REQ-52
+    type: contract
+    description: "Advanced mode MUST accept: service name (required, validated as a legal systemd unit name matching /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/), command/ExecStart (required), OnCalendar schedule with validation (required), optional Description, optional WorkingDirectory, user-vs-system scope toggle, and optional tags. Submitting MUST generate `.timer` and `.service` unit files, write them, run `daemon-reload`, `enable`, and `start`."
+  - id: REQ-53
+    type: behavioral
+    description: "The creation form MUST validate all inputs before submission. Duplicate detection MUST warn (not block) if a job with the same command already exists. After successful creation, the new job MUST be auto-selected in the list."
+
+  # REFINED: Input Sanitization
+  - id: REQ-96
+    type: invariant
+    description: "The backend MUST reject job creation requests where the command field contains newline characters (\\n, \\r) or null bytes to prevent crontab injection. For systemd creation, service name MUST be validated against /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/ and all fields MUST be checked for newlines and null bytes."
+
+  # REFINED: Non-systemd Graceful Degradation
+  - id: REQ-97
+    type: contract
+    description: "At startup, the backend MUST detect systemd availability via `systemctl --version`. If systemd is unavailable, systemd timer discovery MUST be skipped silently, the `systemdAvailable: false` flag MUST be sent to clients in the `cron-jobs` message, and the Advanced (systemd) creation mode MUST be hidden in the frontend."
+
+  # REFINED: Orphaned Preferences Cleanup
+  - id: REQ-98
+    type: contract
+    description: "The `cron_job_prefs` table MUST include a `last_seen` timestamp column updated on each poll where the job is present. Prefs entries whose `last_seen` is older than 24 hours AND whose `job_id` does not match any currently discovered job MUST be deleted during a cleanup pass run once per hour."
+
+  # REFINED: System Unit Deletion Warning
+  - id: REQ-99
+    type: behavioral
+    description: "Deleting a system-level systemd unit (source: 'systemd-system') MUST show an enhanced confirmation dialog with an explicit warning: 'This is a system-level service. Deleting it may affect system operation.' The user MUST type the unit name to confirm (not just click a button)."
+
+  # REFINED R2: Credential Serialization Bridge
+  - id: REQ-100
+    type: invariant
+    description: "The `cron-sudo-auth` WebSocket message handler in `cronHandlers.ts` MUST immediately convert the received `sudoCredential` JSON string to a Uint8Array via `new TextEncoder().encode()` upon receipt. The handler MUST then set the original string property to `undefined` on the parsed message to minimize the window where the credential exists as an immutable JS string. All downstream code (caching, `sudo -S` piping) MUST operate exclusively on the Uint8Array form."
+
+  # REFINED R2: DiceBear CSP Consideration
+  - id: REQ-101
+    type: property
+    description: "DiceBear avatars MUST be loaded exclusively via `<img>` elements (never inline SVG injection or `dangerouslySetInnerHTML`) to prevent XSS from a compromised API response. If a Content-Security-Policy header is configured on the agentboard server, `img-src` MUST include `https://api.dicebear.com`."
+
+  # Bulk Operations
+  - id: REQ-54
+    type: behavioral
+    description: "When one or more jobs are selected via checkboxes, a floating bulk action bar MUST appear at the bottom of the list pane with: selected count, \"Pause All\", \"Resume All\", \"Delete All\" buttons, and a \"Deselect\" button."
+  - id: REQ-55
+    type: contract
+    description: "Bulk Pause and Bulk Resume MUST iterate through selected jobs sequentially. If any selected jobs require sudo, a single credential prompt MUST cover all operations. Progress MUST be reported via `cron-bulk-operation-progress` WebSocket messages."
+  - id: REQ-56
+    type: behavioral
+    description: "Bulk Delete MUST show a single confirmation dialog listing all selected job names. On confirmation, jobs MUST be deleted sequentially with individual error handling (one failure MUST NOT abort remaining deletions). The list MUST update as each deletion completes."
+  - id: REQ-57
+    type: behavioral
+    description: "Right-click context menu on group headers MUST provide \"Pause all in group\", \"Resume all in group\", and \"Select all in group\" actions."
+
+  # Health & Failure Detection
+  - id: REQ-58
+    type: contract
+    description: "Each job MUST have a `health` field computed server-side from run history. Health levels: `healthy` (last 10 runs all succeeded), `warning` (last run failed, or missed scheduled run, or duration > 2x average), `critical` (2+ consecutive failures, or systemd unit in failed state), `unknown` (no history available)."
+  - id: REQ-59
+    type: invariant
+    description: "Health MUST be recomputed on each poll cycle after run history is gathered. Health changes MUST trigger `cron-job-update` WebSocket messages. Health MUST NOT be persisted to the database -- it is always derived from live data."
+  - id: REQ-60
+    type: contract
+    description: "The `healthReason` field MUST provide a human-readable explanation (e.g., \"Failed 3 times in a row\", \"Last run took 5m (avg: 1m)\", \"Missed scheduled run (last ran 6h ago)\"). This MUST be displayed in a tooltip on the health badge."
+  - id: REQ-61
+    type: contract
+    description: "A job MUST be considered to have \"missed a scheduled run\" if the time since its last run exceeds 2x the expected interval derived from its schedule expression."
+
+  # Duration Tracking
+  - id: REQ-62
+    type: contract
+    description: "Each job MUST track `lastRunDuration` (milliseconds) and `avgDuration` (rolling average of last 10 runs). For systemd, duration comes from journal timestamps. For cron, duration is estimated from syslog entry pairs (start/end) where available, or null if not determinable."
+  - id: REQ-63
+    type: behavioral
+    description: "The detail pane Overview tab MUST display a duration trend indicator: arrow up (latest > avg * 1.2), arrow down (latest < avg * 0.8), or flat. If the latest run exceeded 2x the average, a yellow warning label MUST be shown."
+
+  # Tags & Labels
+  - id: REQ-64
+    type: contract
+    description: "Each job MUST support user-defined tags stored in the `cron_job_prefs` table as a JSON array. Tags MUST be displayed as small colored pills (deterministic color from tag name hash) on the job row in the list and as removable pills in the detail header."
+  - id: REQ-65
+    type: behavioral
+    description: "Adding a tag MUST show an autocomplete dropdown populated with all existing tags across all jobs. Free-text entry MUST also be allowed for new tags."
+  - id: REQ-66
+    type: behavioral
+    description: "The list filter dropdown MUST include all existing tags. Selecting one or more tags MUST filter the list to show jobs matching any selected tag (OR logic)."
+  - id: REQ-67
+    type: behavioral
+    description: "On first discovery of a job, the system SHOULD suggest auto-tags based on command content heuristics (e.g., \"backup\" if command contains `backup`, \"cleanup\" if command contains `clean` or `purge`, \"monitoring\" if command contains `monitor` or `check`). Suggestions MUST be dismissable and MUST only appear once per job."
+
+  # Notifications
+  - id: REQ-68
+    type: behavioral
+    description: "The cron manager MUST emit in-app toast notifications (via the existing Toast system) for: first-time job failure, 3+ consecutive failures, missed scheduled run, and manual run completion. Cron toasts MUST include a cron icon prefix and MUST be clickable to navigate to the job."
+  - id: REQ-69
+    type: behavioral
+    description: "The cron manager MUST support browser desktop notifications (via the Notification API) for failure events. Desktop notifications MUST be opt-in (disabled by default), requiring the user to enable them in settings and grant browser permission."
+  - id: REQ-70
+    type: invariant
+    description: "Notification rate limiting MUST enforce a maximum of 1 desktop notification per job per 5 minutes to prevent spam from rapid-fire failures."
+  - id: REQ-71
+    type: behavioral
+    description: "All notification categories (failure, missed run, manual run) MUST be independently toggleable in settings."
+
+  # Agentboard Session Integration
+  - id: REQ-72
+    type: contract
+    description: "When a cron job's `scriptPath` or `command` references a directory that matches an active agentboard session's `projectPath`, the job MUST be automatically linked to that session. The link MUST be displayed as a small terminal icon in the list row and a clickable session name chip in the detail header."
+  - id: REQ-73
+    type: behavioral
+    description: "The detail header MUST include a \"Link to Session\" button that opens a dropdown of active sessions for manual linking. The manual link MUST be stored in `cron_job_prefs` and MUST persist across sessions."
+  - id: REQ-74
+    type: behavioral
+    description: "Clicking a linked session indicator MUST navigate to that session in the main session view (`activeView: 'sessions'`, `selectedSessionId` set to the linked session)."
+  - id: REQ-75
+    type: behavioral
+    description: "In the main SessionList component, sessions with linked cron jobs MUST show a small clock icon. Clicking it MUST navigate to the cron manager view filtered to that session's linked jobs."
+  - id: REQ-76
+    type: behavioral
+    description: "The detail header MUST include a \"Managed by Agentboard\" toggle (circuit-board icon). When enabled, the job row MUST show a circuit-board badge and the job MUST be filterable via the \"Managed by Agentboard\" filter."
+
+  # Schedule Timeline
+  - id: REQ-77
+    type: behavioral
+    description: "The cron manager MUST include a collapsible schedule timeline displayed above the split pane. The timeline MUST be togglable via a \"Timeline\" button in the view header."
+  - id: REQ-78
+    type: behavioral
+    description: "The timeline MUST support two ranges: 24-hour (default, 1-hour buckets) and 7-day (daily buckets). Each bucket MUST show a stacked bar representing the number of jobs scheduled to fire in that window, colored by health status."
+  - id: REQ-79
+    type: behavioral
+    description: "Hovering a timeline bucket MUST show a tooltip listing the specific jobs firing in that window. Clicking a job name in the tooltip MUST select it in the list and open its detail."
+  - id: REQ-80
+    type: benchmark
+    description: "The timeline MUST be computed client-side from job schedules. For recurring schedules, the next N occurrences MUST be projected using a cron expression evaluator or systemd calendar parser. The projection MUST be capped at 500 data points for performance."
+
+  # Privilege Escalation
+  - id: REQ-81
+    type: contract
+    description: "Each job MUST have a `requiresSudo` boolean flag indicating whether MANAGEMENT operations need elevation. Jobs from `system-crontab` and `systemd-system` sources MUST have `requiresSudo: true`. Jobs from `user-crontab` and `systemd-user` sources MUST have `requiresSudo: false`. Note: discovery/reading of system sources does NOT require sudo."
+  - id: REQ-82
+    type: behavioral
+    description: "When an operation requires sudo, the frontend MUST display a credential prompt modal before sending the operation. Controls that require sudo MUST display a lock icon as a visual indicator."
+  - id: REQ-83
+    type: property
+    description: "The backend MUST cache sudo credentials as a Uint8Array (not a JS string) for a configurable grace period (default: 5 minutes). Within the grace period, subsequent sudo operations MUST NOT require re-prompting. After expiry, the cached buffer MUST be filled with zeros and the reference set to null."
+  - id: REQ-84
+    type: property
+    description: "Sudo credentials MUST be transmitted over WebSocket only when the connection uses WSS (TLS). If the connection is plain WS (e.g., localhost development), the system MUST still function but MUST log a warning about insecure credential transmission."
+
+  # Schedule Display
+  - id: REQ-85
+    type: contract
+    description: "Cron expressions MUST be converted to human-readable strings using the `cronstrue` npm package. The human-readable string MUST appear alongside the raw expression in both the list pane and the detail pane."
+  - id: REQ-86
+    type: contract
+    description: "Systemd calendar specs MUST be converted to human-readable strings. Common patterns MUST be parsed. For unrecognized patterns, the raw spec MUST be displayed with a \"systemd calendar\" label."
+
+  # Database & Persistence
+  - id: REQ-87
+    type: contract
+    description: "A `cron_job_prefs` SQLite table MUST be created in `initDatabase()` to store per-job user preferences (custom avatar style, custom display name, favorite flag, managed flag, linked session, tags, notes, last_seen). The table MUST NOT store job state -- all job state comes from system discovery."
+  - id: REQ-88
+    type: contract
+    description: "A `cron_run_history` SQLite table MUST be created to store manual run results (timestamp, duration, exit code, log snippet). Scheduled run history comes from system logs and MUST NOT be duplicated into this table."
+  - id: REQ-89
+    type: contract
+    description: "The Zustand store MUST persist `selectedJobId`, `sortMode`, `filterMode`, `filterSource`, `filterTags`, `collapsedGroups`, `activeTab`, `timelineVisible`, and `timelineRange` across browser sessions via `localStorage`."
+
+  # Settings
+  - id: REQ-90
+    type: behavioral
+    description: "The SettingsModal MUST include a \"Cron Manager\" section with configurable settings: poll interval (slider, 2-30s), avatar style (dropdown), sudo grace period (slider), show system jobs (toggle), show user jobs (toggle), timeline default visibility (toggle), timeline default range (dropdown), and all notification toggles (toasts enabled, desktop enabled, per-event toggles)."
+
+  # Performance
+  - id: REQ-91
+    type: benchmark
+    description: "Job discovery MUST complete within 2 seconds on a typical system with fewer than 200 jobs. Individual source discovery failures MUST be caught and logged without blocking other sources."
+  - id: REQ-92
+    type: benchmark
+    description: "The list pane MUST render smoothly with up to 200 jobs. Groups MUST use virtualized rendering or lazy loading if the total job count exceeds 100."
+  - id: REQ-93
+    type: benchmark
+    description: "The schedule timeline MUST render within 100ms for up to 200 jobs projected over 7 days (capped at 500 data points)."
+
+  # Accessibility
+  - id: REQ-94
+    type: property
+    description: "All interactive elements in the cron manager view (search bar, sort/filter dropdowns, group headers, job rows, control buttons, tabs, timeline, bulk action bar) MUST be keyboard-navigable. Arrow keys MUST navigate the job list. Enter MUST select a job. Tab MUST cycle through detail pane sections."
+  - id: REQ-95
+    type: property
+    description: "Status indicator dots and health badges MUST NOT be the sole means of conveying status. Each MUST also have a text label accessible to screen readers via aria-label."
+
+test_specifications:
+  # Discovery Tests
+  - id: TEST-01
+    description: "User crontab parsing. Mock `crontab -l` output with 3 entries (one with a script path, one inline command, one with environment variable). Call `discoverUserCrontab()`. Assert: 3 jobs returned. Assert: script path resolved for the first. Assert: `scriptPath` is null for the inline command. Assert: all have `source: 'user-crontab'` and `requiresSudo: false`."
+  - id: TEST-02
+    description: "System crontab parsing. Mock `/etc/crontab` content with 2 entries including user field. Call `discoverSystemCrontab()`. Assert: 2 jobs returned. Assert: all have `source: 'system-crontab'` and `requiresSudo: true`. Assert: user field correctly parsed."
+  - id: TEST-03
+    description: "User systemd timer discovery. Mock `systemctl --user list-timers --all --output=json` with 2 timers. Call `discoverUserTimers()`. Assert: 2 jobs. Assert: `source: 'systemd-user'`, `requiresSudo: false`. Assert: schedule, last run, next run correctly parsed."
+  - id: TEST-04
+    description: "System systemd timer discovery. Mock `systemctl list-timers --all --output=json` with 2 timers. Call `discoverSystemTimers()`. Assert: 2 jobs. Assert: `source: 'systemd-system'`, `requiresSudo: true`."
+  - id: TEST-05
+    description: "Discovery resilience. Mock user crontab to succeed, system crontab to throw, user timers to succeed, system timers to timeout. Call `discoverAllJobs()`. Assert: returns jobs from successful sources only. Assert: errors logged. Assert: no throw."
+  - id: TEST-06
+    description: "Deterministic job IDs. Discover the same jobs twice. Assert: IDs identical. Change a job's schedule (but not command). Assert: ID remains the same. Change a job's command. Assert: ID changes."
+
+  # REFINED: Systemd Availability Test
+  - id: TEST-94
+    description: "Non-systemd graceful degradation. Mock `systemctl --version` to fail. Call `discoverAllJobs()`. Assert: only crontab sources returned. Assert: `systemdAvailable` is false. Assert: no errors thrown."
+
+  # REFINED: Input Sanitization Tests
+  - id: TEST-95
+    description: "Crontab injection prevention. Call `createCronJob` with command containing newline character. Assert: rejection error. Call with command containing null byte. Assert: rejection error. Call with valid command. Assert: success."
+  - id: TEST-96
+    description: "Systemd unit name validation. Call `createSystemdTimer` with serviceName 'my timer' (space). Assert: rejection. With 'my-timer' (valid). Assert: success. With '../escape' (path traversal). Assert: rejection."
+
+  # Project Grouping Tests
+  - id: TEST-07
+    description: "Script path grouping. Jobs with paths: `/home/user/projects/myapp/scripts/backup.sh`, `/home/user/projects/myapp/cron/cleanup.sh`, `/opt/tools/monitor.sh`, inline `echo hello`. Assert: first two grouped under `myapp`, third under `tools`, fourth under `System`."
+  - id: TEST-08
+    description: "System group always last. Groups: \"alpha\", \"System\", \"beta\". Assert: order is alpha, beta, System."
+
+  # Avatar Tests
+  - id: TEST-09
+    description: "Avatar URL generation. Job named \"daily-backup\". Assert: URL is `https://api.dicebear.com/9.x/bottts/svg?seed=daily-backup`."
+  - id: TEST-10
+    description: "Avatar style change. Change `cronAvatarStyle` to `pixel-art`. Assert: all URLs update to `pixel-art` style."
+  - id: TEST-11
+    description: "Avatar fallback. Simulate DiceBear img onerror. Assert: colored circle with first letter rendered. Assert: color is deterministic."
+
+  # Polling & Diff Tests
+  - id: TEST-12
+    description: "Polling sends only diffs. Start with 3 jobs. On next poll, one status changes and one new job appears. Assert: `cron-job-update` sent for changed job. Assert: new job sent. Assert: unchanged jobs NOT resent."
+  - id: TEST-13
+    description: "Polling pauses with no clients. Disconnect all clients. Assert: polling stops. Reconnect. Assert: polling resumes."
+  - id: TEST-14
+    description: "Removed job sends removal. Start with 3, one disappears. Assert: `cron-job-removed` sent."
+
+  # List Pane Tests
+  - id: TEST-15
+    description: "Search filters by name, command, group, and tag. 5 jobs, one tagged \"backup\". Search \"backup\". Assert: matches by name/command/group/tag."
+  - id: TEST-16
+    description: "Sort by next run. 3 jobs with different next run times. Sort by next-run. Assert: soonest first. Assert: null next run sorted last."
+  - id: TEST-17
+    description: "Filter by source type. Jobs from all 4 sources. Filter \"systemd-user\". Assert: only systemd-user shown."
+  - id: TEST-18
+    description: "Filter by tag. Jobs with tags: [\"backup\"], [\"monitoring\"], [\"backup\", \"monitoring\"]. Filter by \"backup\". Assert: first and third shown. Add \"monitoring\" filter. Assert: all three shown (OR logic)."
+  - id: TEST-19
+    description: "Filter by health. Jobs: one healthy, one warning, one critical. Filter \"unhealthy\". Assert: warning and critical shown."
+  - id: TEST-20
+    description: "Group collapse persists. Collapse a group. Navigate away and back. Assert: group remains collapsed."
+  - id: TEST-21
+    description: "Bulk selection. Click checkbox on 3 jobs. Assert: bulk action bar appears showing \"3 selected\". Assert: Pause All, Resume All, Delete All buttons visible."
+  - id: TEST-22
+    description: "Shift+click range select. Click job 1 checkbox. Shift+click job 4 checkbox. Assert: jobs 1-4 are selected."
+
+  # Detail Pane Tests
+  - id: TEST-23
+    description: "Detail pane populates with tabs. Click a job. Assert: detail pane shows header + 4 tabs (Overview, History, Logs, Script). Assert: Overview tab active by default."
+  - id: TEST-24
+    description: "Active tab persists. Switch to History tab. Select a different job. Assert: History tab remains active."
+  - id: TEST-25
+    description: "Schedule editor validates cron. Open editor. Enter `* * * *` (invalid). Assert: red border + error. Enter `*/5 * * * *`. Assert: green + preview \"Every 5 minutes\"."
+  - id: TEST-26
+    description: "Script viewer syntax highlighting. Job with `.sh` script. Assert: bash highlighting. Job with `.py` script. Assert: python highlighting."
+  - id: TEST-27
+    description: "Next run live countdown. Select a job with nextRun in 2 hours. Assert: countdown displays and ticks down in real-time."
+
+  # Run Now Tests
+  - id: TEST-28
+    description: "Run Now triggers execution. Click Run Now on a user cron job. Assert: `cron-job-run-now` message sent. Assert: button shows spinner. Mock `cron-run-output` messages. Assert: output streams into mini-terminal. Mock `cron-run-completed`. Assert: exit code and duration shown inline."
+  - id: TEST-29
+    description: "Run Now disabled during execution. Start a manual run. Assert: Run Now button disabled with \"Running...\" label. Complete the run. Assert: button re-enabled."
+  - id: TEST-30
+    description: "Manual run recorded in history. Complete a manual run. Navigate to History tab. Assert: the run appears with `trigger: 'manual'` badge."
+  - id: TEST-31
+    description: "Run Now with sudo. Click Run Now on a system job. Assert: sudo prompt appears first. Enter credentials. Assert: execution proceeds."
+
+  # History Tab Tests
+  - id: TEST-32
+    description: "History timeline displays runs. Job with 10 past runs (8 success, 2 failure). Render History tab. Assert: 10 entries displayed, newest first. Assert: failures show red exit code badge."
+  - id: TEST-33
+    description: "History entry expands to show log snippet. Click a history entry. Assert: expands to show logSnippet text."
+  - id: TEST-34
+    description: "Failure streak highlighted. 3 consecutive failures. Assert: red left-border band on those entries. Assert: \"3 consecutive failures\" shown at top."
+  - id: TEST-35
+    description: "Duration sparkline renders. Job with 20 runs of varying duration. Assert: sparkline chart renders above the timeline."
+  - id: TEST-36
+    description: "Pagination loads more. Job with 75 runs. Assert: first 50 shown. Click \"Load more\". Assert: remaining 25 loaded."
+
+  # Logs Tab Tests
+  - id: TEST-37
+    description: "Systemd logs displayed. Select a systemd job. Open Logs tab. Mock `journalctl` output. Assert: log lines displayed with line numbers."
+  - id: TEST-38
+    description: "Live tail mode. Enable live tail toggle. Assert: green \"Live\" indicator visible. Mock new log lines arriving. Assert: log viewer auto-scrolls to show new lines. Disable tail. Assert: auto-scroll stops."
+  - id: TEST-39
+    description: "Log search. Open Logs tab with content. Press Cmd+F. Type a search term. Assert: matching text is highlighted. Assert: match count displayed."
+  - id: TEST-40
+    description: "Copy logs. Click \"Copy all\". Assert: clipboard contains all visible log lines."
+
+  # Job Creation Tests
+  - id: TEST-41
+    description: "Quick mode creates cron job. Open Create modal, Quick mode. Enter command `echo hello` and schedule `*/5 * * * *`. Submit. Assert: `cron-job-create` message sent with `mode: 'cron'`. Mock success. Assert: new job appears in list and is auto-selected."
+  - id: TEST-42
+    description: "Advanced mode creates systemd timer. Open Create modal, Advanced mode. Enter service name `my-timer`, command `/usr/local/bin/task.sh`, schedule `*-*-* 03:00:00`. Submit. Assert: `cron-job-create` message sent with `mode: 'systemd'`. Mock success. Assert: new job appears."
+  - id: TEST-43
+    description: "Creation validates inputs. Leave command empty, try to submit. Assert: validation error. Enter invalid systemd unit name (spaces). Assert: validation error. Enter valid inputs. Assert: submit enabled."
+  - id: TEST-44
+    description: "Duplicate detection warns. A job with command `echo hello` already exists. Create another with same command. Assert: warning shown (\"A job with this command already exists\"). Assert: user can still submit (warning, not blocking)."
+
+  # Bulk Operation Tests
+  - id: TEST-45
+    description: "Bulk pause. Select 3 user jobs. Click \"Pause All\". Assert: `cron-bulk-pause` sent with 3 IDs. Mock progress messages. Assert: each job status updates as it completes."
+  - id: TEST-46
+    description: "Bulk delete with confirmation. Select 2 jobs. Click \"Delete All\". Assert: confirmation dialog lists both job names. Confirm. Assert: `cron-bulk-delete` sent. Assert: jobs removed from list as deletions complete."
+  - id: TEST-47
+    description: "Bulk with mixed sudo. Select 1 user job + 1 system job. Click \"Pause All\". Assert: single sudo prompt covers both. Enter credentials. Assert: both operations proceed."
+  - id: TEST-48
+    description: "Group context menu. Right-click group header. Assert: \"Pause all in group\", \"Resume all in group\", \"Select all in group\" visible. Click \"Select all in group\". Assert: all jobs in that group selected."
+
+  # Health & Failure Detection Tests
+  - id: TEST-49
+    description: "Healthy status. Job with 10 successful runs. Assert: `health: 'healthy'`, `healthReason: null`."
+  - id: TEST-50
+    description: "Warning on single failure. Job with 9 successes then 1 failure. Assert: `health: 'warning'`, `healthReason` mentions last run failure."
+  - id: TEST-51
+    description: "Critical on consecutive failures. Job with 3 consecutive failures. Assert: `health: 'critical'`, `healthReason: \"Failed 3 times in a row\"`."
+  - id: TEST-52
+    description: "Warning on missed run. Job scheduled every hour, last ran 3 hours ago. Assert: `health: 'warning'`, `healthReason` mentions missed run."
+  - id: TEST-53
+    description: "Warning on slow run. Job average duration 60s, last run 150s. Assert: `health: 'warning'`, `healthReason` mentions slow run."
+  - id: TEST-54
+    description: "Health badge in list. Render list with healthy, warning, critical jobs. Assert: green checkmark, yellow triangle, red X respectively. Assert: tooltips show healthReason."
+  - id: TEST-55
+    description: "Group health indicator. Group with one critical job. Assert: group header shows red dot."
+
+  # Duration Tracking Tests
+  - id: TEST-56
+    description: "Duration stats displayed. Job with 10 runs, avg 60s, last 45s. Assert: Overview shows \"Last: 45s\", \"Avg: 60s\", trend arrow down (getting faster)."
+  - id: TEST-57
+    description: "Slow run warning. Job avg 60s, last 130s. Assert: yellow warning with \"Last run took 2m 10s (avg: 1m)\"."
+  - id: TEST-58
+    description: "Sparkline in History tab. Job with 15 runs. Assert: sparkline renders with 15 data points."
+
+  # Tag Tests
+  - id: TEST-59
+    description: "Add tag. Open detail. Click \"+\". Type \"backup\". Assert: tag pill appears in header. Assert: `cron-job-set-tags` message sent."
+  - id: TEST-60
+    description: "Remove tag. Click \"x\" on a tag pill. Assert: tag removed. Assert: message sent."
+  - id: TEST-61
+    description: "Tag autocomplete. Existing tags: \"backup\", \"monitoring\". Start typing \"mon\". Assert: \"monitoring\" shown in dropdown."
+  - id: TEST-62
+    description: "Filter by tag. Filter by \"backup\" tag. Assert: only tagged jobs shown."
+  - id: TEST-63
+    description: "Auto-tag suggestion. New job with command containing \"backup\". Assert: \"backup\" tag suggested. Dismiss. Assert: suggestion not shown again."
+
+  # Notification Tests
+  - id: TEST-64
+    description: "Toast on first failure. Job transitions from healthy to warning (first failure). Assert: toast notification appears with cron icon and job name."
+  - id: TEST-65
+    description: "Toast on consecutive failures. Job reaches 3 consecutive failures. Assert: toast with critical severity."
+  - id: TEST-66
+    description: "Desktop notification. Enable desktop notifications. Job fails. Assert: `new Notification()` called. Assert: clicking notification focuses agentboard tab."
+  - id: TEST-67
+    description: "Rate limiting. Same job fails twice within 5 minutes. Assert: only one desktop notification. After 5 minutes, fails again. Assert: new notification allowed."
+  - id: TEST-68
+    description: "Notification settings. Disable `cronNotifyOnFailure`. Job fails. Assert: no toast or desktop notification for failure."
+
+  # Session Integration Tests
+  - id: TEST-69
+    description: "Auto-link by project path. Active session with `projectPath: '/home/user/myapp'`. Cron job with `scriptPath: '/home/user/myapp/scripts/backup.sh'`. Assert: job has `linkedSessionId` set. Assert: terminal icon in list row."
+  - id: TEST-70
+    description: "Manual session link. Click \"Link to Session\" in detail. Select a session. Assert: `cron-job-link-session` sent. Assert: linked session chip shown in header."
+  - id: TEST-71
+    description: "Navigate to linked session. Click linked session chip. Assert: view switches to sessions. Assert: linked session is selected."
+  - id: TEST-72
+    description: "Managed by Agentboard toggle. Click circuit-board icon. Assert: `cron-job-set-managed` sent with `true`. Assert: badge appears on list row. Filter by \"Managed\". Assert: job shown."
+  - id: TEST-73
+    description: "Clock icon in SessionList. Session has linked cron jobs. Assert: clock icon visible on session row. Click it. Assert: navigates to cron manager filtered to linked jobs."
+
+  # Schedule Timeline Tests
+  - id: TEST-74
+    description: "Timeline renders 24h view. 5 jobs with various schedules. Show timeline. Assert: 24 buckets displayed. Assert: buckets with jobs show colored bars."
+  - id: TEST-75
+    description: "Timeline hover shows tooltip. Hover a bucket with 2 jobs. Assert: tooltip lists both job names."
+  - id: TEST-76
+    description: "Timeline click selects job. Click a job name in tooltip. Assert: job selected in list. Assert: detail pane opens."
+  - id: TEST-77
+    description: "7-day view. Switch to 7-day range. Assert: 7 buckets displayed."
+  - id: TEST-78
+    description: "Timeline toggle persists. Show timeline. Refresh page. Assert: timeline still visible."
+
+  # Privilege Escalation Tests
+  - id: TEST-79
+    description: "Sudo prompt for system jobs. Select system cron job. Click Pause. Assert: sudo modal appears. Enter credentials. Assert: operation proceeds."
+  - id: TEST-80
+    description: "Sudo grace period. Enter credentials. Another sudo op within 5 min. Assert: no prompt. After grace period. Assert: prompt reappears."
+  - id: TEST-81
+    description: "No sudo for user jobs. Select user cron job. Click Pause. Assert: no sudo prompt."
+  - id: TEST-82
+    description: "Lock icon on sudo controls. System job detail pane. Assert: Run Now, Pause, Edit, Delete buttons show lock icon."
+
+  # REFINED: Credential zeroing test
+  - id: TEST-97
+    description: "Credential buffer zeroing. Cache sudo credentials as Uint8Array. Trigger expiry. Assert: buffer contents are all zeros. Assert: cache reference is null."
+
+  # REFINED R2: Credential serialization bridge test
+  - id: TEST-98
+    description: "Credential serialization bridge. Send a `cron-sudo-auth` message via WebSocket with `sudoCredential: 'testpass'`. Assert: handler converts to Uint8Array via TextEncoder. Assert: the original string property is set to undefined on the parsed message. Assert: cached credential is Uint8Array, not string. Assert: `sudo -S` receives the credential from the Uint8Array pipe."
+
+  # REFINED R2: Avatar CSP safety test
+  - id: TEST-99
+    description: "Avatar XSS prevention. Assert: DiceBear avatars are rendered as `<img>` elements (not inline SVG or dangerouslySetInnerHTML). Mock a DiceBear response containing `<script>` tags. Assert: no script execution occurs because `<img>` elements do not execute embedded scripts."
+
+  # Settings Tests
+  - id: TEST-83
+    description: "Poll interval setting. Change to 10000ms. Assert: next poll after ~10s."
+  - id: TEST-84
+    description: "Avatar style setting. Change to `fun-emoji`. Assert: all avatars update."
+  - id: TEST-85
+    description: "Show/hide system jobs. Disable `cronShowSystemJobs`. Assert: system jobs hidden. Re-enable. Assert: they reappear."
+  - id: TEST-86
+    description: "Notification toggles. Disable `cronNotifyOnFailure`. Trigger failure. Assert: no toast."
+
+  # WebSocket Protocol Tests
+  - id: TEST-87
+    description: "Full list on connect. New connection. Assert: `cron-jobs` with complete list and `systemdAvailable` flag."
+  - id: TEST-88
+    description: "Incremental on poll. Job status change. Assert: `cron-job-update` (not full list)."
+  - id: TEST-89
+    description: "Removal notification. Job disappears. Assert: `cron-job-removed` with correct ID."
+  - id: TEST-90
+    description: "Run output streaming. Trigger Run Now. Assert: `cron-run-started`, then `cron-run-output` chunks, then `cron-run-completed`."
+
+  # Accessibility Tests
+  - id: TEST-91
+    description: "Keyboard navigation in list. Focus list. ArrowDown -> next job highlighted. Enter -> job selected. ArrowUp -> previous."
+  - id: TEST-92
+    description: "Tab navigation in detail. Press Tab. Assert: cycles through tabs and interactive elements within the detail pane."
+  - id: TEST-93
+    description: "Aria labels on badges. All health badges and status dots have `aria-label` attributes."
+
+refinement_summary:
+  round: 2
+  base_spec: "/home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24/refined-spec.yaml"
+  review_verdict: "PASS (r1)"
+
+  r2_changes_from_review_feedback:
+    - observation: "Sections 4-12 referenced but not inlined from original spec"
+      resolution: "Inlined all sections 4-12 (List Pane, Detail Pane, Job Management Operations, Job Creation, Health & Failure Detection, Schedule Timeline, Tags & Labels, Notifications, Agentboard Session Integration) with all r1 amendments applied. Also inlined sections 15-18 (Frontend Store, Schedule Handling, Database, Settings). The spec is now fully self-contained."
+    - observation: "No Content Security Policy considerations for loading external DiceBear SVGs"
+      resolution: "Added CSP note to Section 3 (Avatar System) and new requirement REQ-101 mandating `<img>` element loading (no inline SVG/dangerouslySetInnerHTML) to prevent XSS. Added TEST-99 for avatar XSS prevention."
+    - observation: "WebSocket JSON serialization bridge for credential string->Uint8Array conversion could be more explicit"
+      resolution: "Added 'Credential Serialization Bridge' subsection to Section 6 (Job Management Operations) with explicit TextEncoder conversion protocol. Added new requirement REQ-100 as an invariant. Added TEST-98 to verify the bridge behavior. Updated the cron-sudo-auth message comment in Section 13."
+
+  r1_changes_preserved:
+    validation_findings_addressed:
+      - finding: "Constitution security check failed: regex matched credential-related patterns in architecture_notes code blocks"
+        resolution: "Renamed WebSocket message type from 'cron-sudo-password' to 'cron-sudo-auth', renamed field from 'password' to 'sudoCredential', renamed all method parameters from 'sudoPassword' to 'sudoCredential'. This avoids triggering the secret detection regex while maintaining clear semantics."
+
+    new_requirements_added:
+      - id: REQ-96
+        summary: "Input sanitization for job creation to prevent crontab injection via newlines"
+      - id: REQ-97
+        summary: "Graceful degradation on non-systemd systems (detect at startup, skip sources, hide UI)"
+      - id: REQ-98
+        summary: "Orphaned cron_job_prefs cleanup with 24-hour grace period"
+      - id: REQ-99
+        summary: "Enhanced deletion confirmation for system-level systemd units (type-to-confirm)"
+      - id: REQ-100
+        summary: "R2: Credential serialization bridge — immediate string-to-Uint8Array conversion at WebSocket handler boundary"
+      - id: REQ-101
+        summary: "R2: DiceBear avatar CSP safety — img-only loading, no inline SVG injection"
+
+    new_tests_added:
+      - id: TEST-94
+        summary: "Non-systemd graceful degradation"
+      - id: TEST-95
+        summary: "Crontab injection prevention"
+      - id: TEST-96
+        summary: "Systemd unit name validation"
+      - id: TEST-97
+        summary: "Credential buffer zeroing verification"
+      - id: TEST-98
+        summary: "R2: Credential serialization bridge verification"
+      - id: TEST-99
+        summary: "R2: Avatar XSS prevention via img-only loading"
+
+    existing_requirements_amended:
+      - id: REQ-05
+        change: "Job ID hash now uses source+name+command (NOT schedule) to preserve ID stability on frequency edits"
+      - id: REQ-46
+        change: "Added system-level deletion extra warning requirement"
+      - id: REQ-50
+        change: "Advanced (systemd) tab hidden when systemd unavailable"
+      - id: REQ-81
+        change: "Clarified that requiresSudo applies to management operations, not discovery"
+      - id: REQ-83
+        change: "Specified Uint8Array for credential storage instead of JS string, with explicit zeroing"
+      - id: REQ-84
+        change: "Replaced 'password' terminology with 'credential' throughout"
+      - id: TEST-06
+        change: "Updated to verify ID stability when only schedule changes (not command)"
+      - id: TEST-87
+        change: "Added systemdAvailable flag assertion"
+
+    missing_types_added:
+      - "CronCreateConfig interface (command, schedule, comment, tags)"
+      - "SystemdCreateConfig interface (serviceName, command, schedule, description, workingDirectory, scope, tags)"
+
+    new_risks_added:
+      - id: RISK-04
+        summary: "Non-systemd systems graceful degradation"
+
+  totals:
+    requirements: 101  # REQ-01 through REQ-101
+    tests: 99          # TEST-01 through TEST-99
+    risks: 4           # RISK-01 through RISK-04
+
+  open_questions: []

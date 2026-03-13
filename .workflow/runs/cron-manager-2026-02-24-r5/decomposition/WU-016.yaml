@@ -1,0 +1,66 @@
+id: WU-016
+title: "Privilege Escalation & Destructive Confirms"
+description: |
+  Implement the sudo credential prompt modal and the delete confirmation dialog (with
+  enhanced system-unit warning requiring type-to-confirm). These are triggered by
+  CronJobControls when operations require elevation or are destructive.
+
+dependencies: [WU-014]
+
+files:
+  created:
+    - path: src/client/components/cron/CronSudoPrompt.tsx
+      changes: |
+        - Modal dialog for sudo credential entry
+        - Password input field (type="password")
+        - "Remember for 5 minutes" note (showing configured grace period)
+        - Submit sends cron-sudo-auth WS message with credential
+        - On submit: credential is sent, then the pending operation is retried
+        - Cancel dismisses and aborts the operation
+        - Warning banner if connection is not WSS (plain WS)
+
+    - path: src/client/components/cron/CronDeleteConfirm.tsx
+      changes: |
+        - Confirmation dialog for job deletion
+        - Shows job name and permanent deletion warning
+        - For system-level systemd units (source: 'systemd-system'):
+          enhanced dialog with explicit warning about system impact
+          and type-to-confirm (user must type the unit name to enable Delete button)
+        - For other jobs: simple "Delete" / "Cancel" buttons
+        - Delete button styled as destructive (red)
+        - On confirm: sends cron-job-delete WS message
+
+acceptance_criteria:
+  - req: REQ-82
+    type: behavioral
+    check: "Sudo prompt appears before operations on requiresSudo jobs; lock icon visible on controls"
+  - req: REQ-83
+    type: property
+    check: "Credential cached for grace period; no re-prompt within grace window"
+  - req: REQ-84
+    type: property
+    check: "Warning shown if connection is plain WS (not WSS)"
+  - req: REQ-99
+    type: behavioral
+    check: "System-level systemd unit deletion requires type-to-confirm with explicit warning"
+
+test_specs:
+  - id: TEST-79
+    description: "Sudo prompt for system jobs -- appears on Pause click, operation proceeds after entry"
+  - id: TEST-80
+    description: "Grace period -- no prompt within 5 min, prompt reappears after"
+  - id: TEST-81
+    description: "No sudo for user jobs -- no prompt on Pause click"
+  - id: TEST-82
+    description: "Lock icon on sudo-requiring controls"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-014
+      name: "CronJobControls triggers these modals"
+
+implementation_notes: |
+  The sudo prompt should never log or display the entered credential. The credential
+  is sent as a string over WS (the backend converts to Uint8Array for caching).
+  The type-to-confirm pattern: disable the Delete button until input.value === unitName.
+  Both modals use motion.div for fade-in/out with a backdrop overlay.

@@ -1,0 +1,65 @@
+title: "CronSudoPrompt component never mounted"
+severity: critical
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronSudoPrompt.tsx
+  - src/client/components/cron/CronJobDetail.tsx
+  - src/client/App.tsx
+
+reproduction:
+  steps:
+    - "Start agentboard"
+    - "Navigate to Cron Manager"
+    - "Try to delete or edit a system-level cron job (requires sudo)"
+    - "Observe that the action fails or does nothing"
+  environment: "Linux, systemd available"
+
+expected: |
+  When a user attempts a sudo-requiring action (delete system job, edit system job),
+  the CronSudoPrompt modal appears requesting the sudo password.
+
+actual: |
+  The CronSudoPrompt component exists and is fully implemented, but it is never
+  mounted anywhere. Lock icons show on sudo-requiring controls, but clicking them
+  does nothing.
+
+affected_requirements:
+  - REQ-82 # Sudo prompt mounted before privileged operations
+
+root_cause_hints: |
+  CronSudoPrompt.tsx is a complete modal component but:
+  - It's never imported in CronManager.tsx or CronJobDetail.tsx
+  - There's no state flag like `sudoPromptVisible` to control mounting
+  - The `cron-sudo-required` WS message handler in App.tsx is a no-op comment
+
+fix_approach: |
+  1. In cronStore.ts:
+     - Add state: `sudoPromptVisible: false`, `sudoPendingAction: null`
+     - Add actions: `requestSudo(action)`, `submitSudoPassword(password)`, `cancelSudo()`
+
+  2. In cronHandlers.ts:
+     - Implement `cron-sudo-required` handler
+     - When action requires sudo, send `{type: 'cron-sudo-required', action}`
+
+  3. In CronManager.tsx or CronJobDetail.tsx:
+     - Import CronSudoPrompt
+     - Conditionally render: `{sudoPromptVisible && <CronSudoPrompt />}`
+
+  4. In CronSudoPrompt.tsx:
+     - On submit, dispatch `cron-sudo-authenticate` with password
+     - On cancel, dispatch `cron-sudo-cancel`
+
+  5. In cronHandlers.ts:
+     - Add `cron-sudo-authenticate` handler
+     - Store credential via `cronManager.cacheSudoCredential()`
+     - Re-execute the pending action
+     - Close prompt
+
+acceptance_criteria:
+  - "Clicking a sudo-requiring action (delete system job) shows CronSudoPrompt modal"
+  - "Entering password and clicking Submit stores the credential"
+  - "After successful auth, the original action executes"
+  - "Sudo credential expires after grace period (5 minutes)"
+  - "Canceling the prompt aborts the action"
+  - "Modal shows grace period countdown"

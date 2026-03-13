@@ -1,0 +1,53 @@
+id: WU-015
+title: "Create, Delete & Sudo Modals"
+description: |
+  Implement CronCreateModal: Quick mode (cron: command + schedule with live
+  cronstrue preview + optional comment + tags) and Advanced mode (systemd:
+  service name, command, OnCalendar, desc, workingDir, user/system scope, tags).
+  Advanced hidden if systemd unavailable. Validate all inputs; duplicate detection
+  warns (non-blocking); auto-select new job after creation. Implement
+  CronDeleteConfirm: confirmation dialog with job name; type-to-confirm for
+  system-level units (REQ-99). Implement CronSudoPrompt: credential entry modal
+  with password field, shown before sudo operations.
+files:
+  - path: src/client/components/cron/CronCreateModal.tsx
+    action: modify
+    description: "Implement Quick + Advanced creation forms"
+  - path: src/client/components/cron/CronDeleteConfirm.tsx
+    action: modify
+    description: "Implement delete confirmation with type-to-confirm"
+  - path: src/client/components/cron/CronSudoPrompt.tsx
+    action: modify
+    description: "Implement sudo credential prompt"
+dependencies:
+  - WU-008
+requirements:
+  - REQ-46
+  - REQ-50
+  - REQ-51
+  - REQ-52
+  - REQ-53
+  - REQ-82
+  - REQ-96
+  - REQ-99
+acceptance_criteria:
+  - type: unit_test
+    description: "Quick mode creates cron job with valid command + schedule"
+  - type: unit_test
+    description: "Advanced mode creates systemd timer with all fields"
+  - type: unit_test
+    description: "Advanced mode hidden when systemd unavailable"
+  - type: unit_test
+    description: "Input validation rejects invalid commands (newlines, null bytes)"
+  - type: unit_test
+    description: "Duplicate detection warns but doesn't block"
+  - type: unit_test
+    description: "Type-to-confirm required for system-level unit deletion"
+  - type: unit_test
+    description: "Sudo prompt shows password field and submits credential"
+interfaces:
+  exports:
+    - "CronCreateModal component"
+    - "CronDeleteConfirm component"
+    - "CronSudoPrompt component"
+estimated_loc: 250

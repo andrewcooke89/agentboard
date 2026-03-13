@@ -1,0 +1,14 @@
+title: "Test bug"
+description: "Test bug reported for agentboard project. This is a placeholder bug specification created for testing the fix pipeline workflow."
+reproduction:
+  steps:
+    - "Open the agentboard application"
+    - "Observe the reported test bug behavior"
+  environment: "Bun 1.x, TypeScript 5.x, Linux"
+expected: "Application behaves correctly without the test bug"
+actual: "Test bug is present as described"
+affected_files:
+  - "src/server/index.ts"
+affected_spec: "{{ affected_spec_path }}"
+severity: minor
+verdict: pass

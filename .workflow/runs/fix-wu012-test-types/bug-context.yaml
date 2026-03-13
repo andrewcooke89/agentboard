@@ -1,0 +1,30 @@
+```yaml
+affected_areas:
+  - file: src/client/__tests__/app.WU012.test.tsx
+  - file: src/client/components/cron/__tests__/CronManager.WU012.test.tsx
+  - file: src/client/stores/__tests__/cronStoreCreateOperation.test.ts
+  - file: src/shared/types.ts
+  - component: CronAiProposal (interface definition in src/shared/types.ts)
+  - component: JobSource (type definition in src/shared/types.ts)
+  - component: CronAiProposalOperation (type definition)
+
+bug_summary: |
+  TypeScript errors are occurring in three test files (app.WU012.test.tsx, CronManager.WU012.test.tsx, cronStoreCreateOperation.test.ts) due to outdated test fixtures. These fixtures no longer conform to the current `CronAiProposal` interface and `JobSource` type defined in `src/shared/types.ts`. Specific mismatches include incorrect field names (e.g., `type` instead of `operation`), missing/extra fields (e.g., `title`, `payload`), incorrect enum values (`'cron'` for `JobSource`), and `null` being passed where `string | undefined` is expected. No production code is affected.
+
+reproduction_summary: |
+  1. Navigate to `/home/andrew-cooke/tools/agentboard`.
+  2. Run `bun run typecheck`.
+  3. Observe TypeScript errors related to type mismatches in the listed test files.
+
+severity_assessment:
+  level: major
+  impact: |
+    The bug currently prevents `bun run typecheck` from passing cleanly, which can block CI/CD pipelines or give false negatives about code quality. However, it's confined to test fixture data and does not affect production code functionality or runtime behavior. It's a developer experience and build health issue.
+
+suggested_investigation_areas:
+  - **`src/shared/types.ts`**: Review the current definitions of `CronAiProposal` interface, `CronAiProposalOperation` type, and `JobSource` union type to understand the expected structure and values.
+  - **`src/client/__tests__/app.WU012.test.tsx`**: Locate and update `CronAiProposal` fixtures.
+  - **`src/client/components/cron/__tests__/CronManager.WU012.test.tsx`**: Locate and update `CronAiProposal` fixtures and `JobSource` values.
+  - **`src/client/stores/__tests__/cronStoreCreateOperation.test.ts`**: Locate and update `null` assignments to `undefined` and potentially `CronAiProposal` fixtures if present.
+  - Focus on updating object literals in these test files to match the latest type definitions.
+```

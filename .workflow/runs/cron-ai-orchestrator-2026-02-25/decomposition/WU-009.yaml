@@ -1,0 +1,108 @@
+id: WU-009
+title: "CronAi Drawer Shell (Drawer + Header + StatusBar)"
+description: |
+  Create the 3 container components for the AI drawer: the slide-in overlay drawer,
+  the header bar with session controls, and the bottom status bar. The drawer uses
+  motion/react for animation (same as Phase 26), renders as a right-edge overlay that
+  does not reflow the main content, and is resizable between 360-640px.
+
+layer: 2
+dependencies:
+  - WU-002
+
+files:
+  new:
+    - path: src/client/components/cron/CronAiDrawer.tsx
+      description: |
+        Slide-in overlay drawer from the right edge. Uses motion/react AnimatePresence
+        for enter/exit animation. Width from cronAiStore (default 480px, 360-640px).
+        Contains CronAiHeader at top, terminal area in middle (children slot), CronAiStatusBar
+        at bottom. Resizable via drag handle on left edge. Does NOT block clicks behind it
+        (pointer-events: none on backdrop, pointer-events: auto on drawer itself).
+        Escape key closes (useEscapeToClose hook). z-index above main content.
+    - path: src/client/components/cron/CronAiHeader.tsx
+      description: |
+        Drawer header component. Shows:
+        - "AI Assistant" title
+        - Session status indicator (colored dot + label): offline (gray), starting (yellow pulse),
+          working (green pulse), waiting (blue)
+        - "New Conversation" button (with confirmation dialog: "Start a new conversation?
+          The current conversation will be lost.")
+        - Close button (X icon)
+        Props: sessionStatus, onNewConversation, onClose.
+    - path: src/client/components/cron/CronAiStatusBar.tsx
+      description: |
+        Bottom status bar. Shows:
+        - MCP server connection status (green dot "Connected" / red dot "Disconnected")
+        - Currently selected job context ("Viewing: daily-backup" or "No job selected")
+        - Pending proposal count badge ("2 pending")
+        Props: mcpConnected, selectedJobName, pendingCount.
+
+cross_wu_interfaces:
+  exports:
+    - "CronAiDrawer — rendered in WU-012 (CronManager.tsx)"
+    - "CronAiHeader — internal to drawer, exported for testing"
+    - "CronAiStatusBar — internal to drawer, exported for testing"
+  imports:
+    - "useCronAiStore from WU-002 — drawerOpen, drawerWidth, sessionStatus, pendingProposalCount"
+    - "useSettingsStore from WU-002 — cronAiDrawerWidth"
+    - "motion/react — animation library (existing dependency)"
+
+acceptance_criteria:
+  - id: AC-009-1
+    type: behavioral
+    description: "Drawer slides in from the right edge with animation when drawerOpen=true. Slides out when false."
+  - id: AC-009-2
+    type: behavioral
+    description: "Drawer renders as an overlay (position: fixed, z-index above main content). Main content behind it remains clickable."
+  - id: AC-009-3
+    type: behavioral
+    description: "Drawer width is 480px by default, resizable between 360-640px via left-edge drag handle."
+  - id: AC-009-4
+    type: behavioral
+    description: "Resized width persists: close and reopen drawer → same width."
+  - id: AC-009-5
+    type: behavioral
+    description: "Header shows correct session status with colored indicator."
+  - id: AC-009-6
+    type: behavioral
+    description: "New Conversation button shows confirmation dialog before proceeding."
+  - id: AC-009-7
+    type: behavioral
+    description: "Escape key closes the drawer."
+  - id: AC-009-8
+    type: behavioral
+    description: "Status bar shows MCP connection status, selected job name, and pending proposal count."
+
+requirements_covered:
+  - REQ-01   # slide-in drawer, overlay, toggle
+  - REQ-02   # default 480px, resizable 360-640px, persists
+  - REQ-03   # header + terminal area + status bar
+  - REQ-04   # does not block main content interaction
+  - REQ-08   # New Conversation with confirmation
+  - REQ-09   # session status indicator
+  - REQ-55   # keyboard navigable
+  - REQ-57   # Escape dismisses drawer
+
+tests:
+  - TEST-ID: drawer-toggle
+    description: "Drawer opens and closes with animation."
+    spec_tests: [TEST-01]
+  - TEST-ID: drawer-no-block
+    description: "Main content behind drawer is clickable."
+    spec_tests: [TEST-02]
+  - TEST-ID: drawer-width-persist
+    description: "Resize to 550px, close, reopen — still 550px."
+    spec_tests: [TEST-03]
+  - TEST-ID: drawer-width-bounds
+    description: "Cannot resize below 360px or above 640px."
+    spec_tests: [TEST-04]
+  - TEST-ID: new-conversation-confirm
+    description: "New Conversation shows confirmation dialog."
+    spec_tests: [TEST-08]
+  - TEST-ID: status-indicator
+    description: "Header shows correct status label and color."
+    spec_tests: [TEST-09]
+  - TEST-ID: escape-closes
+    description: "Pressing Escape closes the drawer."
+    spec_tests: [TEST-51]

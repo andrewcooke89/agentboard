@@ -1,0 +1,91 @@
+# Bug Specification: CronSudoPrompt component never mounted, sudo credential flow not connected
+# Generated: 2026-02-27 (updated with investigation findings)
+
+title: "CronSudoPrompt component never mounted, sudo credential flow not connected"
+
+description: |
+  The CronSudoPrompt modal component existed as a fully implemented file
+  (src/client/components/cron/CronSudoPrompt.tsx) but was never imported or
+  rendered in any parent component. This left the entire sudo credential flow
+  disconnected end-to-end:
+
+  1. CronSudoPrompt.tsx was not imported in CronManager.tsx or CronJobDetail.tsx
+  2. The cronStore had no sudoPromptVisible/sudoPromptOperation/sudoPromptJobId
+     state fields or showSudoPrompt/hideSudoPrompt actions
+  3. The cron-sudo-required WebSocket message handler in App.tsx was a no-op
+     comment instead of calling store.showSudoPrompt()
+  4. The cron-sudo-auth client-to-server message was never sent since the modal
+     never opened
+
+  As a result, any cron operation requiring elevated privileges (systemd-system
+  timers, cron entries for other users) would silently fail. The server would
+  send a cron-sudo-required message, the client would ignore it, and the user
+  would see no prompt to provide credentials.
+
+reproduction:
+  steps:
+    - "Start agentboard with bun run dev"
+    - "Navigate to the Cron Manager view"
+    - "Select a cron job that has requiresSudo: true (e.g. a systemd-system scope timer)"
+    - "Click 'Run Now' or attempt to pause/resume/delete/edit the job"
+    - "Observe: no sudo credential prompt appears"
+    - "Server logs show cron-sudo-required was sent but client never responds with cron-sudo-auth"
+  environment: "Bun 1.x, TypeScript 5.x, React 18, Linux with systemd"
+
+expected: |
+  When a privileged cron operation is attempted:
+  1. Server detects 'Sudo credential required' error and sends cron-sudo-required WS message
+  2. Client receives the message, App.tsx handler calls cronStore.showSudoPrompt(jobId, operation)
+  3. CronSudoPrompt modal opens with password input and operation description
+  4. User enters credential and submits
+  5. Client sends cron-sudo-auth WS message with the credential
+  6. Server caches the credential (15-minute grace period with secure zeroing) and retries the operation
+
+actual: |
+  The server sends cron-sudo-required but the client silently drops it:
+  - App.tsx handler was a no-op comment, not a real implementation
+  - cronStore had no sudo state fields or actions
+  - CronSudoPrompt was never imported or rendered in any component tree
+  - The user sees no feedback; the privileged operation silently fails
+
+affected_files:
+  - "src/client/components/cron/CronSudoPrompt.tsx"
+  - "src/client/components/cron/CronManager.tsx"
+  - "src/client/stores/cronStore.ts"
+  - "src/client/App.tsx"
+  - "src/shared/types.ts"
+  - "src/server/wsRouter.ts"
+  - "src/server/handlers/cronHandlers.ts"
+  - "src/server/cronManager.ts"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+fix_summary: |
+  All primary gaps have been resolved in the current custom branch:
+  1. CronManager.tsx imports CronSudoPrompt (line 11) and renders it at lines 143-148
+     with props (isOpen, operation, onSubmit, onCancel) wired to cronStore state
+  2. cronStore.ts has sudoPromptVisible, sudoPromptOperation, sudoPromptJobId
+     state fields with showSudoPrompt() (line 374) and hideSudoPrompt() actions
+  3. App.tsx cron-sudo-required handler (line 471) calls useCronStore.getState().showSudoPrompt()
+  4. CronManager.handleSudoSubmit (line 61) sends cron-sudo-auth via WS and hides the prompt
+  5. Server-side flow is fully wired: wsRouter (line 230) routes cron-sudo-auth to
+     cronHandlers.handleCronSudoAuth (line 488), which calls
+     cronManager.cacheSudoCredential() (line 1220) with a 15-minute TTL and secure
+     Uint8Array zeroing on expiry
+
+  End-to-end flow verified:
+  - Server sends cron-sudo-required for: run-now, pause, resume, edit-frequency, delete, create
+  - Client routes message through App.tsx (line 471-473) → cronStore.showSudoPrompt()
+  - CronSudoPrompt renders inside CronManager (lines 143-148), returns null when closed
+  - handleSudoSubmit sends cron-sudo-auth over shared useWebSocket singleton
+  - Server caches credential as defensive-copy Uint8Array, zeroed on expiry/clear
+
+remaining_minor_gaps:
+  - "No auto-retry: after sudo auth succeeds, the original operation is NOT replayed. sudoPromptJobId and sudoPromptOperation are stored in cronStore but never consumed to re-dispatch. User must manually re-trigger the action."
+  - "Grace period mismatch: CronSudoPrompt defaults gracePeriodMinutes to 5 (UI text), but server caches for 15 minutes (cronHandlers.ts line 490). User is misinformed about credential validity window."
+  - "isPlainWs prop not passed: CronManager does not pass isPlainWs to CronSudoPrompt, so the security warning for plaintext WebSocket transmission is dead code."
+  - "Bulk operations skip sudo: handleCronBulkPause, handleCronBulkResume, handleCronBulkDelete (cronHandlers.ts lines 410-447) do not catch 'Sudo credential required' errors and do not send cron-sudo-required. Sudo failures in bulk ops are silently swallowed in the progress stream."
+
+verdict: pass

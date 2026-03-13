@@ -1,0 +1,56 @@
+verdict: pass
+
+title: "Fix: TypeScript errors in cron test files — missing tags field and private member access"
+
+description: |
+  Fix 16 TypeScript errors across two cron test files caused by interface evolution
+  (required `tags` field added to CronCreateConfig) and visibility changes
+  (`readCrontab`/`writeCrontab` made private in CronManager). The fix adds the
+  missing `tags: []` property to all CronCreateConfig literals, changes the two
+  private methods to `protected` so the existing TestableCronManager subclass
+  pattern works, and uses `as any` casts for direct private member mocking in
+  the duplicate-detection test.
+
+changes:
+  - file: "src/server/__tests__/cronDuplicateDetection.test.ts"
+    description: |
+      1. Add `tags: []` to every CronCreateConfig object literal (lines ~41, ~46, ~78)
+         to satisfy the required `tags: string[]` field.
+      2. Cast CronManager instance to `any` for private member access when mocking
+         readCrontab and writeCrontab (lines ~32-36, ~73-74), e.g.:
+           (cronManager as any).readCrontab = async () => crontabContent;
+           (cronManager as any).writeCrontab = async (content: string) => { ... };
+    change_type: modify
+
+  - file: "src/server/__tests__/cronFlockWrapping.test.ts"
+    description: |
+      1. Add `tags: []` to every CronCreateConfig object literal that is missing it
+         (lines ~62, ~81, ~98, ~114, ~148, ~153).
+      2. For the config at line ~132, also add `comment: ''` alongside `tags: []`
+         (it is missing both `comment` and `tags`).
+      3. No changes needed to the TestableCronManager subclass definition itself —
+         the `protected` override will compile once the base class members are
+         changed from `private` to `protected` (see cronManager.ts change below).
+    change_type: modify
+
+  - file: "src/server/cronManager.ts"
+    description: |
+      Change the visibility of `readCrontab` (line ~752) and `writeCrontab`
+      (line ~760) from `private` to `protected`. This allows the
+      TestableCronManager subclass in cronFlockWrapping.test.ts to override
+      them for I/O isolation, which is the idiomatic testing pattern already
+      in use. No other subclasses of CronManager exist in the codebase, so
+      this has no effect on the public API surface.
+    change_type: modify
+
+acceptance_criteria:
+  - "`bun run typecheck` completes with zero errors in src/server/__tests__/cronDuplicateDetection.test.ts"
+  - "`bun run typecheck` completes with zero errors in src/server/__tests__/cronFlockWrapping.test.ts"
+  - "`bun run typecheck` introduces no new errors anywhere in the project"
+  - "All existing cron-related tests (`bun test --filter cron`) continue to pass"
+  - "No changes to runtime behavior or public API surface of CronManager"
+
+regression_risks:
+  - "Risk 1 (low): Changing readCrontab/writeCrontab from private to protected widens visibility to subclasses. Mitigated by the fact that no production subclasses of CronManager exist and protected still blocks external callers."
+  - "Risk 2 (low): Using `as any` casts in cronDuplicateDetection.test.ts loses type safety on mock assignments. Mitigated by this being test-only code where the mock shape is trivial (async functions matching the original signatures)."
+  - "Risk 3 (negligible): Adding `tags: []` to test config objects could mask future tag-related bugs if tests should be exercising tag logic. Mitigated by the fact that these tests focus on duplicate detection and flock wrapping, not tag behavior."

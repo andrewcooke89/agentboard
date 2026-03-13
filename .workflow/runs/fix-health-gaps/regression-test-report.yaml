@@ -1,0 +1,50 @@
+# Regression Test Report: Health computation unwired, poll interval hardcoded,
+#                          orphan cleanup and history pruning not scheduled
+# Generated: 2026-02-27
+
+verdict: pass
+
+test_files_created:
+  - "src/server/__tests__/health-gaps-regression.test.ts"
+  - "src/server/__tests__/poll-interval-config-regression.test.ts"
+  - "src/server/__tests__/cleanup-scheduling-regression.test.ts"
+
+test_count: 14
+
+description: |
+  Regression tests for four related wiring gaps in the Cron Manager subsystem.
+
+  ## BUG-1: Health computation unwired (6 tests)
+  Tests verify that:
+  - startPolling() enriches jobs with health data before computeDiff()
+  - computeDiff() compares enriched-vs-enriched jobs (no spurious diffs from field mismatch)
+  - handleGetHealth() reads from jobCache instead of discoverAllJobs()
+  - handleGetFailingJobs() reads from jobCache
+  - handleGetScheduleConflicts() reads from jobCache
+  - handleGetScheduleLoad() reads from jobCache
+
+  ## BUG-2: Poll interval hardcoded (4 tests)
+  Tests verify that:
+  - config.ts exports cronPollIntervalMs
+  - config.ts reads CRON_POLL_INTERVAL_MS env var
+  - cronHandlers.ts uses config.cronPollIntervalMs instead of hardcoded 5000
+  - cronHandlers.ts imports config
+
+  ## BUG-3 & BUG-4: Cleanup/prune ineffective (4 tests)
+  Tests verify that:
+  - index.ts calls cronManager.setDb() at server startup (before cleanup timers fire)
+  - setDb is called before cleanup setTimeout is scheduled
+  - CronManager instantiation block includes immediate setDb call
+  - db reference is available at CronManager instantiation time (sanity check)
+
+test_results:
+  total: 14
+  failing: 13  # All bug-detecting tests fail as expected
+  passing: 1   # db availability sanity check
+
+expected_behavior: |
+  All 13 bug-detecting tests MUST FAIL with the current (buggy) code.
+  After the fix is applied, all 14 tests should pass.
+
+  The one passing test confirms that db.db is available at CronManager
+  instantiation time, proving that setDb(db.db) could be called immediately.

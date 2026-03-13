@@ -1,0 +1,79 @@
+title: "Session linking incomplete, auto-tag suggestions and toast notifications not displayed"
+severity: major
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronSessionLink.tsx
+  - src/client/stores/cronStore.ts
+  - src/client/App.tsx
+  - src/server/cronManager.ts
+
+reproduction:
+  steps:
+    - "Open a job detail that has a linked session"
+    - "Click the 'Link Session' dropdown"
+    - "Observe: placeholder only, no real sessions listed"
+    - "Click on the linked session chip"
+    - "Observe: nothing happens, no navigation"
+    - "Trigger a notification (job failure, missed run)"
+    - "Observe: notification stored in store but no toast shown"
+    - "Create/edit a job with tags matching auto-tag patterns"
+    - "Observe: no auto-tag suggestions shown"
+  environment: "Any"
+
+expected: |
+  - Session dropdown shows active sessions
+  - Clicking linked session chip navigates to sessions view
+  - Toast notifications appear for job events
+  - Auto-tag suggestions appear when applicable
+
+actual: |
+  - Session dropdown is hardcoded placeholder
+  - Linked session chip has no onClick handler
+  - Toast notifications accumulate in store but never render
+  - Auto-tag suggestions feature has no UI
+
+affected_requirements:
+  - REQ-16 # Toast notifications displayed
+  - REQ-67 # Auto-tag suggestions
+  - REQ-73 # Session dropdown populated
+  - REQ-74 # Linked session chip navigates
+
+root_cause_hints: |
+  1. CronSessionLink.tsx:48-62 — Dropdown shows hardcoded "No active sessions"
+  2. CronSessionLink.tsx:28-44 — Chip component has no onClick
+  3. cronStore.ts:220-231 — Notifications stored but never rendered
+  4. settingsStore has cronAutoTagSuggestions but nothing reads it
+
+fix_approach: |
+  1. Session dropdown:
+     - Pass real session list from App.tsx to CronJobDetail
+     - In CronSessionLink, map sessions to dropdown options
+     - Handle selection, send cron-job-set-linked-session
+
+  2. Session chip navigation:
+     - Add onClick to CronSessionLink chip
+     - Dispatch navigation action to switch to sessions view
+     - Highlight the linked session in the list
+
+  3. Toast notifications:
+     - Create ToastContainer component or use existing
+     - Subscribe to cronStore.notifications
+     - Render toasts with auto-dismiss after 5s
+     - Add close button
+
+  4. Auto-tag suggestions:
+     - In CronTagInput, check settings for enabled patterns
+     - When job command matches pattern, show suggestion badge
+     - Clicking suggestion adds tag
+     - Add "Dismiss" option to remember job's choice
+
+acceptance_criteria:
+  - "Session dropdown lists all active sessions from session list"
+  - "Selecting a session links it to the job"
+  - "Clicking linked session chip navigates to sessions view and highlights the session"
+  - "Toast notifications appear for job failures, missed runs, manual runs"
+  - "Toasts auto-dismiss after 5 seconds or on manual close"
+  - "Auto-tag suggestions appear when job command matches enabled patterns"
+  - "Clicking auto-tag suggestion adds the tag"
+  - "Dismiss option prevents future suggestions for this job"

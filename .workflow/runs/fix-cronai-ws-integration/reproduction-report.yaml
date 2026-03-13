@@ -1,0 +1,39 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  Test execution: 21 tests failed in app.WU012.test.tsx
+
+  Sample failures:
+  - AC-012-3: Cmd+Shift+A keyboard shortcut tests fail - drawerOpen remains false
+    Expected: true
+    Received: false
+
+  - AC-012-4: cron-ai-proposal handling tests fail - proposals array empty
+    Expected length: 1
+    Received length: 0
+
+  - AC-012-5: cron-ai-navigate select_job tests fail - selectedJobId remains null
+    Expected: "job-1"
+    Received: null
+
+  Code inspection results:
+  - grep for cron-ai-* message handlers: "No cron-ai message handlers found"
+  - grep for useCronAiStore: "useCronAiStore not imported"
+  - grep for toggleDrawer/keyboard shortcut: "No toggleDrawer or Cmd+Shift+A keyboard shortcut found"
+
+notes: |
+  Bug is consistently reproducible via test execution and static code analysis.
+
+  Verification steps completed:
+  1. Ran `bun test src/client/__tests__/app.WU012.test.tsx` - 21 tests failed
+  2. Confirmed App.tsx lacks all four cron-ai-* WebSocket message handlers
+  3. Confirmed useCronAiStore is not imported in App.tsx
+  4. Confirmed Cmd+Shift+A/Ctrl+Shift+A keyboard shortcut does not exist
+
+  The bug matches the description exactly:
+  - WebSocket messages for cron-ai-proposal, cron-ai-navigate, cron-ai-session-status,
+    and cron-ai-mcp-status are silently dropped (no case branches in App.tsx)
+  - No import for useCronAiStore
+  - No keyboard shortcut for toggling the CronAI drawer
+
+  Test count: 21 failed (spec mentioned 24, slight variance but confirms the issue)

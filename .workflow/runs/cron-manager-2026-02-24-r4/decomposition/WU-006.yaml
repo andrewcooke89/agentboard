@@ -1,0 +1,73 @@
+id: WU-006
+title: "History & Log Services"
+description: |
+  Create the CronHistoryService for collecting run history from journalctl/syslog and the
+  cron_run_history database table, and the CronLogService for aggregating logs from
+  journalctl/syslog/mail for display in the Logs tab. These services abstract the
+  platform-specific log source differences behind a unified API.
+
+dependencies: [WU-001, WU-002]
+
+files:
+  created:
+    - path: src/server/cronHistoryService.ts
+      changes: |
+        - CronHistoryService class
+        - getRunHistory(jobId: string, limit: number, before?: string): Promise<JobRunRecord[]>
+          - For systemd: parse journalctl -u {service} entries for start/stop pairs
+          - For cron: parse syslog CRON entries matching the command
+          - Merge with manual runs from cron_run_history DB table
+          - Sort by timestamp descending, apply limit and cursor
+        - recordManualRun(jobId: string, result: { timestamp, endTimestamp, duration, exitCode, logSnippet }): Promise<void>
+          - Insert into cron_run_history table with trigger: 'manual'
+        - getRecentDurations(jobId: string, count: number): Promise<number[]>
+          - Return last N run durations for average computation
+
+    - path: src/server/cronLogService.ts
+      changes: |
+        - CronLogService class
+        - getLogs(jobId: string, lines: number, offset?: number): Promise<string[]>
+          - For systemd: `journalctl -u {service} -n {lines}`
+          - For cron: parse syslog for matching CRON entries, check mail spool, detect log redirections
+        - tailLogs(jobId: string): AsyncGenerator<string>
+          - For systemd: `journalctl -u {service} -f`
+          - For cron: tail detected log files or syslog
+
+acceptance_criteria:
+  - req: REQ-30
+    type: contract
+    check: "History shows last 50 runs by default with pagination; manual runs from DB merged with system log data"
+  - req: REQ-31
+    type: contract
+    check: "Logs from journalctl for systemd, syslog/mail for cron; unified viewer API"
+  - req: REQ-62
+    type: contract
+    check: "Duration tracking: systemd from journal timestamps, cron from syslog pairs or null"
+
+test_specs:
+  - id: TEST-30
+    scope: "Backend: recordManualRun inserts into DB, getRunHistory returns merged+sorted results"
+  - id: TEST-37
+    scope: "Backend: getLogs returns journalctl output for systemd jobs"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronHistoryService API"
+      consumers: [WU-007]
+      contract: |
+        getRunHistory(jobId, limit, before?): Promise<JobRunRecord[]>
+        recordManualRun(jobId, result): Promise<void>
+        getRecentDurations(jobId, count): Promise<number[]>
+    - name: "CronLogService API"
+      consumers: [WU-007]
+      contract: |
+        getLogs(jobId, lines, offset?): Promise<string[]>
+        tailLogs(jobId): AsyncGenerator<string>
+
+implementation_notes: |
+  Use Bun.spawn for journalctl and syslog parsing. For cron log detection, check:
+  1. Log redirection in the command (e.g., >> /var/log/foo.log)
+  2. Syslog entries matching the cron daemon and command
+  3. User mail spool (/var/mail/$USER)
+  History merging: query both system logs and DB, merge by timestamp, deduplicate.
+  The tailLogs generator should use a subprocess with -f flag and yield lines as they arrive.

@@ -1,0 +1,42 @@
+verdict: pass
+
+test_files_created:
+  - "src/server/__tests__/orchestratorTemplates-schema-regression.test.ts"
+
+test_count: 11
+
+description: |
+  Regression test for TEST-39 stale conformance-report schema assertions.
+
+  The bug: TEST-39 in orchestratorTemplates.test.ts asserts five field names from the old
+  conformance-report schema (overall_status, acceptance_criteria, constitution_checks,
+  verified, unverified). The verification template was rewritten with criterion-verification-v1.0
+  schema that uses different field names (overall_verdict, criterion_verifications, techniques,
+  VERIFIED, NEEDS_FIX).
+
+  This regression test verifies:
+  1. The verification template contains the NEW criterion-verification-v1.0 schema fields
+     - overall_verdict (replaces overall_status)
+     - criterion_verifications (replaces acceptance_criteria)
+     - techniques (replaces constitution_checks)
+     - VERIFIED (uppercase verdict, replaces lowercase verified)
+     - NEEDS_FIX (replaces unverified)
+
+  2. The verification template does NOT contain the OLD conformance-report schema fields
+     - overall_status (removed)
+     - acceptance_criteria (removed)
+     - constitution_checks (removed)
+
+  3. TEST-39 assertions should align with actual template content
+
+  The test will FAIL if:
+  - Someone reverts TEST-39 to check for old field names that don't exist
+  - Someone reverts the verification template to the old schema
+  - The template and test get out of sync again
+
+verification:
+  - Ran: bun test src/server/__tests__/orchestratorTemplates-schema-regression.test.ts
+  - Result: 11 pass, 0 fail
+  - Confirmed original TEST-39 fails with current code (bug exists)
+  - Confirmed new fields exist in template (grep verified)
+  - Confirmed old fields don't exist in template (grep verified)

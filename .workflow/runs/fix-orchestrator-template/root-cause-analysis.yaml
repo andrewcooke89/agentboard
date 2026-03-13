@@ -1,0 +1,48 @@
+verdict: pass
+
+root_cause: |
+  TEST-39 in orchestratorTemplates.test.ts asserts five field names from the old
+  conformance-report schema (overall_status, acceptance_criteria, constitution_checks,
+  verified, unverified). The verification template at
+  ~/.claude/orchestrator-templates/verification.md was intentionally rewritten with a
+  criterion-verification-v1.0 schema that uses different field names. The test was
+  never updated to match.
+
+location:
+  file: "src/server/__tests__/orchestratorTemplates.test.ts"
+  line_range: "83-88"
+  function: "TEST-39: Verification template includes conformance report schema"
+
+mechanism: |
+  Stale test assertions. The verification template underwent a schema rewrite
+  (conformance-report → criterion-verification-v1.0) but the five expect().toContain()
+  assertions on lines 84-88 were not updated to reflect the new field names.
+
+  Each stale assertion and its replacement (confirmed by reading the template):
+
+    Line 84: 'overall_status'       → template now uses 'overall_verdict'
+    Line 85: 'acceptance_criteria'   → template now uses 'criterion_verifications'
+    Line 86: 'constitution_checks'   → not present; template uses 'techniques' and 'conformance-report'
+    Line 87: 'verified'              → template uses 'VERIFIED' (uppercase, as a verdict value)
+    Line 88: 'unverified'            → not present; template uses 'NEEDS_FIX' and 'CONCERN' as verdict values
+
+  The test short-circuits on line 84 (first failing assertion), but all five are stale.
+
+fix_approach: |
+  Update the five expect() assertions in TEST-39 (lines 84-88) to check for strings
+  that actually appear in the current verification.md template:
+
+    expect(content).toContain('overall_verdict')          // was 'overall_status'
+    expect(content).toContain('criterion_verifications')   // was 'acceptance_criteria'
+    expect(content).toContain('techniques')                // was 'constitution_checks'
+    expect(content).toContain('VERIFIED')                  // was 'verified'
+    expect(content).toContain('NEEDS_FIX')                 // was 'unverified'
+
+  Optionally update the test description from "conformance report schema" to
+  "criterion-verification schema" to reflect the new schema name.
+
+risk_assessment: |
+  Very low risk. This is a test-only change — no production code is modified.
+  The fix updates string literals in assertions to match the current template.
+  The only risk is choosing replacement strings that happen to exist now but could
+  be removed in a future template edit, but that's inherent to content-based tests.

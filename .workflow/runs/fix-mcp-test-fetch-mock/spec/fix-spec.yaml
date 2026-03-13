@@ -1,0 +1,56 @@
+verdict: pass
+
+title: "Fix: TypeScript errors in MCP test files — fetch mock casting and invalid SessionSource value"
+
+description: |
+  Fixes 6 TypeScript compilation errors across 3 MCP server test files. Two distinct issues:
+
+  1. Insert intermediate `unknown` cast for fetch mock assignments (4 locations).
+     Bun's Mock<T> type lacks the 'preconnect' static property on typeof fetch,
+     causing TS2352. The standard pattern `as unknown as typeof fetch` bridges
+     structurally incompatible types without changing runtime behavior.
+
+  2. Replace invalid SessionSource value 'tmux' with 'external' (2 locations).
+     The SessionSource union type only allows 'managed' | 'external'. Test fixtures
+     incorrectly used 'tmux' which was never valid. 'external' is semantically
+     correct for sessions discovered from tmux windows.
+
+  All changes are test-only — no production code is modified.
+
+changes:
+  - file: "src/server/mcp/__tests__/cronMcpServer.test.ts"
+    description: |
+      Line ~83 in mockFetchResponses: change `}) as typeof fetch` to
+      `}) as unknown as typeof fetch` to fix TS2352 missing 'preconnect' error.
+    change_type: modify
+
+  - file: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+    description: |
+      Three fixes in this file:
+      1. Line ~103 in mockFetchResponses: change `}) as typeof fetch` to
+         `}) as unknown as typeof fetch` (TS2352 fix).
+      2. Line ~1259 in test fixture: change `source: 'tmux'` to `source: 'external'`
+         (TS2322 fix — 'tmux' is not a valid SessionSource).
+      3. Line ~1269 in test fixture: change `source: 'tmux'` to `source: 'external'`
+         (TS2322 fix — same invalid SessionSource value).
+    change_type: modify
+
+  - file: "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+    description: |
+      Two fixes in this file:
+      1. Line ~359: change `}) as typeof globalThis.fetch` to
+         `}) as unknown as typeof globalThis.fetch` (TS2352 fix).
+      2. Line ~1109: change `}) as typeof globalThis.fetch` to
+         `}) as unknown as typeof globalThis.fetch` (TS2352 fix).
+    change_type: modify
+
+acceptance_criteria:
+  - "`bun run typecheck` reports zero errors in all three affected test files"
+  - "All existing tests in the affected files continue to pass (`bun test src/server/mcp/__tests__/cronMcpServer.test.ts src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts`)"
+  - "No production source files are modified — changes are test-only"
+  - "Fetch mocks still intercept HTTP calls correctly at runtime (tests pass)"
+  - "Session fixture data uses valid SessionSource union members only"
+
+regression_risks:
+  - "Risk 1 (very low): The `as unknown` intermediate cast suppresses all type checking on the mock return value. If a test mock returns a structurally wrong Response, TypeScript will no longer catch it at the cast site. Mitigated by: the mock implementations are straightforward Response constructors that are validated by the test assertions themselves."
+  - "Risk 2 (very low): Changing fixture source from 'tmux' to 'external' could affect test logic that branches on the source field. Mitigated by: 'tmux' was never a valid SessionSource so any such branching was already untested. The tests should be exercising real enum values."

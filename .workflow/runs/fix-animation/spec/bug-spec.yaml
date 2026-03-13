@@ -1,0 +1,46 @@
+title: "No framer-motion animations for job list transitions"
+description: |
+  The TaskQueue and TaskItem components render task/job lists without any
+  framer-motion enter/exit animations. When tasks are added, removed, or
+  change status, they appear and disappear instantly with no transition.
+
+  The rest of the codebase (SessionList, CronJobList, PendingReviewDashboard)
+  uses a consistent framer-motion pattern with AnimatePresence, motion.div
+  wrappers, opacity/height enter-exit transitions, and useReducedMotion
+  accessibility support. TaskQueue and TaskItem do not follow this pattern
+  at all — they use plain div elements and {tasks.map(...)} without
+  AnimatePresence.
+
+reproduction:
+  steps:
+    - "Start the dev server with `bun run dev`"
+    - "Open the UI at http://localhost:5173"
+    - "Navigate to the task queue panel"
+    - "Queue a new task or wait for a running task to complete"
+    - "Observe that task items appear/disappear instantly with no animation"
+    - "Compare with the session list panel, where items animate in/out smoothly"
+  environment: "Bun 1.x, React 18, framer-motion ^12.34.3 / motion ^12.25.0"
+
+expected: |
+  Task list items should animate in and out using the same framer-motion
+  pattern established in SessionList.tsx and CronJobList.tsx:
+  - Enter: opacity 0 → 1, height 0 → auto (duration ~200ms)
+  - Exit: opacity 1 → 0, height auto → 0 (duration ~200ms)
+  - Reduced motion: skip height/scale transitions, fade only
+  - AnimatePresence with initial={false} to skip mount animation
+
+actual: |
+  Task items render as plain divs with no enter/exit transitions.
+  Items appear and disappear instantly when the task list updates.
+  No AnimatePresence wrapper, no motion.div elements, no reduced
+  motion support in TaskQueue or TaskItem components.
+
+affected_files:
+  - "src/client/components/TaskQueue.tsx"
+  - "src/client/components/TaskItem.tsx"
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

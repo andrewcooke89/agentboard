@@ -1,0 +1,112 @@
+id: WU-010
+title: "List Pane Core"
+description: |
+  Create the job list pane with grouped display, collapsible group headers, job rows with
+  avatar/name/schedule/status/health display, search filtering, sort modes, filter modes,
+  animated entry/exit, keyboard navigation, and accessibility labels. This is the primary
+  navigation component for the cron manager.
+
+dependencies: [WU-009]
+
+files:
+  created:
+    - path: src/client/components/cron/CronJobList.tsx
+      changes: |
+        - CronJobList component receiving filtered/grouped jobs from cronStore
+        - Group headers: group name, job count, health summary indicator (red dot if any critical)
+        - Collapsible groups with persist via cronStore.toggleGroupCollapse
+        - Search bar with 150ms debounce filtering by name/command/group/tag
+        - Sort dropdown: name (default), next run, last run, status, health
+        - Filter dropdown: all, active, paused, errors, unhealthy, managed, by source, by tag
+        - Tag filters with OR logic
+        - AnimatePresence + motion.div for entry/exit animations (following SessionList pattern)
+        - useReducedMotion() gate for animation
+        - Keyboard navigation: ArrowUp/Down to navigate, Enter to select
+        - Virtualized/lazy rendering for >100 jobs
+    - path: src/client/components/cron/CronJobRow.tsx
+      changes: |
+        - CronJobRow component for a single job entry
+        - Avatar (28x28 img with onerror fallback to colored circle)
+        - Job name (truncated with tooltip)
+        - Human-readable schedule description
+        - Health badge (via CronHealthBadge)
+        - Status indicator dot (green=active, gray=paused, red=error, dim=unknown)
+        - Tag pills (colored, deterministic from tag name hash)
+        - "Managed by Agentboard" circuit-board icon (if flagged)
+        - Linked session terminal icon (if linked)
+        - Checkbox for bulk selection (visible on hover or in select mode)
+        - Shift+click range selection support
+        - onClick -> cronStore.setSelectedJob(id)
+    - path: src/client/components/cron/CronHealthBadge.tsx
+      changes: |
+        - CronHealthBadge component: health status as icon + color
+        - Green checkmark (healthy), yellow triangle (warning), red X (critical), gray question (unknown)
+        - Tooltip showing healthReason
+        - aria-label for screen readers (e.g., "Health: critical -- Failed 3 times in a row")
+
+acceptance_criteria:
+  - req: REQ-10
+    type: behavioral
+    check: "Job add/remove/update animated with motion/react; new jobs animate in, removed animate out"
+  - req: REQ-14
+    type: behavioral
+    check: "Jobs grouped by projectGroup with collapsible headers; collapse state persists"
+  - req: REQ-15
+    type: behavioral
+    check: "Job row shows avatar, name, schedule, health badge, status dot, tag pills, managed icon"
+  - req: REQ-16
+    type: behavioral
+    check: "Search filters by name, command, group, tag with 150ms debounce"
+  - req: REQ-17
+    type: behavioral
+    check: "Sort by name/next run/last run/status/health; health sort: critical > warning > healthy > unknown"
+  - req: REQ-18
+    type: behavioral
+    check: "Filter by all/active/paused/errors/unhealthy/managed/source/tag; tag filters use OR logic"
+  - req: REQ-92
+    type: benchmark
+    check: "Smooth rendering with 200 jobs; virtualized/lazy for >100"
+  - req: REQ-94
+    type: property
+    check: "ArrowUp/Down navigate list; Enter selects; Tab cycles sections"
+  - req: REQ-95
+    type: property
+    check: "Status dots and health badges have aria-label text for screen readers"
+
+test_specs:
+  - id: TEST-15
+    description: "Search filters by name, command, group, and tag"
+  - id: TEST-16
+    description: "Sort by next run time (soonest first, null last)"
+  - id: TEST-17
+    description: "Filter by source type"
+  - id: TEST-18
+    description: "Filter by tag with OR logic"
+  - id: TEST-19
+    description: "Filter by health (unhealthy = warning + critical)"
+  - id: TEST-20
+    description: "Group collapse persists across navigation"
+  - id: TEST-54
+    description: "Health badge icons and tooltips"
+  - id: TEST-55
+    description: "Group health indicator (red dot if any critical)"
+  - id: TEST-91
+    description: "Keyboard navigation in list"
+  - id: TEST-93
+    description: "Aria labels on badges"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronJobList component"
+      consumers: [WU-011, WU-017, WU-019]
+    - name: "CronJobRow component"
+      consumers: [WU-017, WU-019]
+    - name: "CronHealthBadge component"
+      consumers: [WU-012]
+
+implementation_notes: |
+  Follow SessionList.tsx animation patterns: AnimatePresence with motion.div, useReducedMotion
+  gate, EXIT_DURATION of 180ms. For virtualization with >100 jobs, consider a simple windowed
+  approach or IntersectionObserver-based lazy loading. The search/sort/filter state lives in
+  cronStore; this component reads from the store's derived selectors (filteredJobs, groupedJobs).
+  Group headers use the same collapsible pattern as SessionList groups.

@@ -1,0 +1,62 @@
+verdict: pass
+
+test_files_created:
+  - "src/server/__tests__/cronFlockWrapping.test.ts"
+
+test_count: 7
+
+description: |
+  Regression tests for BUG-3: createCronJob() missing flock mutual exclusion wrapping.
+
+  The tests use TestableCronManager which extends CronManager and overrides only
+  readCrontab/writeCrontab for mock capture. The createCronJob() method is the
+  ACTUAL implementation from CronManager, so these tests will FAIL with the
+  current buggy code and PASS after the fix is applied.
+
+  Tests verify:
+  1. createCronJob wraps command with flock for mutual exclusion
+  2. flock lock file uses consistent jobId-based naming (allows runJobNow to use same lock)
+  3. flock uses non-blocking mode (-n flag) for fail-fast on overlap
+  4. flock wrapping preserves original command (including args) as the wrapped target
+  5. flock lock files use /tmp directory for cross-process visibility
+  6. Multiple jobs get different lock files
+  7. jobId is computed from ORIGINAL command, not flock-wrapped version (critical for stability)
+
+test_results_before_fix: |
+  All 7 tests FAIL with current buggy code:
+
+  1. "createCronJob wraps command with flock for mutual exclusion" - FAIL
+     Expected pattern: /flock\s+-n\s+\/tmp\/agentboard-cron-[\w-]+\.lock/
+     Received: "\n0 9 * * * /usr/local/bin/backup.sh # daily backup\n"
+
+  2. "flock lock file uses consistent jobId-based naming" - FAIL
+     Expected to contain: "1f1e2402ceae89cc" (jobId)
+     Received: "\n0 9 * * * /usr/local/bin/backup.sh # daily backup\n"
+
+  3. "flock uses non-blocking mode (-n flag)" - FAIL
+     Expected pattern: /flock\s+-n\b/
+     Received: "\n*/5 * * * * /usr/local/bin/check-health.sh # health check\n"
+
+  4. "flock wrapping preserves original command as the wrapped target" - FAIL
+     Expected pattern: /flock\s+-n\s+\/tmp\/[\w.-]+\s+\/usr\/bin\/docker/
+     Received: "\n0 0 * * * /usr/bin/docker run --rm my-backup-image # docker backup\n"
+
+  5. "flock lock files use /tmp directory for cross-process visibility" - FAIL
+     Expected to contain: "/tmp/agentboard-cron-"
+     Received: "\n@hourly /usr/local/bin/hourly-task.sh\n"
+
+  6. "multiple jobs get different lock files" - FAIL
+     Expected two different lock paths, got null for both (no flock wrapping present)
+
+  7. "jobId is computed from ORIGINAL command, not flock-wrapped version" - FAIL
+     Expected to contain jobId in crontab
+     Received: "\n0 * * * * /usr/local/bin/my-task.sh --arg1 --arg2 # hourly task\n"
+
+expected_test_results_after_fix: |
+  All 7 tests should PASS after applying the fix to createCronJob():
+  - Compute name/jobId BEFORE building crontab line
+  - Build lock file path: /tmp/agentboard-cron-${jobId}.lock
+  - Wrap command: flock -n ${lockFile} ${config.command}
+  - Use wrappedCommand in crontab line
+
+run_command: "bun test src/server/__tests__/cronFlockWrapping.test.ts"

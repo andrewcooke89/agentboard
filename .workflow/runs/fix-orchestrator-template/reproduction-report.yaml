@@ -1,0 +1,31 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  Test failed at line 84 with error:
+  "Expected to contain: overall_status"
+
+  The verification template contains:
+  - Line 67: "Derives overall verdict from per-criterion verdicts (PASS/NEEDS_FIX/CONCERN)"
+  - Line 104: "criterion_verifications:"
+  - Line 107: "verdict: VERIFIED"
+  - Line 124: "overall_verdict: PASS"
+
+  Fields NOT present in template:
+  - overall_status (replaced by overall_verdict)
+  - acceptance_criteria (replaced by criterion_verifications)
+  - constitution_checks (not present)
+  - verified (lowercase - VERIFIED is uppercase)
+  - unverified (not present - uses NEEDS_FIX/CONCERN instead)
+notes: |
+  Bug is consistently reproducible. The test expects 5 old schema field names
+  that were replaced when the verification template was rewritten with the
+  criterion-verification-v1.0 schema.
+
+  Stale assertions and their replacements:
+  1. 'overall_status' (line 84) → should be 'overall_verdict'
+  2. 'acceptance_criteria' (line 85) → should be 'criterion_verifications'
+  3. 'constitution_checks' (line 86) → no direct replacement; could check 'conformance-report'
+  4. 'verified' (line 87) → should be 'VERIFIED' (uppercase)
+  5. 'unverified' (line 88) → should be 'NEEDS_FIX' or 'CONCERN'
+
+  The template change was intentional. The test needs updating.

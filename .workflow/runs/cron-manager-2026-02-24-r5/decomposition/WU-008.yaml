@@ -1,0 +1,84 @@
+id: WU-008
+title: "Frontend Zustand Store"
+description: |
+  Create the cronStore Zustand store with all state management for the cron manager frontend:
+  job list, selected job, filters, sort, search, bulk selection, collapsed groups, active tab,
+  timeline visibility, WebSocket message handlers, and localStorage persistence.
+
+dependencies: [WU-001]
+
+files:
+  created:
+    - path: src/client/stores/cronStore.ts
+      purpose: |
+        useCronStore Zustand hook with:
+        State:
+        - jobs: CronJob[] -- full job list
+        - selectedJobId: string | null
+        - selectedJobDetail: CronJobDetail | null
+        - searchQuery: string
+        - sortMode: 'name' | 'nextRun' | 'lastRun' | 'status' | 'health'
+        - filterMode: 'all' | 'active' | 'paused' | 'errors' | 'unhealthy' | 'managed'
+        - filterSource: JobSource | null
+        - filterTags: string[]
+        - collapsedGroups: Set<string>
+        - activeTab: 'overview' | 'history' | 'logs' | 'script'
+        - bulkSelectedIds: Set<string>
+        - bulkSelectMode: boolean
+        - timelineVisible: boolean
+        - timelineRange: '24h' | '7d'
+        - runningJobs: Set<string> -- jobs with active manual runs
+        - runOutput: Map<string, { chunks: string[], exitCode?: number, duration?: number }>
+        - systemdAvailable: boolean
+
+        Actions:
+        - setSelectedJob(id) / clearSelection()
+        - setSearchQuery(q) / setSortMode(m) / setFilterMode(m) / setFilterSource(s)
+        - toggleFilterTag(tag) / clearFilters()
+        - toggleGroupCollapse(group)
+        - setActiveTab(tab)
+        - toggleBulkSelect(id) / toggleBulkSelectRange(id) / selectAllInGroup(group) / clearBulkSelection()
+        - setTimelineVisible(v) / setTimelineRange(r)
+
+        WS Handlers:
+        - handleCronJobs(jobs, systemdAvailable) -- full list update
+        - handleCronJobUpdate(job) -- incremental update
+        - handleCronJobRemoved(jobId) -- removal
+        - handleCronJobDetail(detail) -- detail response
+        - handleCronOperationResult(result) -- op result
+        - handleCronRunStarted/Output/Completed -- run streaming
+        - handleBulkProgress(progress) -- bulk op progress
+        - handleCronNotification(notification) -- notification event
+
+        Derived selectors:
+        - filteredJobs() -- apply search + sort + filter
+        - groupedJobs() -- group filtered jobs by projectGroup
+        - allTags() -- all unique tags across all jobs
+
+        Persistence:
+        - selectedJobId, sortMode, filterMode, filterSource, filterTags,
+          collapsedGroups, activeTab, timelineVisible, timelineRange
+          persisted via localStorage
+
+acceptance_criteria:
+  - req: REQ-89
+    type: contract
+    check: "Store persists selectedJobId, sortMode, filterMode, filterSource, filterTags, collapsedGroups, activeTab, timelineVisible, timelineRange via localStorage"
+
+test_specs: []
+
+cross_wu_interfaces:
+  exports:
+    - name: "useCronStore hook"
+      consumers: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+  imports:
+    - from: WU-001
+      name: "CronJob, CronJobDetail, JobRunRecord, ServerMessage cron variants"
+
+implementation_notes: |
+  Follow the existing Zustand store pattern in the codebase (sessionStore, settingsStore).
+  Use Zustand's persist middleware for localStorage. The WS handlers should be called from
+  the App.tsx WS message handler (WU-009 wires this). For filteredJobs selector: apply
+  searchQuery (debounced at call site), sortMode, filterMode, filterSource, filterTags in
+  sequence. Group by projectGroup with 'System' always last. Bulk selection uses a Set<string>
+  for O(1) add/remove/check.

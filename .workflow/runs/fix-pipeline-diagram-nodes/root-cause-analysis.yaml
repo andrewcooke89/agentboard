@@ -1,0 +1,70 @@
+verdict: pass
+
+bugs:
+  - id: bug1
+    root_cause: "STATUS_CLASSES map in StepNode.tsx uses bg-gray-500 for 'skipped' status, making it visually identical to 'cancelled' (also bg-gray-500). Should be bg-yellow-500."
+    location:
+      file: "src/client/components/StepNode.tsx"
+      line_range: "10"
+      function: "STATUS_CLASSES (module-level constant)"
+    mechanism: "Wrong color value in static map. The 'skipped' entry was given the same gray background as 'cancelled' instead of a distinct yellow background. This is a simple data error — no logic bug, just the wrong Tailwind class string."
+    fix_approach: "Change line 10 from 'bg-gray-500 text-gray-300 border-gray-400' to 'bg-yellow-500 text-gray-300 border-gray-400'. Single-character class name change."
+    risk_assessment: "Minimal risk. Only changes the background color of skipped steps. No logic changes, no side effects. The same fix should also be applied to the duplicated STATUS_CLASSES in ParallelGroupNode.tsx line 11 for consistency."
+
+  - id: bug2a
+    root_cause: "JSX in ParallelGroupNode dependency info section renders spans without whitespace between them. The parent uses CSS 'gap-1' for visual spacing but textContent extraction (used by tests) sees no spaces. Additionally, parentheses wrap the output but the test expects none."
+    location:
+      file: "src/client/components/ParallelGroupNode.tsx"
+      line_range: "228-256"
+      function: "ParallelGroupNode (JSX return, dependency info section)"
+    mechanism: |
+      Missing text-level whitespace in JSX. The structure is:
+        <span>(depends_on:</span>   ← line 229: includes '(' and no trailing space
+        <span>{depName}</span>      ← line 251: no leading space
+        <span>)</span>              ← line 256: trailing paren
+
+      React's textContent concatenates these as "(depends_on:independent)".
+      The CSS gap-1 class on the parent span (line 228) only adds visual pixel
+      spacing, not actual text characters. Tests read textContent which has no
+      spaces between the colon and the dependency name.
+
+      The test expects "depends_on: independent" (no parens, space after colon,
+      space before dep name).
+    fix_approach: |
+      Change line 229 from '<span>(depends_on:</span>' to '<span>depends_on: </span>'
+      (remove parentheses, add space after colon). Remove the closing ')' span at
+      line 256. Add a space before depName in the span at line 251 or ensure
+      natural whitespace between JSX elements.
+    risk_assessment: "Low risk. Only affects the dependency info text rendering for pending child steps. Visual appearance may shift slightly due to removed parentheses, but the text becomes more readable."
+
+  - id: bug2b_2c
+    root_cause: "The progress summary ternary at line 187 returns 'No steps' when total === 0. Tests expect the consistent format '0/0 complete' for both empty arrays and undefined childSteps."
+    location:
+      file: "src/client/components/ParallelGroupNode.tsx"
+      line_range: "187"
+      function: "ParallelGroupNode (JSX return, progress summary span)"
+    mechanism: |
+      Line 187: {total === 0 ? 'No steps' : `${completed}/${total} complete`}
+
+      When childSteps is [] or undefined:
+        - Line 117: const children = step.childSteps || []  → empty array
+        - Line 118: calculateProgress([]) → { completed: 0, total: 0 }
+        - Line 187: total === 0 → renders 'No steps'
+
+      The tests expect '0/0 complete' in both cases, treating it as a consistent
+      progress format rather than a special "no data" message. The ternary guard
+      for total === 0 is the sole cause — removing it makes both bug 2b and 2c
+      pass simultaneously.
+    fix_approach: "Remove the ternary guard. Change line 187 from '{total === 0 ? \"No steps\" : `${completed}/${total} complete`}' to just '{`${completed}/${total} complete`}'. This always renders the 'X/Y complete' format."
+    risk_assessment: "Minimal risk. The only behavioral change is that zero-child groups show '0/0 complete' instead of 'No steps'. This is arguably more informative and consistent. No logic paths are affected."
+
+summary: |
+  All 4 bugs are straightforward UI rendering issues with no complex interactions:
+
+  1. StepNode: Wrong Tailwind class value (gray instead of yellow) — typo-level fix
+  2. ParallelGroupNode dependency text: Missing whitespace + unwanted parentheses in JSX
+  3-4. ParallelGroupNode progress: Unnecessary ternary guard for empty state
+
+  All fixes are localized to the two component files. No shared state, no side effects,
+  no risk of regression beyond the immediate visual output. Total changes: ~4 lines
+  across 2 files.

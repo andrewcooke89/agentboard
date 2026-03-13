@@ -1,0 +1,42 @@
+title: "MCP test fetch mock TypeScript errors reproduction"
+
+verdict: pass
+reproduced: true
+
+reproduction_output: |
+  Running `bun run typecheck` from project root confirmed all 6 TypeScript errors exist:
+
+  1. src/server/mcp/__tests__/cronMcpServer.test.ts(79,22): error TS2352
+     - Conversion of type 'Mock<...>' to type 'typeof fetch' may be a mistake
+     - Property 'preconnect' is missing in type 'Mock<...>' but required in type 'typeof fetch'
+
+  2. src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(103,22): error TS2352
+     - Same fetch mock casting issue as #1
+
+  3. src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(1259,11): error TS2322
+     - Type '"tmux"' is not assignable to type 'SessionSource | undefined'
+
+  4. src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(1269,11): error TS2322
+     - Type '"tmux"' is not assignable to type 'SessionSource | undefined'
+
+  5. src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts(352,26): error TS2352
+     - Conversion of type '() => Promise<Response>' to type 'typeof fetch' may be a mistake
+     - Property 'preconnect' is missing in type '() => Promise<Response>' but required in type 'typeof fetch'
+
+  6. src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts(1102,26): error TS2352
+     - Same arrow-function-to-fetch casting issue as #5
+
+notes: |
+  All 6 errors match exactly as described in the bug specification:
+
+  - 4 fetch mock casting errors (TS2352) across 3 files due to missing 'preconnect' property
+    when casting Bun's Mock type to 'typeof fetch'. The fix requires intermediate 'unknown' cast.
+
+  - 2 SessionSource value errors (TS2322) in wu006-healthAnalysisTools.test.ts using
+    invalid 'tmux' value instead of valid 'managed' | 'external' union members.
+
+  Note: Many other TypeScript errors exist in the codebase (exit code 2 with ~100+ errors),
+  but the 6 MCP test file errors are reproducible and isolated as described in the bug spec.
+
+  Command executed: bun run typecheck
+  Exit code: 2

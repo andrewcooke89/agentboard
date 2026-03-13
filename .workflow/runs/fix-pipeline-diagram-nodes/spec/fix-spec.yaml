@@ -1,0 +1,65 @@
+verdict: pass
+
+title: "Fix: StepNode skipped color and ParallelGroupNode edge case handling bugs"
+
+description: |
+  Fix 4 UI rendering bugs across StepNode.tsx and ParallelGroupNode.tsx:
+  1. Change skipped status background from bg-gray-500 to bg-yellow-500 in StepNode
+  2. Remove parentheses and add whitespace in ParallelGroupNode dependency info text
+  3-4. Remove total===0 ternary guard so empty/undefined childSteps render "0/0 complete"
+
+changes:
+  - file: "src/client/components/StepNode.tsx"
+    description: |
+      Line 10: Change the 'skipped' entry in STATUS_CLASSES from
+        skipped: 'bg-gray-500 text-gray-300 border-gray-400'
+      to
+        skipped: 'bg-yellow-500 text-gray-300 border-gray-400'
+      This gives skipped steps a distinct yellow background instead of gray
+      (which collides with cancelled status).
+    change_type: modify
+
+  - file: "src/client/components/ParallelGroupNode.tsx"
+    description: |
+      Three changes in this file:
+
+      1. Line 187 - Progress summary: Remove the ternary guard for total === 0.
+         Change:
+           {total === 0 ? 'No steps' : `${completed}/${total} complete`}
+         To:
+           {`${completed}/${total} complete`}
+         This makes empty and undefined childSteps render "0/0 complete"
+         instead of "No steps".
+
+      2. Line 229 - Dependency info opening: Remove parentheses and add trailing space.
+         Change:
+           <span>(depends_on:</span>
+         To:
+           <span>depends_on: </span>
+         This removes the unwanted opening paren and adds a space after the colon.
+
+      3. Line 256 - Dependency info closing paren: Remove the closing paren span.
+         Change:
+           <span>)</span>
+         To:
+           (delete this span entirely, or replace with an empty fragment)
+         This removes the unwanted closing paren from the dependency text.
+
+      After these changes, the dependency info textContent will read
+      "depends_on: independent" instead of "(depends_on:independent)".
+    change_type: modify
+
+acceptance_criteria:
+  - "bun test src/client/__tests__/pipelineDiagram.test.tsx passes — specifically 'applies bg-yellow-500 for skipped status'"
+  - "bun test src/client/__tests__/ParallelGroupNode.test.tsx passes — all 3 previously failing tests:"
+  - "  (1) 'REQ-05: shows dependency info for pending child steps' finds 'depends_on: independent'"
+  - "  (2) 'handles empty childSteps array' finds '0/0 complete'"
+  - "  (3) 'handles undefined childSteps' finds '0/0 complete'"
+  - "No other existing tests regress (bun run test passes)"
+  - "bun run typecheck passes with no new errors"
+
+regression_risks:
+  - "Risk 1: Visual appearance of skipped steps changes from gray to yellow — this is intentional and correct, but users accustomed to the old gray color may notice the change"
+  - "Risk 2: Empty parallel groups now show '0/0 complete' instead of 'No steps' — this is more consistent but slightly less descriptive for truly empty groups"
+  - "Risk 3: Dependency info text loses parentheses wrapping — visual density changes slightly, but readability improves"
+  - "Risk 4: If ParallelGroupNode has a duplicated STATUS_CLASSES map (line 11), the skipped color there should also be checked for consistency, though the bug spec only flags StepNode"

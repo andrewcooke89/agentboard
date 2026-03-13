@@ -1,0 +1,77 @@
+verdict: pass
+
+title: "Fix: Missing cron-ai WebSocket handlers and Cmd+Shift+A keyboard shortcut in App.tsx"
+
+description: |
+  Wire up the four cron-ai-* WebSocket message types and the Cmd+Shift+A keyboard
+  shortcut in App.tsx. The stores (cronAiStore, cronStore), shared types (ServerMessage
+  union), and settings (cronAiEnabled) already exist — only the dispatch layer in
+  App.tsx is missing. This fix is purely additive: new import, new if-branches in the
+  WS message handler, and a new shortcut entry in handleKeyDown.
+
+changes:
+  - file: "src/client/App.tsx"
+    description: |
+      1. ADD IMPORT — Add `import { useCronAiStore } from './stores/cronAiStore'`
+         after the existing store imports (around line 38).
+
+      2. ADD WEBSOCKET HANDLERS — After the existing cron-notification handler block
+         (around line 488), add four new if-branches:
+
+         a) `cron-ai-proposal`:
+            Call `useCronAiStore.getState().handleCronAiProposal(message.proposal)`
+
+         b) `cron-ai-navigate`:
+            Switch on `message.action`:
+            - `'select_job'`: call `useCronStore.getState().setSelectedJob(message.payload.jobId)`
+              and scroll to matching DOM element via
+              `document.querySelector(`[data-job-id="${message.payload.jobId}"]`)?.scrollIntoView({ behavior: 'smooth' })`
+              Must not throw if payload.jobId is missing or element doesn't exist.
+            - `'switch_tab'`: call `useCronStore.getState().setActiveTab(message.payload.tab)`
+            - `'show_timeline'`: call `useCronStore.setState({ timelineVisible: true })`
+              and if `message.payload.range` is present, call
+              `useCronStore.getState().setTimelineRange(message.payload.range)`
+            - `'filter'`: conditionally call `setFilterMode`, `setFilterSource`,
+              `setFilterTags` on useCronStore based on which fields are present in
+              `message.payload` (mode, source, tags — each applied independently).
+            Unknown actions must be silently ignored.
+
+         c) `cron-ai-session-status`:
+            Call `useCronAiStore.getState().handleCronAiSessionStatus(message.status)`
+            AND `useCronAiStore.getState().setSessionWindowId(message.windowId ?? null)`
+
+         d) `cron-ai-mcp-status`:
+            Call `useCronAiStore.getState().handleCronAiMcpStatus(message.connected)`
+
+      3. ADD KEYBOARD SHORTCUT — In the handleKeyDown function (around line 679),
+         after the existing Cmd+Shift+C block, add:
+         - Detect [Cmd/Ctrl]+Shift+A
+         - Gate on `useSettingsStore.getState().cronAiEnabled` being true
+         - Call `useCronAiStore.getState().toggleDrawer()`
+         - Call `event.preventDefault()` only when cronAiEnabled is true
+    change_type: modify
+
+acceptance_criteria:
+  - "useCronAiStore is imported in App.tsx"
+  - "WebSocket messages of type 'cron-ai-proposal' are dispatched to useCronAiStore.getState().handleCronAiProposal(message.proposal)"
+  - "WebSocket messages of type 'cron-ai-navigate' with action 'select_job' call useCronStore.getState().setSelectedJob(payload.jobId) and scroll the matching DOM element into view"
+  - "WebSocket messages of type 'cron-ai-navigate' with action 'switch_tab' call useCronStore.getState().setActiveTab(payload.tab)"
+  - "WebSocket messages of type 'cron-ai-navigate' with action 'show_timeline' set timelineVisible to true via useCronStore.setState and optionally call setTimelineRange if payload.range is present"
+  - "WebSocket messages of type 'cron-ai-navigate' with action 'filter' apply setFilterMode, setFilterSource, and setFilterTags independently based on which payload fields are present"
+  - "Unknown cron-ai-navigate actions are silently ignored (no throw)"
+  - "cron-ai-navigate with missing payload fields (e.g. no jobId) does not throw"
+  - "WebSocket messages of type 'cron-ai-session-status' dispatch to handleCronAiSessionStatus(message.status) and setSessionWindowId(message.windowId ?? null)"
+  - "WebSocket messages of type 'cron-ai-mcp-status' dispatch to handleCronAiMcpStatus(message.connected)"
+  - "Cmd+Shift+A (macOS) / Ctrl+Shift+A (other) toggles the CronAI drawer when cronAiEnabled is true"
+  - "Cmd+Shift+A / Ctrl+Shift+A is a no-op when cronAiEnabled is false"
+  - "event.preventDefault() is called only when cronAiEnabled is true and the shortcut fires"
+  - "All 24 tests in src/client/__tests__/app.WU012.test.tsx pass"
+  - "Existing cron manager WebSocket handlers are not broken"
+  - "Existing keyboard shortcuts (Cmd+Shift+T/W/M/C) continue to work"
+
+regression_risks:
+  - "Typo in message type string literal: handler silently misses messages. Mitigated by TypeScript discriminated union on ServerMessage catching misspelled type literals at compile time."
+  - "scrollIntoView on non-existent DOM element: safe — querySelector returns null and optional chaining prevents the call."
+  - "useCronStore.setState({ timelineVisible: true }) is a direct state mutation bypassing store methods. Acceptable since no setTimelineVisible method exists and tests expect this pattern, but could diverge if such a method is added later."
+  - "Keyboard shortcut collision: Cmd+Shift+A is not a common browser shortcut and follows the same pattern as existing Cmd+Shift+C/M/T/W shortcuts — low risk."
+  - "Import of useCronAiStore adds a new module dependency: if cronAiStore.ts has a missing export or circular import, App.tsx would fail to load. Low risk since the store is already used by other components."

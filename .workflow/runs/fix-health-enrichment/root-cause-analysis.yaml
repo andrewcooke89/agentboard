@@ -1,0 +1,90 @@
+verdict: pass
+
+root_cause: |
+  The regression test on line 25 of health-gaps-regression.test.ts uses a regex
+  that can only handle one level of brace nesting to extract the startPolling()
+  method body. The startPolling method has 3+ levels of nesting (method body →
+  setInterval callback → if/for blocks), so the regex terminates prematurely at
+  the closing brace of the `if (this.pollingInterval)` guard block (line 534),
+  never reaching the enrichAllJobsWithHealth call on line 537. This produces a
+  false negative — the code IS correct but the test reports failure.
+
+  The PRIMARY issue (missing enrichAllJobsWithHealth call) has already been fixed
+  in the working tree. Line 537 correctly calls enrichAllJobsWithHealth(newJobs)
+  between discoverAllJobs() and computeDiff(). Only the SECONDARY issue (broken
+  test regex) remains.
+
+location:
+  file: "src/server/__tests__/health-gaps-regression.test.ts"
+  line_range: "25-31"
+  function: "test('startPolling() should call enrichAllJobsWithHealth...')"
+
+mechanism: |
+  Broken regex with insufficient nesting support (false negative test).
+
+  The regex on line 25:
+    /startPolling\s*\([^)]*\)\s*:\s*void\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/s
+
+  Breaking down the capture group `([^}]+(?:\{[^}]*\}[^}]*)*)`:
+    - `[^}]+`           — match non-} chars (consumes everything up to first })
+    - `(?:\{[^}]*\}[^}]*)*` — optionally match ONE level of { ... } braces
+
+  This pattern handles exactly one level of nesting. The actual method structure:
+
+    startPolling(intervalMs: number): void {          // level 0 open
+      if (this.pollingInterval) {                     // level 1 open
+        this.stopPolling()
+      }                                               // level 1 close ← REGEX STOPS HERE
+      this.pollingInterval = setInterval(async () => {  // level 1 open (never reached)
+        const newJobs = await this.discoverAllJobs()
+        const enrichedJobs = await this.enrichAllJobsWithHealth(newJobs)  // line 537
+        ...
+      }, intervalMs)                                  // level 1 close
+    }                                                 // level 0 close
+
+  The regex matches `}` at line 534 (closing the if-guard) as the method's closing
+  brace. The captured `methodBody` contains only:
+    "if (this.pollingInterval) { this.stopPolling() }"
+
+  Since this substring does not contain 'enrichAllJobsWithHealth', 'computeHealth',
+  or 'enrichJobsWithHealth', the test reports false on line 41.
+
+  Notably, test 2 (line 44-75) uses a different regex strategy:
+    /startPolling\s*\([^)]*\)\s*:\s*void\s*\{[\s\S]*?computeDiff\s*\(/s
+  This uses `[\s\S]*?` (match anything lazily) which correctly spans all nesting
+  levels and PASSES. This confirms the enrichment call exists in the source.
+
+fix_approach: |
+  Replace the regex on line 25 with one that can handle arbitrary nesting depth.
+  Three options in order of preference:
+
+  1. SIMPLEST — Use the same `[\s\S]*?` lazy-match strategy that test 2 already
+     uses successfully. Search for the next method definition or end-of-class as
+     boundary instead of trying to match balanced braces:
+       const startPollingMatch = src.match(
+         /startPolling\s*\([^)]*\)\s*:\s*void\s*\{([\s\S]*?)^\s{2}\}/m
+       )
+     The `^\s{2}\}` anchors to a closing brace at 2-space indent (method level).
+
+  2. ROBUST — Use a brace-counting loop: find the opening `{` after startPolling,
+     then walk characters counting open/close braces until balanced. This handles
+     any depth.
+
+  3. REGION SLICE — Find `startPolling` and the next method definition (e.g.
+     `stopPolling` or `enrichAllJobsWithHealth`), slice the source between them,
+     and check for the enrichment call in that region.
+
+  Option 1 is recommended as it aligns with the pattern already proven in test 2
+  (line 54-55) and requires minimal code change.
+
+risk_assessment: |
+  LOW RISK. The fix only changes test infrastructure (a regex in a regression
+  test), not production code. The production code (enrichAllJobsWithHealth wiring
+  in startPolling) is already correct.
+
+  Risks:
+  - If the method indentation changes (e.g., from 2-space to 4-space), an
+    indent-anchored regex would break. Mitigated by the codebase using consistent
+    2-space indentation enforced by linting.
+  - A brace-counting approach is more resilient but adds complexity to test code.
+  - No risk to production behavior — only test assertion logic changes.

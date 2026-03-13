@@ -1,0 +1,72 @@
+verdict: pass
+
+test_files_created:
+  - "src/client/__tests__/cronAiWsIntegration.regression.test.tsx"
+  - "src/client/__tests__/app.WU012.test.tsx"
+
+test_count: 38
+
+description: |
+  Regression tests verify that the cron-ai WebSocket handlers and Cmd+Shift+A
+  keyboard shortcut are properly wired in App.tsx.
+
+  The tests cover:
+
+  1. KEYBOARD SHORTCUT (4 tests):
+     - Cmd+Shift+A toggles cronAiStore.drawerOpen on Mac
+     - Ctrl+Shift+A toggles drawer on Windows/Linux
+     - Shortcut respects cronAiEnabled setting (no-op when disabled)
+     - Shortcut calls preventDefault() to avoid browser conflicts
+
+  2. WEBSOCKET cron-ai-proposal (2 tests):
+     - Proposal message updates cronAiStore.proposals
+     - Proposal message updates pendingProposalCount
+
+  3. WEBSOCKET cron-ai-session-status (1 test):
+     - Session status updates cronAiStore.sessionStatus and sessionWindowId
+
+  4. WEBSOCKET cron-ai-mcp-status (1 test):
+     - MCP status updates cronAiStore.mcpConnected
+
+  5. WEBSOCKET cron-ai-navigate (10 tests):
+     - select_job: updates selectedJobId and scrolls into view
+     - switch_tab: updates activeTab for all tab values
+     - show_timeline: sets timelineVisible=true, optionally updates timelineRange
+     - filter: independently sets filterMode, filterSource, filterTags
+
+  6. WEBSOCKET cron-ai-proposal-resolved (1 test):
+     - Proposal resolution updates status and feedback
+
+  7. EDGE CASES (5 tests):
+     - Unknown navigate action does not crash
+     - Missing payload fields do not crash
+     - Invalid tab name does not crash
+     - Non-existent jobId still updates store (no existence check)
+     - Full integration flow works end-to-end
+
+  8. INTEGRATION FLOW (14 tests in app.WU012.test.tsx):
+     - Complete AI-driven navigation sequences
+     - Status transitions through full lifecycle
+     - All acceptance criteria from AC-012-3 through AC-012-8
+
+current_state:
+  - Tests FAIL because App.tsx is missing:
+    1. Import for useCronAiStore
+    2. WebSocket handlers for cron-ai-* message types
+    3. Cmd+Shift+A keyboard shortcut in handleKeyDown
+
+expected_after_fix:
+  - All 38 tests should PASS
+  - useCronAiStore will be imported
+  - Four cron-ai-* message types will be handled
+  - Cmd+Shift+A will toggle the CronAI drawer
+
+test_execution:
+  cronAiWsIntegration.regression.test.tsx:
+    total: 14
+    pass: 3
+    fail: 11
+  app.WU012.test.tsx:
+    total: 24
+    pass: 4
+    fail: 20

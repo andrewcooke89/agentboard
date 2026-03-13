@@ -1,0 +1,152 @@
+title: "Cron Manager has 4 major unfixed gaps: no animations, no concurrent-run guard, no scheduled cleanup, non-functional session linking"
+
+description: |
+  The Cron Manager feature (Phase 26) has 4 major implementation gaps remaining
+  after the initial pipeline run. Each gap represents missing functionality that
+  was specified in the refined spec but either left as stub/placeholder code or
+  never wired up.
+
+  GAP-04 — No animations: framer-motion (v12.34.3) and motion (v12.25.0) are
+  installed in package.json but zero cron components import or use either library.
+  All cron UI transitions are abrupt mount/unmount or basic CSS transitions.
+  Non-cron components (SessionList.tsx, PendingReviewDashboard.tsx) already use
+  framer-motion with AnimatePresence + motion.div, proving the pattern works in
+  this codebase. REQ-10 and REQ-49 require smooth animations.
+
+  GAP-05 — No concurrent-run guard: handleCronJobRunNow in cronHandlers.ts
+  (lines 262-303) fires unconditionally every time it is called. There is no
+  server-side check for whether the job is already running. The frontend Zustand
+  store (cronStore.ts) has a runningJobs Set and CronJobControls.tsx disables the
+  button client-side, but this is trivially bypassable via WebSocket. The server
+  needs a Set<string> of active job IDs checked before spawning. REQ-40 requires
+  that manual run-now is blocked while a previous manual run is still active.
+
+  GAP-06 — Orphan cleanup and history pruning never scheduled:
+  cleanOrphanedPrefs() (cronManager.ts:668-677) and pruneRunHistory()
+  (cronManager.ts:674-677) are fully implemented but never called from any
+  scheduled code path. No setInterval, no post-poll hook, and no startup call
+  invokes either method. The database grows unbounded. REQ-98 requires orphan
+  prefs cleanup and REQ-101 requires history pruning on a schedule.
+
+  GAP-08 — Session linking non-functional: CronSessionLink.tsx dropdown body
+  (line 58) is hardcoded to "No active sessions" and never reads from the
+  session store. The component receives only jobId and linkedSessionId as props
+  with no access to available sessions. Clicking a linked session chip shows only
+  a truncated ID with no navigation handler. The managed toggle renders as a
+  static icon with no interactive control despite the server handler
+  (handleCronJobSetManaged) and WS message type (cron-job-set-managed) both
+  existing. REQ-73, REQ-74, and REQ-76 require functional session linking with
+  navigation.
+
+reproduction:
+  steps:
+    - "Start agentboard with `bun run dev` and open the Cron Manager panel"
+    - "GAP-04: Add or remove a cron job and observe the job list — rows appear/disappear abruptly with no enter/exit animation"
+    - "GAP-04: Switch between tabs in CronJobDetail — content swaps instantly with no transition"
+    - "GAP-04: Observe the timeline panel — bar heights have only basic CSS transition, no framer-motion orchestration"
+    - "GAP-05: Click Run Now on any cron job, then immediately send a second cron-run-now WebSocket message for the same job — the server spawns a duplicate run with no error"
+    - "GAP-05: Alternatively, open browser devtools and send `{type:'cron-run-now', jobId:'<id>'}` twice rapidly to bypass the client-side disabled button"
+    - "GAP-06: Let agentboard run for hours or days — check the SQLite database size; orphaned prefs and old run history accumulate indefinitely"
+    - "GAP-06: Search the codebase for any setInterval or scheduled call to cleanOrphanedPrefs or pruneRunHistory — none exists"
+    - "GAP-08: Open CronSessionLink dropdown for any job — it shows only 'No active sessions' regardless of how many sessions are active"
+    - "GAP-08: Link a session to a job (if done via WS manually), then click the session chip — nothing happens, no navigation"
+    - "GAP-08: Look for a managed toggle in CronJobDetail — only a static icon appears with no click handler"
+  environment: "Bun 1.x, TypeScript 5.x, React 18, macOS/Linux, framer-motion v12.34.3 installed but unused in cron components"
+
+expected: |
+  GAP-04: All cron components use framer-motion AnimatePresence and motion
+  wrappers for smooth enter/exit/layout animations consistent with the rest of
+  the agentboard UI (SessionList.tsx pattern). Job rows animate in/out, tab
+  content cross-fades, timeline entries transition smoothly, and the RunNow
+  output panel fades in.
+
+  GAP-05: The server maintains a Set of currently-running job IDs. When
+  handleCronJobRunNow is called for a job that is already running, it returns a
+  WebSocket error message and does not spawn a duplicate process. The guard is
+  cleared when the run completes or fails. This matches the workflow handler
+  pattern (workflowWsHandlers.ts:86-87 countActiveRuns check).
+
+  GAP-06: cleanOrphanedPrefs() runs after each poll cycle (or on a regular
+  interval) to remove preferences for jobs that no longer exist.
+  pruneRunHistory() runs on a periodic schedule (e.g. once per hour) to cap
+  history size. Both are wired via setInterval at server startup, following the
+  existing pattern in index.ts (workflowCleanupInterval, sessionCleanupInterval).
+
+  GAP-08: CronSessionLink dropdown imports useSessionStore and populates with
+  real active sessions (id + project name). Selecting a session sends the
+  cron-job-link-session WS message. Clicking a linked session chip navigates to
+  that session. A managed toggle in CronJobDetail sends the cron-job-set-managed
+  WS message to toggle the managed state.
+
+actual: |
+  GAP-04: No cron component imports framer-motion. All transitions are abrupt
+  mount/unmount or minimal CSS classes (transition-all, animate-spin,
+  animate-pulse). The UI feels jarring compared to non-cron components.
+
+  GAP-05: handleCronJobRunNow (cronHandlers.ts:262-303) spawns a new run
+  unconditionally. The only guard is a client-side disabled button in
+  CronJobControls.tsx:75 which is bypassable via direct WebSocket messages.
+  Multiple simultaneous runs of the same job are possible.
+
+  GAP-06: cleanOrphanedPrefs() and pruneRunHistory() exist as implemented
+  methods in cronManager.ts and db.ts but are never called from any code path.
+  No setInterval, no hook, no startup wiring. The database grows unbounded.
+
+  GAP-08: CronSessionLink.tsx line 58 hardcodes "No active sessions". The
+  component does not import useSessionStore. Linked session chips have no
+  onClick navigation handler. The managed toggle is a static display-only icon
+  in CronJobDetail despite the server handler and WS message type existing.
+
+affected_files:
+  # GAP-04: Animation missing from all cron components
+  - src/client/components/cron/CronJobList.tsx
+  - src/client/components/cron/CronManager.tsx
+  - src/client/components/cron/CronJobDetail.tsx
+  - src/client/components/cron/CronRunNowOutput.tsx
+  - src/client/components/cron/CronTimeline.tsx
+  - src/client/components/cron/CronEmptyState.tsx
+  # GAP-05: No server-side concurrent-run guard
+  - src/server/handlers/cronHandlers.ts
+  - src/server/cronManager.ts
+  # GAP-06: Cleanup methods exist but never scheduled
+  - src/server/cronManager.ts
+  - src/server/handlers/cronHandlers.ts
+  - src/server/index.ts
+  # GAP-08: Session linking non-functional
+  - src/client/components/cron/CronSessionLink.tsx
+  - src/client/components/cron/CronJobDetail.tsx
+  - src/client/stores/cronStore.ts
+
+severity: major
+
+affected_spec: "/home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24/refined-spec.yaml"
+
+affected_requirements:
+  - REQ-10   # Smooth animations (GAP-04)
+  - REQ-49   # AnimatePresence transitions (GAP-04)
+  - REQ-40   # Block concurrent manual runs (GAP-05)
+  - REQ-98   # Orphan prefs cleanup on schedule (GAP-06)
+  - REQ-101  # History pruning on schedule (GAP-06)
+  - REQ-73   # Session linking functional (GAP-08)
+  - REQ-74   # Session navigation from chip (GAP-08)
+  - REQ-76   # Managed toggle control (GAP-08)
+
+gaps:
+  - id: GAP-04
+    summary: "No framer-motion animations in any cron component"
+    requirements: [REQ-10, REQ-49]
+    fix_pattern: "Follow SessionList.tsx AnimatePresence + motion.div pattern"
+  - id: GAP-05
+    summary: "No server-side concurrent-run guard for manual job runs"
+    requirements: [REQ-40]
+    fix_pattern: "Follow workflowWsHandlers.ts countActiveRuns guard pattern"
+  - id: GAP-06
+    summary: "Orphan cleanup and history pruning methods never scheduled"
+    requirements: [REQ-98, REQ-101]
+    fix_pattern: "Follow index.ts setInterval cleanup pattern (workflowCleanupInterval)"
+  - id: GAP-08
+    summary: "Session linking dropdown hardcoded, navigation missing, managed toggle display-only"
+    requirements: [REQ-73, REQ-74, REQ-76]
+    fix_pattern: "Import useSessionStore, populate dropdown, add navigation onClick, wire managed toggle to WS"
+
+verdict: pass

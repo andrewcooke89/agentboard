@@ -1,0 +1,103 @@
+id: WU-003
+title: "CronManager - Discovery & Parsing"
+description: |
+  Create the CronManager class with all job discovery methods (user crontab, system crontab,
+  user systemd timers, system systemd timers), systemd availability detection, deterministic
+  job ID generation, cron/systemd schedule parsing, script path resolution, and project grouping
+  logic. This is the core backend service that all other backend WUs extend.
+
+dependencies: [WU-001, WU-002]
+
+files:
+  created:
+    - path: src/server/cronManager.ts
+      changes: |
+        - CronManager class skeleton with systemdAvailable: boolean
+        - detectSystemd(): check `systemctl --version`, set systemdAvailable flag
+        - discoverAllJobs(): orchestrates all 4 sources, catches per-source errors, returns merged list
+        - discoverUserCrontab(): parse `crontab -l` output into CronJob[]
+        - discoverSystemCrontab(): parse /etc/crontab and /etc/cron.d/* into CronJob[]
+        - discoverUserTimers(): parse `systemctl --user list-timers --all --output=json` (skip if !systemdAvailable)
+        - discoverSystemTimers(): parse `systemctl list-timers --all --output=json` (skip if !systemdAvailable)
+        - generateJobId(source, name, command): deterministic hash (NOT including schedule)
+        - parseCronSchedule(expression): human-readable via cronstrue
+        - parseSystemdCalendar(spec): human-readable for common patterns
+        - resolveScriptPath(command): extract file path from command string
+        - inferProjectGroup(scriptPath, command): directory-based grouping, "System" as fallback
+        - generateAvatarUrl(jobName, style): DiceBear URL generation
+        - projectNextRuns(schedule, source, count): project future run times using cron-parser
+
+acceptance_criteria:
+  - req: REQ-04
+    type: contract
+    check: "All 4 discovery sources implemented; individual source failures caught and logged without blocking others"
+  - req: REQ-05
+    type: invariant
+    check: "Job IDs are deterministic hashes of source+name+command (NOT schedule); same job discovered twice yields same ID"
+  - req: REQ-06
+    type: contract
+    check: "Script paths resolved from cron commands (file paths) and systemd ExecStart values; null for pipelines/inline"
+  - req: REQ-07
+    type: contract
+    check: "Project groups derived from script path directories; 'System' for ungrouped; 'System' sorted last"
+  - req: REQ-81
+    type: contract
+    check: "system-crontab and systemd-system sources set requiresSudo: true; user sources set false"
+  - req: REQ-85
+    type: contract
+    check: "Cron expressions converted to human-readable via cronstrue"
+  - req: REQ-86
+    type: contract
+    check: "Systemd calendar specs converted to human-readable; raw spec shown for unrecognized patterns"
+  - req: REQ-91
+    type: benchmark
+    check: "Discovery completes within 2 seconds for <200 jobs; 2-second timeout on discovery"
+  - req: REQ-97
+    type: contract
+    check: "Systemd availability detected at startup via systemctl --version; sources 3+4 skipped if unavailable"
+
+test_specs:
+  - id: TEST-01
+    description: "User crontab parsing with 3 entries (script, inline, env var)"
+  - id: TEST-02
+    description: "System crontab parsing with user field"
+  - id: TEST-03
+    description: "User systemd timer discovery"
+  - id: TEST-04
+    description: "System systemd timer discovery"
+  - id: TEST-05
+    description: "Discovery resilience — partial source failures"
+  - id: TEST-06
+    description: "Deterministic job IDs — stable across polls, stable on schedule change, changed on command change"
+  - id: TEST-07
+    description: "Script path grouping logic"
+  - id: TEST-08
+    description: "System group always sorted last"
+  - id: TEST-94
+    description: "Non-systemd graceful degradation"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager class (discovery API)"
+      consumers: [WU-004, WU-005, WU-007]
+      contract: |
+        class CronManager {
+          systemdAvailable: boolean
+          discoverAllJobs(): Promise<CronJob[]>
+          discoverUserCrontab(): Promise<CronJob[]>
+          discoverSystemCrontab(): Promise<CronJob[]>
+          discoverUserTimers(): Promise<CronJob[]>
+          discoverSystemTimers(): Promise<CronJob[]>
+          parseCronSchedule(expression: string): string
+          parseSystemdCalendar(spec: string): string
+          resolveScriptPath(command: string): string | null
+          inferProjectGroup(scriptPath: string | null, command: string): string
+          projectNextRuns(schedule: string, source: JobSource, count: number): Date[]
+        }
+
+implementation_notes: |
+  Use Bun.spawn for command execution (crontab -l, systemctl). Parse crontab output line-by-line,
+  skipping comments and empty lines. For system crontab, handle the extra user field. Use
+  cronstrue and cron-parser npm packages for cron expression handling. For systemd JSON parsing,
+  use the --output=json flag. Job ID should use a fast hash (e.g., Bun's hash or crypto.createHash('sha256')).
+  Discovery timeout should use AbortController with 2-second timeout per source.

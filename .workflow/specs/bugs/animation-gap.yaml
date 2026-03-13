@@ -1,0 +1,69 @@
+title: "No framer-motion animations for job list transitions"
+severity: major
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronJobList.tsx
+  - src/client/components/cron/CronJobRow.tsx
+  - package.json
+
+reproduction:
+  steps:
+    - "Open Cron Manager with several jobs"
+    - "Create a new job"
+    - "Observe: new job appears instantly with no animation"
+    - "Delete a job"
+    - "Observe: job disappears instantly with no exit animation"
+    - "Update a job (pause/resume)"
+    - "Observe: change happens instantly with no transition"
+  environment: "Any"
+
+expected: |
+  Jobs animate in when added, animate out when deleted, and smoothly transition
+  when updated using framer-motion's AnimatePresence and motion components.
+
+actual: |
+  framer-motion is installed but not used anywhere in cron components.
+  Jobs appear/disappear abruptly with no animations.
+
+affected_requirements:
+  - REQ-10 # framer-motion animations
+  - REQ-49 # Exit animations on delete
+
+root_cause_hints: |
+  - framer-motion package is installed
+  - No imports of motion or AnimatePresence in any cron component
+  - CronJobList.tsx renders plain <div> elements
+  - Adding AnimatePresence requires a unique key prop on each animated item
+
+fix_approach: |
+  1. In CronJobList.tsx:
+     - Import {AnimatePresence, motion} from 'framer-motion'
+     - Wrap job list in <AnimatePresence mode="popLayout">
+     - Replace <div> rows with <motion.div>
+     - Add layout prop for smooth reordering
+     - Add initial/animate/exit variants
+
+  2. Variants (example):
+     ```tsx
+     const rowVariants = {
+       initial: { opacity: 0, y: -10 },
+       animate: { opacity: 1, y: 0 },
+       exit: { opacity: 0, x: -100 }
+     }
+     ```
+
+  3. Ensure each CronJobRow has unique key (jobId)
+
+  4. Add transition config:
+     ```tsx
+     transition={{ duration: 0.2, ease: "easeInOut" }}
+     ```
+
+acceptance_criteria:
+  - "New jobs slide in from top when created"
+  - "Deleted jobs slide out to the left"
+  - "Pause/resume status changes animate smoothly"
+  - "List reordering is animated when sorting changes"
+  - "Group collapse/expand is smooth"
+  - "Animations respect user's prefers-reduced-motion setting"

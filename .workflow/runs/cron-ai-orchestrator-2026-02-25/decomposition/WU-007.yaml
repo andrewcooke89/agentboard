@@ -1,0 +1,85 @@
+id: WU-007
+title: "MCP Server Write & Navigation Tools"
+description: |
+  Add the propose_change write tool and 4 navigation tools to the MCP server. The
+  propose_change tool is the core of the approve-before-mutate flow — it sends an HTTP
+  POST to /api/cron-ai/proposals and blocks until the user responds (via HTTP long-poll).
+  Navigation tools send WebSocket messages to drive the agentboard UI.
+
+layer: 2
+dependencies:
+  - WU-005
+  - WU-004
+
+files:
+  modified:
+    - path: src/server/mcp/cronMcpServer.ts
+      changes:
+        - "Add propose_change(proposal) tool: HTTP POST to /api/cron-ai/proposals — blocks until ProposalResult returned"
+        - "Add select_job(jobId) tool: sends WS message {type: 'cron-ai-navigate', action: 'select_job', jobId}"
+        - "Add navigate_to_tab(tab) tool: sends WS message {type: 'cron-ai-navigate', action: 'switch_tab', tab}"
+        - "Add show_timeline() tool: sends WS message {type: 'cron-ai-navigate', action: 'show_timeline'}"
+        - "Add filter_jobs(filter) tool: sends WS message {type: 'cron-ai-navigate', action: 'filter', filter}"
+
+cross_wu_interfaces:
+  exports:
+    - "propose_change tool — the only write tool, blocks on HTTP long-poll"
+    - "4 navigation tools — send WS messages to agentboard for UI control"
+  imports:
+    - "fetchFromAgentboard() from WU-005 — HTTP POST for proposals"
+    - "WS client from WU-008 — for sending navigation messages (or uses HTTP if WS not yet connected)"
+    - "HTTP API contract from WU-004 — POST /api/cron-ai/proposals"
+    - "WS protocol from WU-004 — cron-ai-navigate message type"
+
+acceptance_criteria:
+  - id: AC-007-1
+    type: contract
+    description: "propose_change tool sends HTTP POST to /api/cron-ai/proposals with {operation, jobId?, description, details}. The tool call does NOT return until the HTTP response is received (accept/reject/timeout)."
+  - id: AC-007-2
+    type: contract
+    description: "On accept, propose_change returns {success: true, result: ...}. On reject, returns {success: false, rejected: true, feedback: string}. On timeout, returns {success: false, expired: true}."
+  - id: AC-007-3
+    type: contract
+    description: "select_job(jobId) sends correct navigation WS message. UI list MUST select that job."
+  - id: AC-007-4
+    type: contract
+    description: "navigate_to_tab(tab) accepts 'overview' | 'history' | 'logs' | 'script' and sends correct WS message."
+  - id: AC-007-5
+    type: contract
+    description: "show_timeline() sends navigation WS message to open the timeline."
+  - id: AC-007-6
+    type: contract
+    description: "filter_jobs(filter) sends navigation WS message with filter object."
+  - id: AC-007-7
+    type: contract
+    description: "propose_change tool schema validates operation enum, requires description string, and has correct details schema."
+
+requirements_covered:
+  - REQ-12   # propose_change blocks until response
+  - REQ-13   # navigation tools
+  - REQ-23   # tool blocks until accept/reject/timeout
+  - REQ-42   # propose_change with operation 'create'
+  - REQ-63   # unit tests per tool
+
+tests:
+  - TEST-ID: propose-change-blocking
+    description: "propose_change call blocks until HTTP response. Returns correct shape for accept/reject/timeout."
+    spec_tests: [TEST-18, TEST-22]
+  - TEST-ID: propose-change-accept
+    description: "On user accept, tool returns {success: true}."
+    spec_tests: [TEST-19]
+  - TEST-ID: propose-change-reject
+    description: "On user reject with feedback, tool returns {success: false, feedback}."
+    spec_tests: [TEST-20]
+  - TEST-ID: propose-change-timeout
+    description: "On timeout, tool returns {success: false, expired: true}."
+    spec_tests: [TEST-21]
+  - TEST-ID: select-job-navigation
+    description: "select_job sends correct WS navigation message."
+    spec_tests: [TEST-26]
+  - TEST-ID: navigate-to-tab
+    description: "navigate_to_tab sends correct WS message."
+    spec_tests: [TEST-27]
+  - TEST-ID: create-proposal
+    description: "propose_change with operation 'create' includes full job config in diff."
+    spec_tests: [TEST-23, TEST-43]

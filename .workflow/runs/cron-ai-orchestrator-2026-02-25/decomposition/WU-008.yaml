@@ -1,0 +1,79 @@
+id: WU-008
+title: "MCP Server Resources & WS Connectivity"
+description: |
+  Add MCP resources (cron://ui/context, cron://skill/guidelines) and the WebSocket
+  client that connects to the agentboard server. The WS connection receives real-time
+  context updates and proposal resolutions, and is used by navigation tools to send
+  commands. Implements reconnection with exponential backoff and graceful degradation.
+
+layer: 2
+dependencies:
+  - WU-005
+  - WU-004
+
+files:
+  modified:
+    - path: src/server/mcp/cronMcpServer.ts
+      changes:
+        - "Add cron://ui/context MCP resource — reflects latest UiContext (updated via WS push)"
+        - "Add cron://skill/guidelines MCP resource — contains skill file content (static)"
+        - "Add WebSocket client connecting to AGENTBOARD_WS endpoint"
+        - "WS client sends {type: 'cron-ai-mcp-register', authToken?} handshake on connect"
+        - "WS client handles incoming: cron-ai-context-update (updates local context cache), cron-ai-proposal-resolved (updates pending proposal state)"
+        - "WS reconnection with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)"
+        - "During WS disconnection: context resource returns stale data with staleness warning, navigation tools return 'not connected' error"
+
+cross_wu_interfaces:
+  exports:
+    - "WS client — used by WU-007 navigation tools for sending messages"
+    - "Local context cache — used by get_ui_context tool and cron://ui/context resource"
+  imports:
+    - "WS protocol from WU-004 — cron-ai-mcp-register, cron-ai-context-update, cron-ai-proposal-resolved"
+    - "AGENTBOARD_WS env var — connection endpoint"
+
+acceptance_criteria:
+  - id: AC-008-1
+    type: contract
+    description: "cron://ui/context resource returns UiContext JSON with selectedJobId, activeTab, filters, healthSummary."
+  - id: AC-008-2
+    type: contract
+    description: "cron://ui/context resource updates within 500ms of receiving a cron-ai-context-update WS message."
+  - id: AC-008-3
+    type: contract
+    description: "cron://skill/guidelines resource returns the skill file markdown content."
+  - id: AC-008-4
+    type: contract
+    description: "WS client sends cron-ai-mcp-register with authToken (if configured) immediately on connect."
+  - id: AC-008-5
+    type: behavioral
+    description: "On WS disconnect, reconnects with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max."
+  - id: AC-008-6
+    type: behavioral
+    description: "During WS disconnection, read tools still work via HTTP. Navigation tools return 'WS not connected' error. Context resource returns last known context with stale flag."
+  - id: AC-008-7
+    type: contract
+    description: "On WS reconnect, sends cron-ai-mcp-register again and receives current context."
+
+requirements_covered:
+  - REQ-14   # cron://ui/context resource
+  - REQ-52   # context update latency <500ms
+  - REQ-58   # WS communication
+  - REQ-60   # WS reconnection, graceful degradation
+  - REQ-69   # auth token in WS handshake
+
+tests:
+  - TEST-ID: context-resource
+    description: "cron://ui/context resource returns correct UiContext shape."
+    spec_tests: [TEST-34]
+  - TEST-ID: ws-reconnection
+    description: "On disconnect, reconnects with exponential backoff. On reconnect, re-registers."
+    spec_tests: [TEST-55]
+  - TEST-ID: ws-graceful-degradation
+    description: "During disconnection, tools return structured errors, not crashes."
+    spec_tests: [TEST-56]
+  - TEST-ID: ws-auth-handshake
+    description: "Sends auth token in cron-ai-mcp-register when configured."
+    spec_tests: [TEST-61]
+  - TEST-ID: context-update-push
+    description: "On receiving cron-ai-context-update via WS, local context cache and resource update."
+    spec_tests: [TEST-31, TEST-32, TEST-33]

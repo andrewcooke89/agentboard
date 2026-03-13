@@ -1,0 +1,78 @@
+id: WU-012
+title: "Detail Pane & Overview Tab"
+description: |
+  Create the detail pane container with the persistent header (avatar, name, badges, tags,
+  managed toggle, session link) and the tabbed interface. Implement the Overview tab with
+  schedule section, duration statistics, and raw config display for both cron and systemd jobs.
+
+dependencies: [WU-009]
+
+files:
+  created:
+    - path: src/client/components/cron/CronJobDetail.tsx
+      changes: |
+        - CronJobDetail component: persistent header + tab navigation
+        - Header: large avatar (48x48), job name, source badge, status badge,
+          health badge with tooltip, tag pills (removable via "x", addable via "+"),
+          "Managed by Agentboard" toggle icon, linked session chip (clickable)
+        - 4 tabs: Overview, History, Logs, Script
+        - Active tab state from cronStore.activeTab (persisted)
+        - Tab switching does not reset when selecting a different job
+        - Renders: CronOverviewTab | CronHistoryTab | CronLogsTab | CronScriptTab
+        - Below tabs: CronJobControls strip
+    - path: src/client/components/cron/CronOverviewTab.tsx
+      changes: |
+        - Schedule section: human-readable description, raw expression, next run as live
+          countdown (ticking in real-time via setInterval), last run with exit code badge
+          and duration badge
+        - Duration statistics: last run duration, average duration (10-run rolling),
+          trend indicator (arrow up if latest > avg*1.2, down if < avg*0.8, flat otherwise),
+          yellow warning if latest > 2x average
+        - For systemd: raw .timer and .service unit file content, syntax-highlighted as INI
+        - For cron: raw crontab line and environment variables
+        - Uses highlight.js for syntax highlighting of INI/bash content
+
+acceptance_criteria:
+  - req: REQ-21
+    type: behavioral
+    check: "Header shows avatar, name, source/status/health badges, tag pills (add/remove), managed toggle, session link"
+  - req: REQ-22
+    type: behavioral
+    check: "Overview shows schedule description, raw expression, next run countdown (live), last run with exit code and duration"
+  - req: REQ-23
+    type: behavioral
+    check: "Duration stats: last/avg/trend indicator; yellow warning if latest > 2x average"
+  - req: REQ-24
+    type: behavioral
+    check: "Systemd jobs show raw timer and service unit content, syntax-highlighted as INI"
+  - req: REQ-25
+    type: behavioral
+    check: "Cron jobs show raw crontab line and environment variables"
+  - req: REQ-63
+    type: behavioral
+    check: "Duration trend indicator: arrow up (slower), down (faster), flat (stable)"
+
+test_specs:
+  - id: TEST-23
+    description: "Detail pane shows header + 4 tabs; Overview active by default"
+  - id: TEST-24
+    description: "Active tab persists when selecting different job"
+  - id: TEST-27
+    description: "Next run live countdown ticks in real-time"
+  - id: TEST-56
+    description: "Duration stats: last 45s, avg 60s, trend arrow down"
+  - id: TEST-57
+    description: "Slow run warning: last 130s, avg 60s"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronJobDetail component"
+      consumers: [WU-013, WU-014, WU-016, WU-017, WU-019]
+      contract: "Renders tab content components and CronJobControls; passes selectedJobDetail"
+
+implementation_notes: |
+  The live countdown uses a setInterval(1000) that decrements the remaining time.
+  Clear the interval on unmount and when the job changes. For syntax highlighting,
+  import highlight.js with only the ini, bash, python, javascript, typescript, ruby,
+  perl languages registered. Tag management (add/remove) sends cron-job-set-tags via WS.
+  The managed toggle sends cron-job-set-managed.

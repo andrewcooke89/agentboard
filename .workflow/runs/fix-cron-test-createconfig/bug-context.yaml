@@ -1,0 +1,22 @@
+```yaml
+affected_areas:
+  - "src/server/__tests__/cronDuplicateDetection.test.ts"
+  - "src/server/__tests__/cronFlockWrapping.test.ts"
+  - "src/shared/types.ts" # For CronCreateConfig interface definition
+  - "src/server/cronManager.ts" # For CronManager class definition
+bug_summary: |
+  TypeScript type checking fails in cron test files due to two main issues:
+  1. `CronCreateConfig` objects are missing the required `tags: string[]` field, leading to TS2741 errors.
+  2. Test files attempt to access or override `readCrontab` and `writeCrontab`, which are declared as `private` members in `CronManager`, resulting in TS2341 and TS2415 errors.
+reproduction_summary: |
+  1. Clone the repository and install dependencies (`bun install`).
+  2. Run `bun run typecheck`.
+  3. Observe TypeScript errors in `src/server/__tests__/cronDuplicateDetection.test.ts` and `src/server/__tests__/cronFlockWrapping.test.ts`.
+severity_assessment: |
+  Major. While not a runtime bug, it prevents the project from passing type checks, indicating a broken build process for TypeScript users and potentially masking other issues. The `typecheck` command, a critical part of CI/CD, is failing.
+suggested_investigation_areas:
+  - **`src/server/__tests__/cronDuplicateDetection.test.ts`**: Focus on adding the `tags` field to `CronCreateConfig` literals and adjusting `readCrontab`/`writeCrontab` access (e.g., using `as any` or a testable subclass).
+  - **`src/server/__tests__/cronFlockWrapping.test.ts`**: Similar to the above, ensure `tags` are present and address the private member access/override issue, potentially by changing `CronManager` members to `protected` or using `as any`.
+  - **`src/shared/types.ts`**: Verify the `CronCreateConfig` interface definition.
+  - **`src/server/cronManager.ts`**: Consider if `readCrontab` and `writeCrontab` should genuinely be `private` if they need to be tested via subclassing, or if the tests should be refactored to test public behavior.
+```

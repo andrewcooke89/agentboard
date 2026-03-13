@@ -1,0 +1,29 @@
+```yaml
+affected_areas:
+  - src/client/__tests__/webSocketSendReturnBoolean.test.ts
+  - src/server/__tests__/cronJobCreationRegression.test.ts
+  - src/client/hooks/useWebSocket.ts
+  - src/shared/types.ts
+bug_summary: |
+  TypeScript errors are reported in `webSocketSendReturnBoolean.test.ts` and `cronJobCreationRegression.test.ts` when running `bun run typecheck`. A total of 19 errors are observed, primarily related to `WebSocketManager.send()` mock return type mismatches (expected boolean, resolves to void), incorrect `ClientMessage` type usage ("ping" is invalid), and mock function arity mismatches (invoked with different argument counts than declared).
+reproduction_summary: |
+  1. Clone the repo and install dependencies with `bun install`.
+  2. Run `bun run typecheck` from the project root.
+  3. Observe TS2769 errors in `src/client/__tests__/webSocketSendReturnBoolean.test.ts`.
+  4. Observe TS2769, TS2345, and TS2322 errors in `src/server/__tests__/cronJobCreationRegression.test.ts`.
+severity_assessment:
+  severity: minor
+  impact: These are TypeScript compilation errors specific to test files, preventing `bun run typecheck` from passing cleanly. While not directly impacting runtime functionality, they indicate inconsistencies between test mocks and actual/expected type signatures, which can lead to brittle tests and potential runtime issues if the underlying assumptions are incorrect.
+suggested_investigation_areas:
+  - file: src/client/__tests__/webSocketSendReturnBoolean.test.ts
+    description: Investigate and update the mock setup or type annotations for `WebSocketManager.send()` to ensure its return type correctly resolves to `boolean`, matching the actual implementation in `useWebSocket.ts`.
+  - file: src/server/__tests__/cronJobCreationRegression.test.ts
+    description:
+      - Correct the usage of `ClientMessage` by replacing `"ping"` with a valid type such as `"session-refresh"`, referencing `src/shared/types.ts`.
+      - Fix mock function definitions for `send()` to return `boolean` instead of `void`.
+      - Adjust the parameter signatures of all mock functions to match the number of arguments they are invoked with (e.g., if invoked with 1 or 3 arguments, the mock declaration should accept 1 or 3 parameters, respectively).
+  - file: src/shared/types.ts
+    description: Review the `ClientMessage` discriminated union to confirm valid message types, informing the fix for `cronJobCreationRegression.test.ts`.
+  - file: src/client/hooks/useWebSocket.ts
+    description: Refer to the `send()` method's signature in this file as the source of truth for the expected `boolean` return type when fixing test mocks. No changes are expected in this file.
+```

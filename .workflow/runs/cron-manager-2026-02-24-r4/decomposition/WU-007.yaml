@@ -1,0 +1,81 @@
+id: WU-007
+title: "WebSocket Handlers & Server Wiring"
+description: |
+  Create the WebSocket message handler module for all cron operations and wire it into
+  the server entry point. This connects the CronManager, CronHistoryService, and CronLogService
+  to the WebSocket transport, handles the initial job list push on client connect, manages
+  the polling lifecycle (start on first client, pause on zero clients), and dispatches all
+  client messages to the appropriate backend methods.
+
+dependencies: [WU-004, WU-005, WU-006]
+
+files:
+  created:
+    - path: src/server/handlers/cronHandlers.ts
+      changes: |
+        - createCronHandlers(ctx) factory function returning WsHandler implementations
+        - Handle: cron-job-select -> getJobDetail -> send cron-job-detail
+        - Handle: cron-job-run-now -> runJobNow -> stream cron-run-started/output/completed
+        - Handle: cron-job-pause/resume -> pauseJob/resumeJob -> send cron-operation-result
+        - Handle: cron-job-edit-frequency -> editFrequency -> send cron-operation-result
+        - Handle: cron-job-delete -> deleteJob -> send cron-operation-result
+        - Handle: cron-job-create -> createCronJob/createSystemdTimer -> send cron-operation-result
+        - Handle: cron-bulk-pause/resume/delete -> bulk operations -> stream cron-bulk-operation-progress
+        - Handle: cron-job-set-tags/set-managed/link-session -> DB updates -> send cron-job-update
+        - Handle: cron-sudo-auth -> cacheSudoCredential
+        - Handle: cron-job-logs -> getLogs -> send response
+        - Handle: cron-job-history -> getRunHistory -> send response
+        - Register onJobsChanged callback to broadcast diffs to all connected clients
+        - Track connected client count for polling lifecycle
+  modified:
+    - path: src/server/index.ts
+      changes: |
+        - Import and instantiate CronManager, CronHistoryService, CronLogService as singletons
+        - Call cronManager.detectSystemd() at startup
+        - Create cron handlers via createCronHandlers(ctx)
+        - Wire cron handlers into wsHandlers map
+        - On WS connect: send initial cron-jobs message with full job list + systemdAvailable flag
+        - On WS connect: increment client count, start polling if first client
+        - On WS disconnect: decrement client count, stop polling if zero clients
+        - On SIGINT/SIGTERM: call cronManager.stopPolling(), cleanup credential cache
+    - path: src/server/wsRouter.ts
+      changes: |
+        - Extend WsHandlers interface with all cron handler method signatures
+        - Add switch cases for all cron-* message types in the dispatch function
+
+acceptance_criteria:
+  - req: REQ-08
+    type: contract
+    check: "Polling starts on first WS client connect, pauses when zero clients connected"
+  - req: REQ-09
+    type: contract
+    check: "Full job list sent on initial connection; only diffs sent on subsequent polls"
+
+test_specs:
+  - id: TEST-87
+    description: "Full list with systemdAvailable flag sent on new WS connection"
+  - id: TEST-88
+    description: "Incremental update sent on poll diff (not full list)"
+  - id: TEST-89
+    description: "Removal notification sent when job disappears"
+  - id: TEST-90
+    description: "Run output streaming: cron-run-started -> cron-run-output chunks -> cron-run-completed"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-004
+      name: "CronManager polling API"
+    - from: WU-005
+      name: "CronManager operations API"
+    - from: WU-006
+      name: "CronHistoryService API"
+    - from: WU-006
+      name: "CronLogService API"
+
+implementation_notes: |
+  Follow the existing handler factory pattern (createCronHandlers returns an object of handler
+  functions). For run-now streaming, use the AsyncGenerator from runJobNow and send chunks as
+  cron-run-output messages. Track active WebSocket connections in a Set for broadcasting diffs.
+  The polling lifecycle should be managed via a reference count: increment on connect, decrement
+  on disconnect, start/stop based on count. Wire into index.ts following the same pattern as
+  workflow handlers — singleton instantiation, handler factory, wsHandlers map wiring.

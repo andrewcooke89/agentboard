@@ -1,0 +1,20 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  src/server/cronManager.ts(582,9): error TS2322: Type 'number | undefined' is not assignable to type 'number | null'.
+    Type 'undefined' is not assignable to type 'number | null'.
+  src/server/cronManager.ts(583,9): error TS2322: Type 'number | undefined' is not assignable to type 'number | null'.
+    Type 'undefined' is not assignable to type 'number | null'.
+notes: |
+  Bug confirmed reproducible. The line numbers in the bug spec (566-567) were slightly
+  off from the actual error locations (582-583), but the root cause is identical.
+
+  The actual source lines (564-567) define:
+    const avgDuration = durations.length > 0 ? Math.round(...) : undefined
+    const lastRunDuration = durations.length > 0 ? durations[0] : undefined
+
+  These values are then used in the enriched.push() call at lines 579-585, where
+  TypeScript reports the type mismatch because CronJob interface expects
+  `number | null` not `number | undefined`.
+
+  Fix: Change `undefined` to `null` in both ternary fallback expressions.

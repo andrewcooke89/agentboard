@@ -1,0 +1,124 @@
+verdict: pass
+
+title: "Fix: Create Job button not wired, no duplicate detection, no concurrent-run guard"
+
+description: |
+  Three independent fixes addressing silent failures, missing validation, and
+  incomplete concurrency guards in the cron job creation and execution system:
+
+  1. Make WebSocket send() return a boolean so callers can detect failure.
+     Update CronCreateModal to stay open on send failure and show an error.
+     Add a 'create' case to handleCronOperationResult for server feedback.
+
+  2. Add duplicate detection in createCronJob() by scanning existing crontab
+     lines for matching schedule+command before appending.
+
+  3. Wrap crontab commands with flock(1) for OS-level mutual exclusion between
+     scheduled runs and manual "Run Now" executions.
+
+changes:
+  - file: "src/client/hooks/useWebSocket.ts"
+    description: |
+      Change WebSocketManager.send() (line ~97-101) to return a boolean:
+      - Return `true` if readyState === WebSocket.OPEN and the message was sent.
+      - Return `false` if the socket is not open (message dropped).
+      The sendMessage binding exposed via useMemo already propagates the return type.
+      All existing callers that ignore the return value continue to work (void -> boolean
+      is backwards-compatible).
+    change_type: modify
+
+  - file: "src/client/components/cron/CronManager.tsx"
+    description: |
+      Update handleCreateJob (line ~66-68) to check the boolean return value
+      from sendMessage(). If sendMessage returns false:
+      - Do NOT call the modal's onClose callback (keep the modal open).
+      - Show an error notification/toast: "Not connected — please retry".
+      Pass a success/failure signal back to CronCreateModal (e.g. via a
+      Promise or callback return value from onCreate) so the modal can
+      react appropriately.
+    change_type: modify
+
+  - file: "src/client/components/cron/CronCreateModal.tsx"
+    description: |
+      Update handleSubmit (line ~48-72) to NOT call onClose() unconditionally.
+      Instead:
+      - Call onCreate() and check its return value (boolean or Promise<boolean>).
+      - If true (message sent): close the modal.
+      - If false (send failed): keep the modal open, show inline error text
+        (e.g. "WebSocket disconnected — please retry").
+      - Add a brief loading/disabled state to the submit button while sending
+        to prevent double-clicks.
+    change_type: modify
+
+  - file: "src/client/stores/cronStore.ts"
+    description: |
+      Add a 'create' case to handleCronOperationResult (line ~196-213):
+      - On success: show a success toast/notification ("Job created").
+        The actual job list update already happens via triggerRediscovery on
+        the server side, so no optimistic update is needed.
+      - On error: show an error toast with the error message from the server.
+      This ensures the user gets feedback even if the WS message was delivered
+      but the server-side creation failed (e.g. invalid schedule, write error).
+    change_type: modify
+
+  - file: "src/server/cronManager.ts"
+    description: |
+      Add duplicate detection to createCronJob() (line ~988-1000):
+      1. After reading the crontab (line ~990), split it into lines.
+      2. For each non-empty, non-comment line, extract schedule and command
+         fields (first 5 space-separated tokens = schedule, remainder = command,
+         stripping any trailing # comment).
+      3. Compare against the new job's config.schedule and config.command.
+      4. If a match is found, throw an Error with a descriptive message:
+         "Duplicate job: a crontab entry with identical schedule and command
+         already exists".
+      5. The existing try/catch in handleCronJobCreate will catch this and
+         send a cron-operation-result with success:false back to the client.
+
+      Also add flock wrapping for concurrent-run protection:
+      - When constructing the newLine (line ~992), wrap the command with:
+        `flock -n /tmp/agentboard-cron-<jobId>.lock <original-command>`
+      - The jobId is generated from source+name+command via generateJobId,
+        so compute it before constructing the line.
+      - flock -n (non-blocking) causes the command to fail immediately if
+        another instance holds the lock, preventing overlapping executions.
+      - The lock file is automatically released when the process exits
+        (no stale lock cleanup needed).
+    change_type: modify
+
+  - file: "src/server/handlers/cronHandlers.ts"
+    description: |
+      Update handleCronJobRunNow (line ~263-314) to also acquire the same
+      flock before executing:
+      1. Before spawning the command in the fire-and-forget async IIFE,
+         wrap the actual command execution with the same lock file path:
+         `/tmp/agentboard-cron-<jobId>.lock`
+      2. Use flock -n so manual runs fail fast if a scheduled run holds
+         the lock, and vice versa.
+      3. If flock acquisition fails, send a WebSocket error message:
+         "Job is already running (scheduled execution in progress)".
+      4. Keep the existing activeManualRuns Set as a fast-path UI guard
+         for immediate WebSocket feedback on duplicate manual clicks.
+         flock serves as the authoritative cross-process guard.
+    change_type: modify
+
+acceptance_criteria:
+  - "WebSocketManager.send() returns boolean indicating whether the message was sent"
+  - "CronCreateModal stays open and shows an error message when WebSocket is disconnected"
+  - "CronCreateModal closes only after confirming the WS message was sent"
+  - "handleCronOperationResult handles 'create' operation with success/error feedback"
+  - "createCronJob throws an error when an identical schedule+command already exists in the crontab"
+  - "Duplicate detection compares both schedule and command fields (not just one)"
+  - "New crontab entries are wrapped with flock -n for OS-level mutual exclusion"
+  - "Manual 'Run Now' also uses flock with the same lock path as scheduled runs"
+  - "A manual run while a scheduled run is in progress returns a clear error message"
+  - "Existing callers of send() that ignore the return value are unaffected"
+  - "All changes pass bun run lint && bun run typecheck && bun run test"
+
+regression_risks:
+  - "Risk 1: Changing send() return type from void to boolean could break callers that explicitly type-check the return. Mitigated by: void-returning callers simply ignore the boolean, which is valid TypeScript."
+  - "Risk 2: CronCreateModal behavior change (not closing on failure) could confuse users who expect the modal to always close. Mitigated by: showing a clear inline error message explaining why the modal stayed open."
+  - "Risk 3: Duplicate detection could block intentional duplicate crontab entries (rare edge case). Mitigated by: comparing both schedule AND command — entries with same command but different schedules are allowed."
+  - "Risk 4: flock(1) is Linux-specific. macOS flock has different semantics (BSD flock vs util-linux flock). Mitigated by: agentboard targets Linux per the environment spec; document the platform requirement."
+  - "Risk 5: Wrapping commands with flock changes the crontab command string, which affects jobId generation (generateJobId hashes the command). Mitigated by: compute jobId from the original unwrapped command before constructing the flock-wrapped line."
+  - "Risk 6: Existing crontab entries created before this fix won't have flock wrapping. Mitigated by: only new entries get flock; existing entries continue to work but without overlap protection. A future migration could retrofit existing entries."

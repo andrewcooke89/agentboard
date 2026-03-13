@@ -1,0 +1,65 @@
+verdict: pass
+
+root_cause: |
+  createCronJob() builds the crontab line using the bare command without flock wrapping.
+  The name and jobId are computed AFTER the crontab line is constructed and written,
+  and are only used for the return value. No lock file path is ever constructed, and
+  the flock binary is never referenced anywhere in the function.
+
+location:
+  file: "src/server/cronManager.ts"
+  line_range: "1029-1040"
+  function: "createCronJob"
+
+mechanism: |
+  Missing feature / wrong logic. The function constructs the crontab entry at line 1034 as:
+    const newLine = `${config.schedule} ${config.command}${comment}`
+  This writes the bare command directly into the crontab. The name (via deriveJobName)
+  and jobId (via generateJobId) are computed at lines 1038-1039 but only flow into the
+  return value — they are never used to construct a lock file path or flock wrapper.
+
+  Without flock wrapping, the OS cron daemon can spawn overlapping executions of the
+  same job when execution time exceeds the schedule interval (e.g., a job scheduled
+  every 5 minutes that takes 7 minutes). This causes data corruption, duplicate
+  operations, or resource contention.
+
+  The activeManualRuns Set in cronHandlers.ts only guards manual "Run Now" WebSocket
+  requests and cannot protect OS-scheduled runs, which are spawned by crond entirely
+  outside the agentboard Node process.
+
+fix_approach: |
+  Reorder createCronJob() to compute name/jobId BEFORE building the crontab line,
+  then insert flock wrapping. Specifically:
+
+  1. Keep existing: validateCronCommand(config.command) and readCrontab()
+  2. Move UP: const name = this.deriveJobName(config.command)
+  3. Move UP: const jobId = this.generateJobId('user-crontab', name, config.command)
+     — jobId is computed from the ORIGINAL unwrapped command (critical for consistency)
+  4. NEW: const lockFile = `/tmp/agentboard-cron-${jobId}.lock`
+  5. NEW: const wrappedCommand = `flock -n ${lockFile} ${config.command}`
+  6. MODIFY line 1034: use wrappedCommand instead of config.command in newLine:
+     const newLine = `${config.schedule} ${wrappedCommand}${comment}`
+  7. Keep existing: writeCrontab(updated) and return jobId
+
+  The key constraint is that generateJobId and deriveJobName must receive the ORIGINAL
+  config.command (not the flock-wrapped version), so the jobId remains stable and
+  deterministic regardless of whether flock wrapping is present.
+
+risk_assessment: |
+  Low risk. The change is confined to a single function (createCronJob) and only affects
+  how the crontab line is assembled — no control flow or external API changes.
+
+  Risks to watch:
+  - Existing crontab entries (created before the fix) will NOT have flock wrapping.
+    The parseCrontab/pollCrontab code that reads entries back must tolerate both
+    wrapped and unwrapped formats. Verify that jobId generation from parsed entries
+    strips flock prefixes if needed.
+  - The flock binary must be available on the host. It is part of util-linux and
+    present on virtually all Linux systems, but not macOS. If macOS support is
+    needed, a platform check or alternative (shlock) would be required.
+  - Lock files in /tmp may be cleaned by systemd-tmpfiles or tmpwatch on some
+    distributions. This is acceptable — flock only needs the file to exist while
+    the lock is held, and will recreate it on next run.
+  - Commands containing shell metacharacters or quotes could interact poorly with
+    the flock prefix. However, since the command is already validated by
+    validateCronCommand(), this is mitigated.

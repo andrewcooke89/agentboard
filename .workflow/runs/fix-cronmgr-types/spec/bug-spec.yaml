@@ -1,0 +1,36 @@
+title: "CronManager avgDuration/lastRunDuration use undefined instead of null"
+description: |
+  In src/server/cronManager.ts lines 566-567, the ternary expressions for
+  avgDuration and lastRunDuration use `undefined` as the fallback value when
+  there are no durations in the history. The CronJob interface in
+  src/shared/types.ts defines both fields as `number | null`, not
+  `number | undefined`. This produces two TS2322 type errors:
+    - Line 566: avgDuration falls back to `undefined` instead of `null`
+    - Line 567: lastRunDuration falls back to `undefined` instead of `null`
+
+reproduction:
+  steps:
+    - "Run `bun run typecheck` from the project root"
+    - "Observe two TS2322 errors in src/server/cronManager.ts at lines 566-567"
+    - "Both errors report: Type 'undefined' is not assignable to type 'number | null'"
+  environment: "Bun 1.x, TypeScript 5.x"
+
+expected: |
+  Both avgDuration and lastRunDuration should use `null` as the fallback
+  value in their ternary expressions, matching the CronJob interface definition
+  (avgDuration: number | null, lastRunDuration: number | null).
+
+actual: |
+  Both fields use `undefined` as the fallback, causing TS2322 type mismatch
+  errors. The ternary expressions read:
+    const avgDuration = durations.length > 0 ? Math.round(...) : undefined
+    const lastRunDuration = durations.length > 0 ? durations[0] : undefined
+
+affected_files:
+  - "src/server/cronManager.ts"
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

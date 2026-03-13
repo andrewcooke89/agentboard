@@ -1,0 +1,62 @@
+id: WU-001
+title: "Shared Types & Interfaces"
+description: |
+  Add all cron-ai-related TypeScript types and interfaces to the shared types module.
+  This includes new ServerMessage and ClientMessage discriminated union variants for
+  cron-ai WebSocket communication, the CronAiProposal interface, UiContext interface,
+  ProposalResult, ScheduleConflict, ScheduleLoadAnalysis, and DurationTrendData types.
+  This is the foundation WU that all other WUs depend on for type safety.
+
+layer: 0
+dependencies: []
+
+files:
+  modified:
+    - path: src/shared/types.ts
+      changes:
+        - "Add CronAiProposal interface (id, operation, jobId, jobName, jobAvatarUrl, description, diff, status, feedback, createdAt, resolvedAt)"
+        - "Add UiContext interface (selectedJobId, selectedJobDetail, activeTab, visibleJobCount, filterState, healthSummary)"
+        - "Add ProposalResult interface (success, result?, rejected?, expired?, feedback?, error?)"
+        - "Add ScheduleConflict interface (jobIds, schedule, description)"
+        - "Add ScheduleLoadAnalysis interface (hourlyLoad, peakHours, recommendations)"
+        - "Add DurationTrendData interface (jobId, durations, average, trend)"
+        - "Add CronAiProposalOperation type union ('create' | 'edit_frequency' | 'pause' | 'resume' | 'delete' | 'run_now' | 'set_tags' | 'link_session')"
+        - "Add 7 ServerMessage variants: cron-ai-proposal, cron-ai-navigate, cron-ai-session-status, cron-ai-mcp-status, cron-ai-context-update, cron-ai-proposal-resolved, cron-ai-mcp-register"
+        - "Add 5 ClientMessage variants: cron-ai-drawer-open, cron-ai-drawer-close, cron-ai-new-conversation, cron-ai-proposal-response, cron-ai-context-update"
+
+cross_wu_interfaces:
+  exports:
+    - "CronAiProposal — used by WU-002 (store), WU-003 (service), WU-005-008 (MCP server), WU-011 (card)"
+    - "UiContext — used by WU-003 (service), WU-006 (MCP tools), WU-008 (resource)"
+    - "ProposalResult — used by WU-003 (service), WU-007 (MCP propose_change)"
+    - "CronAiProposalOperation — used by WU-003 (validation), WU-007 (MCP tool)"
+    - "ServerMessage variants — used by WU-004 (wsRouter), WU-012 (App.tsx dispatch)"
+    - "ClientMessage variants — used by WU-004 (wsRouter), WU-012 (App.tsx)"
+
+acceptance_criteria:
+  - id: AC-001-1
+    type: compilation
+    description: "All 7 new ServerMessage variants compile and are exhaustively matchable in a switch statement."
+  - id: AC-001-2
+    type: compilation
+    description: "All 5 new ClientMessage variants compile and are exhaustively matchable in a switch statement."
+  - id: AC-001-3
+    type: contract
+    description: "CronAiProposal interface has all fields: id (string), operation (CronAiProposalOperation), jobId (string|null), jobName (string|null), jobAvatarUrl (string|null), description (string), diff (string), status ('pending'|'accepted'|'rejected'|'expired'), feedback (string|null), createdAt (string), resolvedAt (string|null)."
+  - id: AC-001-4
+    type: contract
+    description: "UiContext interface has: selectedJobId (string|null), selectedJobDetail (CronJobDetail|null), activeTab (string), visibleJobCount (number), filterState ({mode, source, tags}), healthSummary ({healthy: number, warning: number, critical: number})."
+  - id: AC-001-5
+    type: compilation
+    description: "bun run typecheck passes with zero errors after changes."
+
+requirements_covered:
+  - REQ-18   # proposal types
+  - REQ-25   # context update message types
+  - REQ-46   # proposal card types
+  - REQ-58   # HTTP+WS communication types
+  - REQ-68   # proposal operation type enum
+
+tests:
+  - TEST-ID: typecheck
+    description: "bun run typecheck passes — confirms all new types integrate with existing discriminated unions."

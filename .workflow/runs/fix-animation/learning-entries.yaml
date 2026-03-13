@@ -1,0 +1,27 @@
+```yaml
+learning_patterns:
+  - pattern_name: "Consistent UI Pattern Adherence"
+    description: "Failure to apply an established UI animation pattern to newly developed components, leading to inconsistency in user experience."
+    confidence: RAW
+    bug_reproduction:
+      ease: "Easy"
+      reason: "The bug was easily reproducible through straightforward UI interaction steps (navigating to the task queue, queuing/completing a task). The visual nature of the bug (instant appearance/disappearance) made it immediately apparent, and a direct comparison with other animated parts of the UI (SessionList) provided clear confirmation of the issue."
+    root_cause:
+      location: "Expected files (TaskQueue.tsx, TaskItem.tsx)"
+      systemic_issue: true
+      analysis: "The root cause was identified as a 'missing implementation' or 'missing-feature bug' rather than a logic error or regression. The core issue was that the `framer-motion` animation pattern, which is well-established and used in multiple other parts of the codebase (SessionList, CronJobList, PendingReviewDashboard), was simply never applied to the `TaskQueue` and `TaskItem` components during their initial development. This points to a systemic gap in ensuring consistent application of UI patterns across the codebase."
+    fix_complexity:
+      files_touched: "Expected files (TaskQueue.tsx, TaskItem.tsx)"
+      spread: "Low"
+      analysis: "The fix was contained entirely within the two affected files identified in the bug report. It involved adding imports, wrapping existing `map` calls with `AnimatePresence`, and converting a plain `div` to a `motion.div` with standard animation props. The changes were additive and followed an existing pattern, indicating low complexity and minimal ripple effect."
+    regression_risk:
+      concerns: "Very Low"
+      analysis: "The risk was assessed as very low because the fix involved adding presentation layers without altering core logic, data flow, or state management. The `framer-motion` library was already a dependency, the pattern was established, and accessibility (reduced motion) was explicitly handled. The only minor potential risk of rapid re-renders queuing animations was deemed mitigated by short duration and consistency with existing implementations."
+    process_gaps:
+      potential_catch_points:
+        - "Design System/UI Component Checklist: When developing new UI components like TaskQueue/TaskItem, a checklist could ensure adherence to established patterns (e.g., 'Do list items animate with framer-motion?')."
+        - "Code Review: A code review checklist could explicitly prompt reviewers to check for consistent application of UI patterns, especially animations for dynamic lists."
+        - "Automated Visual Regression Testing: While challenging for animations, a sophisticated visual regression tool might detect the absence of transitions or visual inconsistencies."
+        - "Manual QA/UI Audit: A dedicated UI quality assurance pass or a periodic design system audit would likely have identified this visual inconsistency."
+        - "Component Template/Boilerplate: Providing boilerplate or templates for common UI patterns (like animated lists) could guide developers to include these features by default."
+```

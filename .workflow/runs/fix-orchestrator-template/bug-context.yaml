@@ -1,0 +1,20 @@
+```yaml
+affected_areas:
+  - "src/server/__tests__/orchestratorTemplates.test.ts"
+  - "Orchestrator Templates (specifically verification.md)"
+bug_summary: "TEST-39 in `orchestratorTemplates.test.ts` expects outdated schema fields ('overall_status', 'acceptance_criteria', 'constitution_checks', 'verified', 'unverified') in the `verification.md` template. The template was intentionally updated to a `criterion-verification-v1.0` schema with new field names (`overall_verdict`, `criterion_verifications`, per-criterion verdicts like `VERIFIED`, `NEEDS_FIX`, `CONCERN`), causing the test to fail."
+reproduction_summary:
+  - "Run `bun test src/server/__tests__/orchestratorTemplates.test.ts`."
+  - "Observe TEST-39 fails at line 84 due to not finding 'overall_status'."
+  - "Confirm `~/.claude/orchestrator-templates/verification.md` uses `overall_verdict` (new schema)."
+severity_assessment: "Minor. This is a test failure caused by an outdated assertion, not a functional bug in the application itself. The template change was intentional and correct; only the test needs updating."
+suggested_investigation_areas:
+  - "File: `src/server/__tests__/orchestratorTemplates.test.ts`"
+  - "Specific lines: TEST-39, lines 84-88."
+  - "Action: Update the `expect(content).toContain(...)` assertions to match the current `criterion-verification-v1.0` schema field names and verdict values present in `verification.md`. Specifically:"
+    - "Replace 'overall_status' with 'overall_verdict'."
+    - "Replace 'acceptance_criteria' with 'criterion_verifications'."
+    - "Replace 'constitution_checks' with 'conformance-report.yaml' or 'techniques'."
+    - "Replace 'verified' with 'VERIFIED'."
+    - "Replace 'unverified' with 'NEEDS_FIX' or 'CONCERN'."
+```

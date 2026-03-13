@@ -1,0 +1,45 @@
+id: WU-007
+title: "WebSocket Handlers"
+description: |
+  Implement createCronHandlers factory function that creates handlers for all 16
+  client message types. Wire polling lifecycle to WS client connect/disconnect.
+  Handle: cron-job-select, cron-job-run-now (with streaming output), cron-job-pause,
+  cron-job-resume, cron-job-edit-frequency, cron-job-delete, cron-job-create,
+  cron-bulk-pause/resume/delete, cron-job-set-tags, cron-job-set-managed,
+  cron-job-link-session, cron-sudo-auth (credential bridge), cron-job-logs,
+  cron-job-history. Convert sudoCredential string to Uint8Array immediately.
+  Handle WS disconnect during Run Now gracefully.
+files:
+  - path: src/server/handlers/cronHandlers.ts
+    action: modify
+    description: "Implement all 16 WS message handlers + polling lifecycle"
+dependencies:
+  - WU-003
+  - WU-005
+  - WU-006
+requirements:
+  - REQ-08
+  - REQ-09
+  - REQ-38
+  - REQ-39
+  - REQ-103
+  - REQ-104
+acceptance_criteria:
+  - type: unit_test
+    description: "createCronHandlers returns handler map for all 16 message types"
+  - type: unit_test
+    description: "Polling starts on first WS client connect"
+  - type: unit_test
+    description: "Polling stops on last WS client disconnect"
+  - type: unit_test
+    description: "cron-job-run-now streams output via cron-run-output messages"
+  - type: unit_test
+    description: "sudoCredential converted to Uint8Array immediately; string zeroed"
+  - type: unit_test
+    description: "WS disconnect during Run Now: process completes, result recorded"
+  - type: integration
+    description: "Full poll->diff->broadcast cycle works end-to-end"
+interfaces:
+  exports:
+    - "createCronHandlers(ctx, cronManager, historyService, logService): HandlerMap"
+estimated_loc: 300

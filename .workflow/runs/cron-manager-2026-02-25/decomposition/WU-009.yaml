@@ -1,0 +1,40 @@
+id: WU-009
+title: "App Integration & Empty State"
+description: |
+  Modify App.tsx: add 'cron-manager' to activeView union type, add Cmd/Ctrl+Shift+C
+  keyboard shortcut, conditionally render CronManager component, dispatch incoming
+  cron WS messages to useCronStore handlers. Implement CronEmptyState dashboard:
+  total job count, active/paused/error counts, mini 24h timeline preview,
+  "Create Job" button. Implement CronManager root layout: optional timeline
+  above, horizontal split pane (left list, right detail/empty), drag-to-resize.
+files:
+  - path: src/client/App.tsx
+    action: modify
+    description: "Add cron-manager view, keyboard shortcut, WS dispatch"
+  - path: src/client/components/cron/CronEmptyState.tsx
+    action: modify
+    description: "Implement dashboard empty state"
+  - path: src/client/components/cron/CronManager.tsx
+    action: modify
+    description: "Implement root layout with split pane"
+dependencies:
+  - WU-008
+requirements:
+  - REQ-01
+  - REQ-02
+  - REQ-03
+acceptance_criteria:
+  - type: unit_test
+    description: "Cmd/Ctrl+Shift+C toggles cron-manager view"
+  - type: unit_test
+    description: "CronManager renders with horizontal split pane"
+  - type: unit_test
+    description: "Split pane resizable between 180-500px"
+  - type: unit_test
+    description: "Empty state shows job counts and Create Job button"
+  - type: unit_test
+    description: "Cron WS messages dispatched to cronStore"
+interfaces:
+  exports:
+    - "activeView: 'sessions' | 'cron-manager'"
+estimated_loc: 150

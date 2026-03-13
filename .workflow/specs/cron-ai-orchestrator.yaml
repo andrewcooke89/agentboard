@@ -1,0 +1,1370 @@
+schema_version: "feature_spec_v1.0"
+
+title: "Cron AI Orchestrator"
+
+description: |
+  AI-assisted cron job management layer built on top of Phase 26 (Cron & Systemd Timer Manager).
+  Embeds a persistent Claude Code session in a slide-in drawer within the cron manager view, backed
+  by a dedicated MCP server (20+ tools) exposing the full Phase 26 API. Provides context-aware
+  bidirectional UI sync (agent knows what the user is looking at; agent can drive the UI), a
+  propose-and-approve mutation flow (all writes go through human-reviewed proposal cards), proactive
+  failure diagnosis, schedule optimization, natural language job creation, and startup health
+  monitoring alerts. Includes a custom Claude skill file and auto-generated MCP configuration.
+
+tags:
+  - feature
+  - ui
+  - backend
+  - ai
+  - mcp
+  - cron
+  - claude-code
+  - orchestrator
+
+priority: medium
+
+dependencies:
+  - "Phase 26: Cron & Systemd Timer Manager"
+
+risks:
+  - id: RISK-01
+    description: |
+      MCP server failures: If the cron MCP server process crashes or fails to start, the AI drawer
+      will show an offline status and the agent will be unable to read or propose changes to cron
+      jobs. Because the MCP server communicates via stdio (spawned by Claude Code), a crash is not
+      automatically restarted.
+    mitigation: |
+      Display clear "MCP server offline" status in the drawer status bar. Provide a "Restart MCP"
+      button in the drawer header. Log MCP server stderr to ~/.agentboard/logs/cron-mcp.log for
+      debugging. Wrap all MCP tool implementations in try/catch with structured error responses.
+
+  - id: RISK-02
+    description: |
+      Proposal timeout edge cases: The propose_change MCP tool blocks until the user responds or
+      the proposal auto-expires. If the WebSocket connection drops between proposal creation and
+      the user response, the agent will be stuck waiting and the proposal card will be orphaned
+      in the UI.
+    mitigation: |
+      On WebSocket reconnect, the server resyncs pending proposals to the UI. The proposal timeout
+      (default 5 minutes) ensures the agent is never blocked indefinitely. Track proposal state in
+      server memory so reconnecting clients get the current state.
+
+  - id: RISK-03
+    description: |
+      Session lifecycle conflicts: The agentboard-cron-ai tmux window is managed as an internal
+      session. If a user manually kills the tmux window outside of agentboard, the server may have
+      stale state showing the session as running, causing reattach failures.
+    mitigation: |
+      Verify tmux window existence before attaching. If the window is gone, recreate it gracefully
+      and update session state. Status polling will detect the window disappearing and update to
+      "offline" within one poll cycle.
+
+  - id: RISK-04
+    description: |
+      Sudo through AI: The propose-and-approve flow for system-level cron jobs (requiring sudo)
+      adds an extra interaction step (AI proposes, user approves, then sudo prompt). This
+      multi-step flow could confuse users or lead to accidental approvals of privileged operations.
+    mitigation: |
+      Proposal cards for sudo-required operations MUST include a visible lock icon and explicit
+      warning text. Safety guidelines in the skill file instruct the agent to warn before proposing
+      deletion of system-critical jobs. The sudo password prompt from Phase 26 is always presented
+      after Accept, never bypassed.
+
+  - id: RISK-05
+    description: |
+      Natural language ambiguity: The agent may misinterpret vague job creation requests and
+      propose incorrect commands or schedules, which a user might accept without careful review.
+    mitigation: |
+      Skill file mandates the agent confirm understanding before proposing. Proposal cards show
+      the full config including command and human-readable schedule, giving the user a clear diff
+      to review. The agent MUST ask clarifying questions when the command path is ambiguous.
+
+  - id: RISK-06
+    description: |
+      AI drawer blocking performance: The xterm.js instance in the drawer runs alongside the main
+      cron manager terminal and the Phase 26 polling loop, potentially causing performance
+      degradation on lower-end hardware.
+    mitigation: |
+      The AI terminal is only attached when the drawer is open. Detach the pty when the drawer
+      closes to reduce rendering overhead. Proposal card rendering is asynchronous and must not
+      block terminal output.
+
+non_functional:
+  performance:
+    - id: REQ-52
+      description: "UI context updates MUST reach the MCP server within 500ms of the user action."
+    - id: REQ-53
+      description: "Agent navigation commands (select_job, navigate_to_tab) MUST take effect in the UI within 300ms."
+    - id: REQ-54
+      description: "Proposal card rendering MUST NOT block terminal output. Cards MUST be rendered asynchronously after the marker is detected."
+  accessibility:
+    - id: REQ-55
+      description: "The AI drawer MUST be keyboard-navigable. The toggle shortcut MUST open/close the drawer. Tab MUST cycle between the terminal, proposal card buttons, and drawer controls."
+    - id: REQ-56
+      description: "Proposal cards MUST have appropriate ARIA labels for the operation type, status, and action buttons."
+    - id: REQ-57
+      description: "The drawer MUST be dismissable via Escape key."
+
+constraints:
+  runtime: "Bun 1.x"
+  language: "TypeScript 5.x"
+  frontend_framework: "React 18"
+  backend_framework: "Hono"
+  state_management: "Zustand"
+  styling: "Tailwind CSS"
+  terminal: "xterm.js (same instance as main terminal view)"
+  mcp_transport: "stdio (spawned by Claude Code via MCP config)"
+  animation: "motion/react (same as Phase 26)"
+  mcp_sdk: "MCP TypeScript SDK (stdio transport)"
+  skill_file_format: "Markdown (.md) loaded as Claude system prompt"
+  session_manager: "Existing agentboard SessionManager (tmux)"
+
+scope:
+  included:
+    new_backend:
+      - src/server/mcp/cronMcpServer.ts
+    new_frontend_components:
+      - src/client/components/cron/CronAiDrawer.tsx
+      - src/client/components/cron/CronAiHeader.tsx
+      - src/client/components/cron/CronAiTerminal.tsx
+      - src/client/components/cron/CronAiProposalCard.tsx
+      - src/client/components/cron/CronAiStatusBar.tsx
+    new_store:
+      - src/client/stores/cronAiStore.ts
+    new_config_files:
+      - "~/.agentboard/mcp/cron-manager.json (generated at startup)"
+      - "~/.agentboard/skills/cron-manager.md (generated at startup)"
+    modified:
+      - src/client/components/cron/CronManager.tsx
+      - src/client/App.tsx
+      - src/shared/types.ts
+      - src/server/index.ts
+      - src/client/stores/settingsStore.ts
+      - src/server/wsRouter.ts
+  excluded:
+    - src/server/cronManager.ts
+    - src/server/cronHistoryService.ts
+    - src/server/cronLogService.ts
+    - src/server/handlers/cronHandlers.ts
+    - src/client/components/cron/CronTimeline.tsx
+    - src/client/components/cron/CronJobList.tsx
+    - src/client/components/cron/CronJobRow.tsx
+    - src/client/components/cron/CronJobDetail.tsx
+    - src/client/stores/cronStore.ts
+    - src/server/SessionManager.ts
+    - src/client/components/Terminal.tsx
+    - src/client/stores/sessionStore.ts
+
+architecture_notes: |
+  # Phase 27: Cron AI Orchestrator -- Full Design
+
+  ## 1. Architecture Overview
+
+  ### What It Is
+  An AI assistant embedded in the cron manager view that can read, analyze, and propose changes to
+  all cron jobs and systemd timers. The assistant runs as a persistent Claude Code session in a
+  dedicated tmux window, connected to a custom MCP server that exposes the full Phase 26 cron
+  manager API. A custom Claude skill file guides the agent's behavior.
+
+  ### High-Level Flow
+  ```
+  ┌─────────────────────────────────────────────────────┐
+  │ Agentboard UI (Browser)                             │
+  │ ┌───────────────────────┐  ┌──────────────────────┐ │
+  │ │ Cron Manager View     │  │ AI Drawer (overlay)  │ │
+  │ │ (Phase 26)            │  │ ┌──────────────────┐ │ │
+  │ │ ┌─────┐ ┌───────────┐│  │ │ xterm.js terminal│ │ │
+  │ │ │List │ │Detail tabs ││◄─┼─│ (Claude Code)    │ │ │
+  │ │ └─────┘ └───────────┘│  │ │                  │ │ │
+  │ └───────────────────────┘  │ │ [Proposal Cards] │ │ │
+  │                            │ └──────────────────┘ │ │
+  │                            └──────────────────────┘ │
+  └──────────────────────┬──────────────────────────────┘
+                         │ WebSocket
+  ┌──────────────────────▼──────────────────────────────┐
+  │ Agentboard Server (Hono)                            │
+  │ ┌──────────────┐  ┌──────────────┐                  │
+  │ │ CronManager  │  │ SessionMgr   │                  │
+  │ │ (Phase 26)   │  │ (tmux)       │                  │
+  │ └──────┬───────┘  └──────────────┘                  │
+  │        │                                            │
+  │ ┌──────▼──────────────────┐                         │
+  │ │ Cron MCP Server         │◄── Claude Code session  │
+  │ │ (stdio transport)       │    (in tmux window)     │
+  │ │ - 20+ tools             │                         │
+  │ │ - UI context resource   │                         │
+  │ │ - proposal queue        │                         │
+  │ └─────────────────────────┘                         │
+  └─────────────────────────────────────────────────────┘
+  ```
+
+  ### Key Architectural Decisions
+  1. **Persistent tmux session**: The AI runs in a dedicated tmux window (`agentboard-cron-ai`)
+     managed by agentboard's existing SessionManager. Survives browser reloads. Conversation
+     history preserved.
+  2. **MCP server (stdio)**: A dedicated MCP server process that Claude Code connects to. Exposes
+     all Phase 26 operations as tools. Uses stdio transport (spawned by Claude Code's MCP config).
+  3. **Propose + approve**: All mutations (create, edit, pause, resume, delete) go through a
+     proposal queue. The agent calls a `propose_change` MCP tool which renders a card in the UI.
+     Human clicks Accept/Reject. Only then does the mutation execute.
+  4. **Context-aware + bidirectional sync**: The MCP server exposes a `ui_context` resource that
+     reflects the currently selected job and visible state. The agent can also call `select_job`
+     and `navigate_to_tab` tools to drive the UI.
+  5. **Custom Claude skill**: A `.claude/commands/cron-manager.md` skill file that primes the
+     agent with its role, available tools, approval workflow, and proactive behaviors.
+
+  ---
+
+  ## 2. AI Drawer Component
+
+  ### What It Is
+  A slide-in overlay drawer (from the right edge) containing the Claude Code terminal session and
+  proposal cards. Same pattern as the TaskQueue drawer.
+
+  ### Layout
+  - **Toggle**: Button in the cron manager header bar (brain/sparkle icon) + keyboard shortcut
+    `Cmd+Shift+A` / `Ctrl+Shift+A`
+  - **Width**: 480px default, resizable (360-640px)
+  - **Header**: "AI Assistant" title, session status indicator (working/waiting/offline),
+    "New Conversation" button, close button
+  - **Terminal area**: xterm.js instance connected to the persistent tmux window. Scrollable. Same
+    terminal component as the main terminal view but sized to the drawer.
+  - **Proposal cards**: Rendered inline in the terminal output stream (injected as HTML overlays
+    positioned at the correct scroll offset). Each card shows:
+    - Operation type badge (Create / Edit / Pause / Resume / Delete)
+    - Job name + avatar
+    - Diff preview (what will change)
+    - Reasoning summary (from the agent)
+    - Accept / Reject buttons
+    - Timestamp
+  - **Status bar**: Bottom bar showing: connected MCP server status, currently selected job
+    context, proposal queue count
+
+  ### Terminal Session Lifecycle
+  1. When the drawer is first opened, agentboard checks if a `agentboard-cron-ai` tmux window
+     exists.
+  2. If not, it creates one via SessionManager with a preconfigured command that launches Claude
+     Code with the cron MCP server configured.
+  3. The terminal attaches to this window (same `terminal-attach` flow as the main view).
+  4. On browser reload: the tmux window persists. Reopening the drawer reattaches.
+  5. "New Conversation" button: kills the existing tmux window, creates a fresh one. Old
+     conversation is gone (tmux scrollback is the only history).
+
+  ### Startup Command
+  ```bash
+  claude --mcp-config ~/.agentboard/mcp/cron-manager.json \
+         --skill ~/.agentboard/skills/cron-manager.md \
+         --resume  # resumes if a previous session exists
+  ```
+
+  The MCP config and skill files are generated/managed by agentboard (see sections 3 and 4).
+
+  ---
+
+  ## 3. Cron MCP Server
+
+  ### What It Is
+  A dedicated MCP server that exposes the full Phase 26 cron manager API as tools. Runs as a child
+  process of the agentboard server, communicating via stdio transport.
+
+  ### Server Location
+  ```
+  src/server/mcp/cronMcpServer.ts  -- MCP server implementation
+  ```
+
+  ### Transport
+  - **stdio**: Spawned by Claude Code via MCP config. Reads JSON-RPC from stdin, writes to stdout.
+  - The MCP server connects back to the agentboard server's internal APIs (direct function calls
+    since it runs in the same process, or via a local HTTP API if process-isolated).
+
+  ### Tools (20+)
+
+  #### Read Tools (no approval needed)
+
+  ```typescript
+  // Job listing and search
+  list_jobs()                          // List all jobs with status, health, schedule
+  list_jobs_by_group(group: string)    // List jobs in a specific project group
+  search_jobs(query: string)           // Search by name, command, tag, or group
+  get_job_detail(jobId: string)        // Full detail for a specific job
+
+  // History and logs
+  get_run_history(jobId: string, limit?: number)   // Past executions with exit codes, durations
+  get_job_logs(jobId: string, lines?: number)      // Recent log output
+  get_log_snippet(jobId: string, runTimestamp: string) // Logs for a specific run
+
+  // Health and analysis
+  get_health_summary()                 // Overview of all job health statuses
+  get_failing_jobs()                   // List jobs with health: warning or critical
+  get_schedule_conflicts()             // Find jobs with overlapping schedules
+  get_duration_trends(jobId: string)   // Duration stats and trend data
+  analyze_schedule_load()              // Per-hour/day job density analysis
+
+  // Context
+  get_ui_context()                     // Currently selected job, active tab, visible filters
+  get_available_sessions()             // Active agentboard sessions (for linking)
+  ```
+
+  #### Write Tools (require approval via propose_change)
+
+  ```typescript
+  // Mutations -- all go through proposal queue
+  propose_change(proposal: {
+    operation: 'create' | 'edit_frequency' | 'pause' | 'resume' | 'delete' | 'run_now' | 'set_tags' | 'link_session'
+    jobId?: string            // null for create
+    description: string       // human-readable summary of what and why
+    details: Record<string, any>  // operation-specific payload
+  })
+
+  // Example proposals:
+  // { operation: 'create', description: 'Create nightly backup job',
+  //   details: { mode: 'cron', command: '/home/user/backup.sh', schedule: '0 3 * * *' } }
+  // { operation: 'edit_frequency', jobId: 'abc123',
+  //   description: 'Move backup to 4am to avoid overlap with log rotation',
+  //   details: { newSchedule: '0 4 * * *' } }
+  // { operation: 'delete', jobId: 'abc123',
+  //   description: 'Remove obsolete monitoring job (service was decommissioned)' }
+  ```
+
+  #### UI Navigation Tools
+
+  ```typescript
+  // Drive the UI from the agent
+  select_job(jobId: string)            // Select a job in the list
+  navigate_to_tab(tab: 'overview' | 'history' | 'logs' | 'script')  // Switch detail tab
+  show_timeline()                      // Open the schedule timeline
+  filter_jobs(filter: { status?: string, health?: string, tag?: string, source?: string })
+  ```
+
+  ### MCP Resources
+
+  ```typescript
+  // Dynamic resource reflecting current UI state
+  resource "cron://ui/context" {
+    selectedJobId: string | null
+    selectedJobDetail: CronJobDetail | null  // full detail if a job is selected
+    activeTab: string
+    visibleJobCount: number
+    filterState: { mode, source, tags }
+    healthSummary: { healthy: number, warning: number, critical: number }
+  }
+
+  // Static resource with skill guidance (for agent self-reference)
+  resource "cron://skill/guidelines" {
+    // Contents of the skill file, so the agent can re-read its instructions
+  }
+  ```
+
+  ### Proposal Queue
+
+  When the agent calls `propose_change`, the MCP server:
+  1. Validates the proposal structure
+  2. Assigns a proposal ID
+  3. Sends a WebSocket message to the UI:
+     `{ type: 'cron-ai-proposal', proposal: { id, operation, jobId, description, details, diff } }`
+  4. The UI renders the proposal as an inline card in the drawer's terminal area
+  5. Blocks the MCP tool call (the agent waits for the response)
+  6. When the user clicks Accept: executes the mutation via CronManager, returns success to agent
+  7. When the user clicks Reject: returns rejection with optional user feedback to the agent
+  8. **Timeout**: If no response within 5 minutes, auto-reject with "No response from user"
+
+  ### Diff Generation
+  For each proposal type, generate a human-readable diff:
+  - **Create**: Show the full job config that will be created
+  - **Edit frequency**: Show `old schedule -> new schedule` with human-readable form
+  - **Pause/Resume**: Show `current status -> new status`
+  - **Delete**: Show the full job that will be removed
+  - **Set tags**: Show `old tags -> new tags`
+
+  ---
+
+  ## 4. Claude Skill File
+
+  ### What It Is
+  A custom Claude skill (`.claude/commands/cron-manager.md`) that primes the AI agent with its
+  role, capabilities, behavioral guidelines, and proactive patterns.
+
+  ### Skill File Location
+  Generated by agentboard at: `~/.agentboard/skills/cron-manager.md`
+
+  ### Skill Content
+
+  #### Role
+  You are a cron job management assistant embedded in Agentboard. You help the user manage their
+  cron jobs and systemd timers through natural conversation.
+
+  #### Context Awareness
+  - Always check `get_ui_context()` at the start of a conversation to understand what the user is
+    looking at.
+  - When the user says "this job" or "it", they mean the currently selected job.
+  - Use `select_job` and `navigate_to_tab` to guide the user's attention when referencing specific
+    jobs.
+
+  #### Proactive Behaviors
+
+  **Failure Diagnosis** (trigger: user asks "why is this failing?" or agent notices a critical job):
+  1. Call `get_job_detail` + `get_run_history` + `get_job_logs`
+  2. Analyze the exit codes, log patterns, and error messages
+  3. Suggest likely causes (permission issues, missing dependencies, disk space, network, script bugs)
+  4. If fixable (e.g., wrong path), propose a change. If not (e.g., external service down),
+     explain and suggest monitoring.
+
+  **Schedule Optimization** (trigger: user asks for optimization or agent detects contention):
+  1. Call `analyze_schedule_load` + `get_schedule_conflicts`
+  2. Identify peak hours, overlapping jobs, resource contention
+  3. Suggest rescheduling with specific new times and reasoning
+  4. Propose changes one at a time via `propose_change`
+
+  **Natural Language Job Creation** (trigger: user describes a job in plain English):
+  1. Parse the intent: what command, what schedule, what name
+  2. Confirm understanding with the user
+  3. Propose creation via `propose_change` with the full config
+
+  **Health Monitoring** (trigger: at conversation start if any jobs are unhealthy):
+  1. Call `get_failing_jobs` and `get_health_summary`
+  2. Proactively report: "I notice 2 jobs are failing: {names}. Want me to investigate?"
+  3. Only report once per conversation start (don't nag)
+
+  #### Approval Workflow
+  - **Never** execute mutations directly. Always use `propose_change`.
+  - Include clear reasoning in every proposal description.
+  - If a proposal is rejected, ask the user what they'd prefer instead.
+  - For multi-step changes (e.g., rescheduling 5 jobs), propose one at a time or ask if the user
+    wants to batch-approve.
+
+  #### Safety Guidelines
+  - Warn before proposing deletion of system-critical jobs (logrotate, apt-daily, etc.)
+  - When proposing schedule changes, check for conflicts with the new schedule first
+  - For jobs requiring sudo, mention that the UI will prompt for a password
+  - Never suggest disabling all monitoring/health-check jobs simultaneously
+
+  #### Tone
+  - Concise, practical, slightly informal
+  - Lead with the answer, explain after if needed
+  - Use job names (not IDs) when talking to the user
+  - When showing schedules, always include both the cron expression and the human-readable form
+
+  ---
+
+  ## 5. Bidirectional UI Sync
+
+  ### What It Is
+  The agent and the UI stay synchronized: the agent knows what the user is looking at, and the
+  agent can drive the UI.
+
+  ### UI -> Agent (Context Awareness)
+  - The MCP server maintains a live `ui_context` that updates whenever the user:
+    - Selects a different job
+    - Switches tabs
+    - Changes filters
+    - Opens/closes the timeline
+  - The agent can read this via `get_ui_context()` or the `cron://ui/context` resource.
+  - Implementation: The agentboard server forwards relevant WebSocket events (job selection, tab
+    change) to the MCP server process via an internal channel.
+
+  ### Agent -> UI (Navigation)
+  - The agent can call `select_job(jobId)` to highlight/select a job in the list and open its detail.
+  - The agent can call `navigate_to_tab(tab)` to switch the detail pane tab.
+  - The agent can call `show_timeline()` to open the schedule timeline.
+  - The agent can call `filter_jobs(filter)` to change the list's active filters.
+  - These tools send WebSocket messages from the MCP server back to the UI client, which applies
+    them to the Zustand store.
+
+  ### Sync Protocol (WebSocket messages)
+
+  ```typescript
+  // UI -> Server -> MCP Server (context updates)
+  { type: 'cron-ai-context-update', selectedJobId: string | null, activeTab: string, filters: object }
+
+  // MCP Server -> Server -> UI (navigation commands)
+  { type: 'cron-ai-navigate', action: 'select_job', jobId: string }
+  { type: 'cron-ai-navigate', action: 'switch_tab', tab: string }
+  { type: 'cron-ai-navigate', action: 'show_timeline' }
+  { type: 'cron-ai-navigate', action: 'filter', filter: object }
+
+  // MCP Server -> Server -> UI (proposals)
+  { type: 'cron-ai-proposal', proposal: { id, operation, jobId, description, details, diff } }
+
+  // UI -> Server -> MCP Server (proposal responses)
+  { type: 'cron-ai-proposal-response', proposalId: string, approved: boolean, feedback?: string }
+  ```
+
+  ---
+
+  ## 6. Proposal Card Component
+
+  ### What It Is
+  A rich inline card rendered within the AI drawer's terminal area when the agent proposes a change.
+
+  ### Visual Design
+  ```
+  ┌─────────────────────────────────────────────┐
+  │ 🔧 Edit Frequency                           │
+  │                                             │
+  │ ┌─────┐ daily-backup                        │
+  │ │ 🤖  │ Move to 4am to avoid log rotation   │
+  │ └─────┘                                     │
+  │                                             │
+  │ Schedule: 0 3 * * *  →  0 4 * * *          │
+  │           "At 3 AM"     "At 4 AM"           │
+  │                                             │
+  │         [ Accept ]  [ Reject ]              │
+  │                                    2m ago   │
+  └─────────────────────────────────────────────┘
+  ```
+
+  ### Implementation
+  - Proposal cards are **not** terminal text -- they are React components overlaid on the terminal
+    at the correct scroll position.
+  - The terminal output includes a marker line (e.g., `<!-- PROPOSAL:abc123 -->`) that the UI
+    detects and replaces with the card component.
+  - Cards remain interactive (clickable buttons) even after scrolling up.
+  - Accepted proposals show a green "Approved" badge. Rejected show red "Rejected" with user
+    feedback.
+  - Cards are persisted in the Zustand store so they survive re-renders.
+
+  ### Card States
+  | State    | Visual                                                    |
+  |----------|-----------------------------------------------------------|
+  | Pending  | Blue border, Accept/Reject buttons active                 |
+  | Accepted | Green border, "Approved" badge, buttons disabled          |
+  | Rejected | Red border, "Rejected" badge with feedback, buttons disabled |
+  | Expired  | Gray border, "Expired (no response)" badge               |
+
+  ---
+
+  ## 7. MCP Configuration Generation
+
+  ### What It Is
+  Agentboard generates the MCP config file that Claude Code uses to connect to the cron MCP server.
+
+  ### Config File
+  Generated at: `~/.agentboard/mcp/cron-manager.json`
+
+  ```json
+  {
+    "mcpServers": {
+      "cron-manager": {
+        "command": "bun",
+        "args": ["run", "/path/to/agentboard/src/server/mcp/cronMcpServer.ts"],
+        "env": {
+          "AGENTBOARD_URL": "http://localhost:3000",
+          "AGENTBOARD_WS": "ws://localhost:3000/ws",
+          "AGENTBOARD_AUTH_TOKEN": "..."
+        }
+      }
+    }
+  }
+  ```
+
+  ### Generation Lifecycle
+  - Config is generated when agentboard starts (if not already present, or if the agentboard port
+    changed).
+  - The `AGENTBOARD_URL` and `AGENTBOARD_WS` values come from the server's actual bind address.
+  - The auth token (if configured) is included so the MCP server can authenticate with the
+    agentboard WebSocket.
+
+  ---
+
+  ## 8. Session Management Integration
+
+  ### What It Is
+  Integration with agentboard's existing SessionManager to manage the AI assistant's tmux window.
+
+  ### Session Details
+  - **Session name**: `agentboard-cron-ai`
+  - **Window management**: Created via `SessionManager.createWindow()` when the drawer first
+    opens. Killed via `SessionManager.killWindow()` when "New Conversation" is clicked.
+  - **Auto-start**: The tmux window is NOT auto-started on agentboard boot. Only created on first
+    drawer open.
+  - **Visibility**: The AI session does NOT appear in the main session list (it's a
+    system-managed session, not a user project session). Filtered out by a `source: 'internal'`
+    flag or name prefix convention.
+  - **Status tracking**: The AI session's status (working/waiting) is tracked and displayed in
+    the drawer header, using the same log-polling mechanism as regular sessions.
+
+  ### Claude Code Launch
+  The tmux window runs a command like:
+  ```bash
+  claude --mcp-config ~/.agentboard/mcp/cron-manager.json \
+         --system-prompt "$(cat ~/.agentboard/skills/cron-manager.md)" \
+         --allowedTools "mcp__cron-manager__*"
+  ```
+
+  The exact CLI flags depend on the Claude Code version. The skill file content is injected as the
+  system prompt so the agent starts with full context.
+
+  ---
+
+  ## 9. Proactive Behaviors
+
+  ### What It Is
+  The agent doesn't just respond to questions -- it proactively offers help based on the current
+  state of the cron system.
+
+  ### Startup Greeting
+  When the conversation starts (or a new conversation is created), the agent:
+  1. Calls `get_health_summary()` and `get_failing_jobs()`
+  2. If unhealthy jobs exist: "I see 2 jobs are having issues: **daily-backup** (failed 3x in a
+     row) and **log-cleanup** (missed its last scheduled run). Want me to investigate?"
+  3. If all healthy: "All 15 jobs are healthy. What can I help with?"
+  4. Calls `get_ui_context()` to see if a job is already selected and references it: "I see you
+     have **daily-backup** selected. It's currently healthy, running every day at 3 AM."
+
+  ### Failure Diagnosis Flow
+  When the user asks about a failing job (or the agent proactively investigates):
+  1. `get_job_detail(jobId)` -- get full config
+  2. `get_run_history(jobId, 10)` -- last 10 runs
+  3. `get_job_logs(jobId, 100)` -- recent output
+  4. Analyze patterns:
+     - Exit code patterns (e.g., always 127 = command not found, 1 = script error, 137 = OOM killed)
+     - Log content (permission denied, file not found, connection refused, disk full)
+     - Timing patterns (fails only at certain times = resource contention?)
+  5. Present diagnosis with confidence level and suggested fix
+  6. If the fix is a config change (e.g., wrong path, bad schedule), propose it via `propose_change`
+
+  ### Schedule Optimization Flow
+  When the user asks for optimization or the agent detects issues:
+  1. `analyze_schedule_load()` -- per-hour density
+  2. `get_schedule_conflicts()` -- overlapping jobs
+  3. `get_duration_trends()` for heavy jobs
+  4. Identify:
+     - Peak hours with too many concurrent jobs
+     - Jobs that could be spread across off-peak hours
+     - Long-running jobs that overlap with other long-running jobs
+  5. Propose rescheduling one at a time, explaining the reasoning
+
+  ### Natural Language Job Creation Flow
+  When the user says something like "run my backup every night at 3am":
+  1. Parse: command = context-dependent (ask if unclear), schedule = `0 3 * * *`
+  2. Confirm: "I'll create a cron job that runs `/home/user/backup.sh` every day at 3:00 AM.
+     Sound right?"
+  3. On confirmation: `propose_change({ operation: 'create', ... })`
+  4. After approval: job is created, agent auto-selects it in the UI
+
+  ### Health Monitoring
+  The agent checks health at conversation start and can be asked to do periodic checks:
+  - "Keep an eye on my jobs" -> agent periodically (every few messages) checks
+    `get_health_summary()` and reports changes
+  - "Alert me if anything breaks" -> agent sets up a monitoring note and checks at conversation
+    start
+
+  ---
+
+  ## 10. Frontend Store Extensions
+
+  ### What It Is
+  Extensions to the Zustand store for AI drawer state.
+
+  ### New Store: `src/client/stores/cronAiStore.ts`
+
+  ```typescript
+  interface CronAiState {
+    // Drawer state
+    drawerOpen: boolean
+    drawerWidth: number             // 360-640px, default 480
+    sessionStatus: 'offline' | 'starting' | 'working' | 'waiting'
+    sessionWindowId: string | null  // tmux window ID
+
+    // Proposals
+    proposals: CronAiProposal[]
+    pendingProposalCount: number
+
+    // Settings
+    autoStartSession: boolean       // whether to start AI session on drawer open (default: true)
+  }
+
+  interface CronAiProposal {
+    id: string
+    operation: 'create' | 'edit_frequency' | 'pause' | 'resume' | 'delete' | 'run_now' | 'set_tags' | 'link_session'
+    jobId: string | null
+    jobName: string | null
+    jobAvatarUrl: string | null
+    description: string
+    diff: string                    // human-readable diff
+    status: 'pending' | 'accepted' | 'rejected' | 'expired'
+    feedback: string | null         // user feedback on rejection
+    createdAt: string
+    resolvedAt: string | null
+  }
+  ```
+
+  Persisted keys: `drawerWidth`, `autoStartSession`
+
+  ### New Components
+
+  ```
+  src/client/components/cron/
+    CronAiDrawer.tsx          -- slide-in drawer container
+    CronAiHeader.tsx          -- drawer header with status, new conversation, close
+    CronAiTerminal.tsx        -- xterm.js instance for the AI session
+    CronAiProposalCard.tsx    -- inline proposal card with accept/reject
+    CronAiStatusBar.tsx       -- bottom bar with MCP status, context, queue count
+  ```
+
+  ---
+
+  ## 11. WebSocket Protocol Extensions
+
+  ### Server Messages (additions to Phase 26 protocol)
+
+  ```typescript
+  // AI proposal from agent
+  { type: 'cron-ai-proposal', proposal: CronAiProposal }
+
+  // AI navigation command
+  { type: 'cron-ai-navigate', action: string, payload: Record<string, any> }
+
+  // AI session status
+  { type: 'cron-ai-session-status', status: 'offline' | 'starting' | 'working' | 'waiting' }
+  ```
+
+  ### Client Messages
+
+  ```typescript
+  // Open/close AI drawer (triggers session creation if needed)
+  { type: 'cron-ai-drawer-open' }
+  { type: 'cron-ai-drawer-close' }
+
+  // New conversation (kill + recreate session)
+  { type: 'cron-ai-new-conversation' }
+
+  // Proposal response
+  { type: 'cron-ai-proposal-response', proposalId: string, approved: boolean, feedback?: string }
+
+  // Context update (sent on job selection, tab change, filter change)
+  { type: 'cron-ai-context-update', context: { selectedJobId, activeTab, filters } }
+  ```
+
+  ---
+
+  ## 12. Settings Integration
+
+  ### New Settings (in `settingsStore`)
+
+  | Setting                | Type    | Default | Description                                           |
+  |------------------------|---------|---------|-------------------------------------------------------|
+  | `cronAiEnabled`        | boolean | true    | Whether the AI assistant feature is available         |
+  | `cronAiDrawerWidth`    | number  | 480     | Drawer width in px (360-640)                          |
+  | `cronAiAutoGreet`      | boolean | true    | Whether the agent proactively reports health on startup |
+  | `cronAiProposalTimeout`| number  | 300000  | Auto-reject proposals after N ms (default: 5 min)    |
+
+  ---
+
+  ## Related Phases
+
+  | Phase                     | Relationship                                                      |
+  |---------------------------|-------------------------------------------------------------------|
+  | Phase 26 (Cron Manager)   | Hard dependency. Provides all cron CRUD operations, job discovery,|
+  |                           | health detection, WebSocket protocol, and UI components that this |
+  |                           | phase wraps with AI.                                              |
+  | Phase 15 (UI Enhancements)| Provides drawer/overlay UI patterns (TaskQueue) that the AI       |
+  |                           | drawer follows.                                                   |
+
+  ---
+
+  ## Key Source Cross-References
+
+  | Topic                    | Source                                       | Notes                                    |
+  |--------------------------|----------------------------------------------|------------------------------------------|
+  | Phase 26 cron manager API| phases/phase-26-cron-manager/index.md        | All operations exposed as MCP tools      |
+  | Existing terminal component | src/client/components/Terminal.tsx        | xterm.js patterns for the drawer terminal |
+  | TaskQueue drawer pattern | src/client/components/TaskQueue.tsx          | Slide-in overlay layout pattern          |
+  | Session management       | src/server/SessionManager.ts                 | Creating/managing the AI tmux window     |
+  | MCP server patterns      | Claude Code docs                             | stdio transport, tool definitions        |
+  | Claude skill files       | .claude/commands/ convention                 | Skill file format and loading            |
+  | WebSocket protocol       | src/shared/types.ts                          | Discriminated union message types        |
+  | Toast system             | src/client/components/Toast.tsx              | For AI notification toasts               |
+
+acceptance:
+  - id: REQ-01
+    type: behavioral
+    description: "The cron manager view MUST include a slide-in drawer (from the right edge) togglable via a button in the header bar and keyboard shortcut `Cmd+Shift+A` / `Ctrl+Shift+A`. The drawer MUST follow the same overlay pattern as the TaskQueue drawer."
+
+  - id: REQ-02
+    type: behavioral
+    description: "The drawer MUST have a default width of 480px, resizable between 360-640px. The width MUST persist across sessions via the Zustand store."
+
+  - id: REQ-03
+    type: behavioral
+    description: "The drawer MUST contain: a header (title, session status indicator, 'New Conversation' button, close button), an xterm.js terminal area connected to the AI session, and a status bar showing MCP connection status and currently selected job context."
+
+  - id: REQ-04
+    type: behavioral
+    description: "The drawer MUST NOT block interaction with the cron manager list and detail panes behind it. The user MUST be able to click jobs in the list while the drawer is open."
+
+  - id: REQ-05
+    type: behavioral
+    description: "The AI assistant MUST run as a persistent Claude Code session in a dedicated tmux window named `agentboard-cron-ai`. The session MUST survive browser reloads and tab closures."
+
+  - id: REQ-06
+    type: behavioral
+    description: "When the drawer is opened for the first time, agentboard MUST create the tmux window via SessionManager with a command that launches Claude Code with the cron MCP server configured. If the window already exists (e.g., from a previous browser session), the drawer MUST reattach to it."
+
+  - id: REQ-07
+    type: invariant
+    description: "The AI session MUST NOT appear in the main session list. It MUST be filtered out as an internal/system session."
+
+  - id: REQ-08
+    type: behavioral
+    description: "The 'New Conversation' button MUST kill the existing tmux window, create a fresh one, and reattach the terminal. A confirmation dialog MUST be shown before destroying the existing conversation."
+
+  - id: REQ-09
+    type: behavioral
+    description: "The drawer header MUST display the AI session's status: `offline` (no session), `starting` (session launching), `working` (agent processing), `waiting` (agent idle/ready for input). Status MUST update in real-time using the same log-polling mechanism as regular sessions."
+
+  - id: REQ-10
+    type: contract
+    description: "A dedicated MCP server MUST be implemented at `src/server/mcp/cronMcpServer.ts` using stdio transport. The server MUST expose all Phase 26 cron manager operations as MCP tools."
+
+  - id: REQ-11
+    type: contract
+    description: "The MCP server MUST expose at minimum the following read tools (no approval required): `list_jobs`, `list_jobs_by_group`, `search_jobs`, `get_job_detail`, `get_run_history`, `get_job_logs`, `get_log_snippet`, `get_health_summary`, `get_failing_jobs`, `get_schedule_conflicts`, `get_duration_trends`, `analyze_schedule_load`, `get_ui_context`, `get_available_sessions`."
+
+  - id: REQ-12
+    type: contract
+    description: "The MCP server MUST expose a `propose_change` tool for all mutations. The tool MUST accept: operation type, optional job ID, description (human-readable reasoning), and operation-specific details. The tool MUST block until the user responds (accept/reject) or the proposal times out."
+
+  - id: REQ-13
+    type: contract
+    description: "The MCP server MUST expose UI navigation tools: `select_job`, `navigate_to_tab`, `show_timeline`, `filter_jobs`. These MUST send WebSocket messages that drive the cron manager UI state."
+
+  - id: REQ-14
+    type: contract
+    description: "The MCP server MUST expose a `cron://ui/context` resource that reflects the currently selected job, active tab, visible filters, and health summary. This resource MUST update in real-time as the user interacts with the UI."
+
+  - id: REQ-15
+    type: contract
+    description: "Agentboard MUST generate the MCP config file at `~/.agentboard/mcp/cron-manager.json` on server startup. The config MUST include the correct agentboard server URL, WebSocket URL, and auth token (if configured)."
+
+  - id: REQ-16
+    type: contract
+    description: "If the agentboard server port changes, the MCP config MUST be regenerated on next startup."
+
+  - id: REQ-17
+    type: invariant
+    description: "All mutation operations (create, edit frequency, pause, resume, delete, run now, set tags, link session) MUST go through the proposal queue. The agent MUST NOT be able to execute mutations directly."
+
+  - id: REQ-18
+    type: contract
+    description: "When the agent calls `propose_change`, the MCP server MUST send a `cron-ai-proposal` WebSocket message to the UI. The UI MUST render the proposal as an inline card in the drawer's terminal area."
+
+  - id: REQ-19
+    type: behavioral
+    description: "Each proposal card MUST display: operation type badge, job name and avatar (if applicable), a human-readable diff showing what will change, the agent's reasoning/description, Accept and Reject buttons, and a timestamp."
+
+  - id: REQ-20
+    type: contract
+    description: "When the user clicks Accept, the mutation MUST execute via the Phase 26 CronManager API. The result (success or error) MUST be returned to the agent via the MCP tool response. The card MUST update to show a green 'Approved' badge."
+
+  - id: REQ-21
+    type: behavioral
+    description: "When the user clicks Reject, the rejection MUST be returned to the agent with optional user feedback (a text input that appears on reject click). The card MUST update to show a red 'Rejected' badge with feedback."
+
+  - id: REQ-22
+    type: contract
+    description: "Proposals MUST auto-expire after a configurable timeout (default: 5 minutes). Expired proposals MUST return a timeout error to the agent and show a gray 'Expired' badge on the card."
+
+  - id: REQ-23
+    type: invariant
+    description: "The `propose_change` MCP tool MUST block (not return) until the user responds or the proposal expires. This ensures the agent waits for approval before continuing."
+
+  - id: REQ-24
+    type: contract
+    description: |
+      Each proposal MUST include a human-readable diff appropriate to the operation type:
+      - Create: Full job config (command, schedule with human-readable, tags)
+      - Edit frequency: '"0 3 * * *" (At 3 AM) -> "0 4 * * *" (At 4 AM)'
+      - Pause/Resume: 'active -> paused' or 'paused -> active'
+      - Delete: Full job summary that will be removed
+      - Set tags: '["backup"] -> ["backup", "critical"]'
+      - Run Now: Job name and command that will be executed
+
+  - id: REQ-25
+    type: contract
+    description: "When the user selects a job in the cron manager list, the UI MUST send a `cron-ai-context-update` message to the server, which forwards it to the MCP server. The `get_ui_context()` tool and `cron://ui/context` resource MUST reflect the new selection within 500ms."
+
+  - id: REQ-26
+    type: contract
+    description: "When the user switches detail tabs, changes filters, or opens/closes the timeline, the context MUST update accordingly."
+
+  - id: REQ-27
+    type: behavioral
+    description: "The agent MUST be able to reference the currently selected job without the user naming it. When the user says 'this job', 'it', or 'why is it failing?', the agent MUST use the UI context to resolve the reference."
+
+  - id: REQ-28
+    type: behavioral
+    description: "When the agent calls `select_job(jobId)`, the cron manager list MUST select and scroll to that job, and the detail pane MUST populate as if the user clicked it."
+
+  - id: REQ-29
+    type: behavioral
+    description: "When the agent calls `navigate_to_tab(tab)`, the detail pane MUST switch to that tab."
+
+  - id: REQ-30
+    type: behavioral
+    description: "When the agent calls `show_timeline()`, the schedule timeline MUST open (if not already visible)."
+
+  - id: REQ-31
+    type: behavioral
+    description: "When the agent calls `filter_jobs(filter)`, the list MUST apply the specified filters, updating the visible job set."
+
+  - id: REQ-32
+    type: behavioral
+    description: "All agent navigation actions MUST be visually smooth (no jarring jumps). The list scroll MUST animate to the selected job."
+
+  - id: REQ-33
+    type: contract
+    description: "Agentboard MUST generate a Claude skill file at `~/.agentboard/skills/cron-manager.md` that defines the agent's role, available tools, approval workflow, proactive behaviors, safety guidelines, and tone."
+
+  - id: REQ-34
+    type: behavioral
+    description: "The skill file MUST instruct the agent to check `get_ui_context()` at conversation start to understand what the user is looking at."
+
+  - id: REQ-35
+    type: behavioral
+    description: "The skill file MUST instruct the agent to call `get_health_summary()` and `get_failing_jobs()` at conversation start and proactively report any unhealthy jobs (configurable via `cronAiAutoGreet` setting)."
+
+  - id: REQ-36
+    type: invariant
+    description: "The skill file MUST instruct the agent to NEVER execute mutations directly and ALWAYS use `propose_change`."
+
+  - id: REQ-37
+    type: invariant
+    description: "The skill file MUST include safety guidelines: warn before proposing deletion of system-critical jobs, check for schedule conflicts before proposing changes, mention sudo requirements, never suggest disabling all monitoring jobs simultaneously."
+
+  - id: REQ-38
+    type: behavioral
+    description: "When the user asks about a failing job (e.g., 'why is this failing?', 'what's wrong with X?'), the agent MUST: retrieve the job detail, last 10 runs, and recent logs; analyze exit codes and log patterns; present a diagnosis with confidence level; and propose a fix if one is identifiable."
+
+  - id: REQ-39
+    type: behavioral
+    description: "The agent MUST recognize common failure patterns: exit code 127 (command not found), exit code 1 (generic error with log analysis), exit code 137 (OOM killed), 'permission denied', 'file not found', 'connection refused', 'disk full' in logs."
+
+  - id: REQ-40
+    type: behavioral
+    description: "When the user asks for schedule optimization (e.g., 'optimize my schedules', 'are there any conflicts?'), the agent MUST: analyze per-hour job density, identify overlapping jobs and resource contention, and propose rescheduling with specific new times and reasoning."
+
+  - id: REQ-41
+    type: behavioral
+    description: "Schedule optimization proposals MUST be presented one at a time, allowing the user to accept or reject each individually."
+
+  - id: REQ-42
+    type: behavioral
+    description: "When the user describes a job in natural language (e.g., 'run my backup script every night at 3am', 'check disk space every hour'), the agent MUST: parse the command and schedule intent, confirm understanding with the user, and propose creation via `propose_change`."
+
+  - id: REQ-43
+    type: behavioral
+    description: "If the command is ambiguous (e.g., 'run my backup' without specifying the script path), the agent MUST ask a clarifying question before proposing."
+
+  - id: REQ-44
+    type: behavioral
+    description: "At conversation start (when `cronAiAutoGreet` is true), the agent MUST check health and proactively report: number of healthy/warning/critical jobs, names of any failing jobs with brief descriptions, and an offer to investigate."
+
+  - id: REQ-45
+    type: invariant
+    description: "The health report MUST only be presented once at conversation start, not repeated unless explicitly asked."
+
+  - id: REQ-46
+    type: contract
+    description: "Proposal cards MUST be rendered as React components overlaid on the terminal output at the correct scroll position. The terminal output MUST include a marker (e.g., `<!-- PROPOSAL:id -->`) that the UI detects and replaces with the card component."
+
+  - id: REQ-47
+    type: behavioral
+    description: "Proposal cards MUST remain interactive (Accept/Reject buttons clickable) even when scrolled above the current terminal viewport."
+
+  - id: REQ-48
+    type: behavioral
+    description: "Accepted proposals MUST show a green border and 'Approved' badge. Rejected proposals MUST show a red border, 'Rejected' badge, and user feedback text. Expired proposals MUST show a gray border and 'Expired' badge. All resolved cards MUST have disabled buttons."
+
+  - id: REQ-49
+    type: behavioral
+    description: "Proposal cards MUST be persisted in the Zustand store so they survive component re-renders and tab switches (but not browser reloads -- proposals are session-scoped)."
+
+  - id: REQ-50
+    type: behavioral
+    description: "The SettingsModal 'Cron Manager' section MUST include AI-specific settings: AI assistant enabled (toggle), drawer width (slider), auto-greet on startup (toggle), and proposal timeout (slider, 1-10 min)."
+
+  - id: REQ-51
+    type: behavioral
+    description: "When `cronAiEnabled` is false, the AI drawer button MUST be hidden from the cron manager header."
+
+  - id: TEST-01
+    type: property
+    description: "Drawer toggle. Press `Cmd+Shift+A`. Assert: drawer slides in from right. Press again. Assert: drawer closes."
+
+  - id: TEST-02
+    type: property
+    description: "Drawer does not block main UI. Open drawer. Click a job in the list behind the drawer. Assert: job is selected and detail pane updates."
+
+  - id: TEST-03
+    type: property
+    description: "Drawer width persists. Resize drawer to 550px. Close and reopen. Assert: width is 550px."
+
+  - id: TEST-04
+    type: property
+    description: "Drawer width bounds. Drag to resize below 360px. Assert: stops at 360px. Drag above 640px. Assert: stops at 640px."
+
+  - id: TEST-05
+    type: property
+    description: "Session creation on first open. No `agentboard-cron-ai` window exists. Open drawer. Assert: tmux window created. Assert: terminal connects and shows Claude Code startup."
+
+  - id: TEST-06
+    type: property
+    description: "Session reattach on reopen. AI session running. Close browser tab. Reopen agentboard. Open drawer. Assert: reattaches to existing session. Assert: previous conversation visible in scrollback."
+
+  - id: TEST-07
+    type: property
+    description: "Session not in main list. AI session running. Check the main session list. Assert: `agentboard-cron-ai` does NOT appear."
+
+  - id: TEST-08
+    type: property
+    description: "New Conversation. AI session running with history. Click 'New Conversation'. Assert: confirmation dialog. Confirm. Assert: old window killed. Assert: new window created. Assert: fresh terminal."
+
+  - id: TEST-09
+    type: property
+    description: "Session status indicator. Start AI session. Assert: status shows 'starting', then 'waiting'. Send a message. Assert: status shows 'working' while processing, then 'waiting' when done."
+
+  - id: TEST-10
+    type: property
+    description: "list_jobs returns all jobs. Call `list_jobs` via MCP. Assert: returns same jobs as the Phase 26 `discoverAllJobs()`. Assert: each job has id, name, status, health, schedule."
+
+  - id: TEST-11
+    type: property
+    description: "search_jobs filters correctly. Call `search_jobs('backup')`. Assert: only jobs with 'backup' in name/command/tag returned."
+
+  - id: TEST-12
+    type: property
+    description: "get_job_detail returns full detail. Call `get_job_detail(jobId)`. Assert: returns CronJobDetail with scriptContent, runHistory, recentLogs."
+
+  - id: TEST-13
+    type: property
+    description: "get_health_summary returns counts. 3 healthy, 1 warning, 1 critical job. Call `get_health_summary()`. Assert: `{ healthy: 3, warning: 1, critical: 1 }`."
+
+  - id: TEST-14
+    type: property
+    description: "get_failing_jobs returns unhealthy. Call `get_failing_jobs()`. Assert: returns only warning + critical jobs with health reasons."
+
+  - id: TEST-15
+    type: property
+    description: "get_schedule_conflicts detects overlaps. Two jobs both at `0 3 * * *`. Call `get_schedule_conflicts()`. Assert: conflict reported between the two jobs."
+
+  - id: TEST-16
+    type: property
+    description: "analyze_schedule_load returns density. 5 jobs with various schedules. Call `analyze_schedule_load()`. Assert: returns per-hour counts for the next 24h."
+
+  - id: TEST-17
+    type: property
+    description: "get_ui_context reflects selection. Select a job in the UI. Call `get_ui_context()`. Assert: `selectedJobId` matches. Switch tab to History. Call again. Assert: `activeTab: 'history'`."
+
+  - id: TEST-18
+    type: property
+    description: "propose_change sends proposal to UI. Call `propose_change({ operation: 'pause', jobId: 'abc', description: 'Pause for maintenance' })`. Assert: `cron-ai-proposal` WebSocket message received by UI. Assert: proposal card renders in drawer."
+
+  - id: TEST-19
+    type: property
+    description: "Accept proposal executes mutation. Proposal card for 'pause' rendered. Click Accept. Assert: Phase 26 `pauseJob()` called. Assert: `propose_change` tool returns `{ success: true }`. Assert: card shows green 'Approved'."
+
+  - id: TEST-20
+    type: property
+    description: "Reject proposal returns feedback. Proposal card rendered. Click Reject. Enter feedback 'Not now, wait until tonight'. Assert: `propose_change` tool returns `{ success: false, feedback: 'Not now, wait until tonight' }`. Assert: card shows red 'Rejected' with feedback."
+
+  - id: TEST-21
+    type: property
+    description: "Proposal timeout. Proposal card rendered. Wait 5 minutes (or configured timeout). Assert: `propose_change` tool returns timeout error. Assert: card shows gray 'Expired'."
+
+  - id: TEST-22
+    type: property
+    description: "Proposal blocks agent. Call `propose_change`. Assert: the MCP tool does NOT return until Accept/Reject/Timeout. Agent's next message MUST NOT appear until the proposal resolves."
+
+  - id: TEST-23
+    type: property
+    description: "Create proposal diff. Propose creating a cron job. Assert: card diff shows full config (command, schedule human-readable)."
+
+  - id: TEST-24
+    type: property
+    description: "Edit frequency proposal diff. Propose changing schedule from `0 3 * * *` to `0 4 * * *`. Assert: card shows `'0 3 * * *' (At 3 AM) -> '0 4 * * *' (At 4 AM)`."
+
+  - id: TEST-25
+    type: property
+    description: "Delete proposal diff. Propose deleting a job. Assert: card shows full job summary being removed."
+
+  - id: TEST-26
+    type: property
+    description: "select_job drives UI. Call `select_job(jobId)`. Assert: job highlighted in list. Assert: list scrolls to job. Assert: detail pane populates."
+
+  - id: TEST-27
+    type: property
+    description: "navigate_to_tab switches tab. Call `navigate_to_tab('logs')`. Assert: detail pane switches to Logs tab."
+
+  - id: TEST-28
+    type: property
+    description: "show_timeline opens timeline. Timeline closed. Call `show_timeline()`. Assert: timeline opens."
+
+  - id: TEST-29
+    type: property
+    description: "filter_jobs applies filter. Call `filter_jobs({ health: 'critical' })`. Assert: list shows only critical jobs."
+
+  - id: TEST-30
+    type: property
+    description: "Navigation is smooth. Call `select_job` for a job far down the list. Assert: list scrolls smoothly (animated), not jumping."
+
+  - id: TEST-31
+    type: property
+    description: "Selection sync to MCP. Select job A in UI. Within 500ms, call `get_ui_context()`. Assert: `selectedJobId` is job A's ID."
+
+  - id: TEST-32
+    type: property
+    description: "Tab switch sync. Switch to History tab. Call `get_ui_context()`. Assert: `activeTab: 'history'`."
+
+  - id: TEST-33
+    type: property
+    description: "Filter sync. Apply 'errors' filter. Call `get_ui_context()`. Assert: filter state reflects 'errors'."
+
+  - id: TEST-34
+    type: property
+    description: "Context resource updates. Read `cron://ui/context` resource. Select a different job. Read again. Assert: resource reflects the new selection."
+
+  - id: TEST-35
+    type: property
+    description: "Skill file generated. Start agentboard. Assert: `~/.agentboard/skills/cron-manager.md` exists. Assert: contains role description, tool list, approval workflow, safety guidelines."
+
+  - id: TEST-36
+    type: property
+    description: "MCP config generated. Start agentboard on port 3000. Assert: `~/.agentboard/mcp/cron-manager.json` exists. Assert: contains correct server URL and WS URL."
+
+  - id: TEST-37
+    type: property
+    description: "MCP config regenerated on port change. Start on port 3000. Stop. Start on port 4000. Assert: config updated with port 4000."
+
+  - id: TEST-38
+    type: property
+    description: "Startup health greeting. 1 critical job exists. Start conversation. Assert: agent mentions the critical job in its first message."
+
+  - id: TEST-39
+    type: property
+    description: "No greeting when all healthy. All jobs healthy. Start conversation. Assert: agent says something like 'All jobs healthy' without unsolicited diagnosis."
+
+  - id: TEST-40
+    type: property
+    description: "Auto-greet disabled. Set `cronAiAutoGreet: false`. Start conversation. Assert: agent does NOT proactively report health."
+
+  - id: TEST-41
+    type: property
+    description: "Failure diagnosis. Job failing with 'permission denied' in logs. Ask 'why is this failing?'. Assert: agent retrieves detail + history + logs. Assert: response mentions permission issue. Assert: agent suggests a fix (e.g., check file permissions)."
+
+  - id: TEST-42
+    type: property
+    description: "Schedule optimization. 3 jobs all at 3 AM. Ask 'optimize my schedules'. Assert: agent identifies the conflict. Assert: proposes rescheduling at least one job."
+
+  - id: TEST-43
+    type: property
+    description: "Natural language creation. Say 'run backup.sh every night at midnight'. Assert: agent proposes creating a cron job with `command: backup.sh`, `schedule: 0 0 * * *`. Assert: proposal card rendered."
+
+  - id: TEST-44
+    type: property
+    description: "Ambiguous creation asks clarification. Say 'run my backup every hour'. Assert: agent asks which script/command before proposing."
+
+  - id: TEST-45
+    type: property
+    description: "Card renders at marker position. Terminal outputs marker `<!-- PROPOSAL:abc -->`. Assert: React card component renders at that position in the terminal."
+
+  - id: TEST-46
+    type: property
+    description: "Card survives scroll. Card rendered above viewport. Scroll up. Assert: card still visible and interactive (Accept/Reject clickable)."
+
+  - id: TEST-47
+    type: property
+    description: "Card states display correctly. Create proposals in each state. Assert: pending=blue border, accepted=green+'Approved', rejected=red+'Rejected'+feedback, expired=gray+'Expired'."
+
+  - id: TEST-48
+    type: property
+    description: "Cards persist across re-renders. Open proposals exist. Close and reopen drawer. Assert: cards still visible with correct state."
+
+  - id: TEST-49
+    type: property
+    description: "AI disabled hides button. Set `cronAiEnabled: false`. Assert: AI drawer button hidden from cron manager header."
+
+  - id: TEST-50
+    type: property
+    description: "Proposal timeout configurable. Set timeout to 60 seconds. Create proposal. Wait 60s. Assert: auto-expires."
+
+  - id: TEST-51
+    type: property
+    description: "Drawer keyboard toggle. `Cmd+Shift+A` opens. Same shortcut closes. Escape also closes."
+
+  - id: TEST-52
+    type: property
+    description: "Tab navigation. Open drawer. Press Tab. Assert: focus cycles between terminal, proposal buttons, drawer controls."
+
+  - id: TEST-53
+    type: property
+    description: "Proposal card aria labels. Render a pending proposal. Assert: card has `aria-label` describing operation type. Assert: Accept/Reject buttons have labels."
+
+  - id: EXEC-01
+    type: property
+    description: |
+      Open AI drawer and start conversation.
+      1. Open the cron manager view.
+      2. Click the AI assistant button (brain/sparkle icon) in the header, or press `Cmd+Shift+A`.
+      3. Verify: Drawer slides in from the right.
+      4. Verify: Terminal shows Claude Code starting (or reattaching if session exists).
+      5. Verify: Header shows session status transitioning: starting -> waiting.
+      6. Verify: After startup, the agent sends a greeting mentioning health status (if any unhealthy jobs exist).
+
+  - id: EXEC-02
+    type: property
+    description: |
+      Context awareness -- "this job".
+      1. Select a job in the cron manager list (e.g., `daily-backup`).
+      2. Open the AI drawer.
+      3. Type: "What does this job do?"
+      4. Verify: The agent responds about `daily-backup` (the selected job) without you naming it.
+      5. Select a different job (e.g., `log-cleanup`).
+      6. Type: "How about this one?"
+      7. Verify: The agent responds about `log-cleanup`.
+
+  - id: EXEC-03
+    type: property
+    description: |
+      Failure diagnosis.
+      1. Create a cron job with a failing command (e.g., `* * * * * /nonexistent/script.sh`).
+      2. Wait for a few failures to accumulate.
+      3. Select the failing job. Open AI drawer.
+      4. Type: "Why is this failing?"
+      5. Verify: The agent retrieves history and logs.
+      6. Verify: The agent identifies "command not found" or "No such file or directory".
+      7. Verify: The agent suggests fixing the path and may propose a change.
+
+  - id: EXEC-04
+    type: property
+    description: |
+      Propose and approve a change.
+      1. Select a job with schedule `0 3 * * *`.
+      2. Open AI drawer. Type: "Can you move this to 4am instead?"
+      3. Verify: The agent calls `propose_change` with the new schedule.
+      4. Verify: A proposal card appears inline showing: `"0 3 * * *" (At 3 AM) -> "0 4 * * *" (At 4 AM)`.
+      5. Click Accept.
+      6. Verify: The schedule updates in the detail pane and list.
+      7. Verify: The agent acknowledges the change was applied.
+
+  - id: EXEC-05
+    type: property
+    description: |
+      Reject a proposal with feedback.
+      1. Ask the agent to pause a job.
+      2. Verify: Proposal card appears.
+      3. Click Reject.
+      4. Verify: A feedback text input appears.
+      5. Type: "Not now, do it tonight after business hours."
+      6. Verify: Card shows red "Rejected" with your feedback.
+      7. Verify: The agent acknowledges the rejection and offers to schedule it for later.
+
+  - id: EXEC-06
+    type: property
+    description: |
+      Natural language job creation.
+      1. Open AI drawer.
+      2. Type: "Create a job that cleans up /tmp every Sunday at midnight."
+      3. Verify: Agent confirms: something like "I'll create a cron job that runs a cleanup of /tmp every Sunday at 12:00 AM."
+      4. Verify: Proposal card appears with the full job config.
+      5. Accept the proposal.
+      6. Verify: New job appears in the list.
+      7. Verify: Agent says the job was created and selects it in the UI.
+
+  - id: EXEC-07
+    type: property
+    description: |
+      Schedule optimization.
+      1. Create 3 cron jobs all scheduled at `0 3 * * *`.
+      2. Open AI drawer.
+      3. Type: "Can you optimize my schedules? There seem to be conflicts."
+      4. Verify: Agent analyzes and identifies the 3am overlap.
+      5. Verify: Agent proposes rescheduling one job at a time (e.g., move one to 2am, another to 4am).
+      6. Accept each proposal.
+      7. Verify: Schedules update. Agent confirms no more conflicts.
+
+  - id: EXEC-08
+    type: property
+    description: |
+      Agent navigates the UI.
+      1. Open AI drawer. Type: "Show me the failing jobs."
+      2. Verify: The list filter changes to "unhealthy" or "errors".
+      3. Type: "Open the logs for daily-backup."
+      4. Verify: `daily-backup` is selected in the list. Detail pane switches to Logs tab.
+      5. Type: "Show me the schedule timeline."
+      6. Verify: The timeline opens above the split pane.
+
+  - id: EXEC-09
+    type: property
+    description: |
+      Persistent session across reload.
+      1. Open AI drawer. Have a multi-message conversation.
+      2. Close the browser tab.
+      3. Reopen agentboard and the cron manager view.
+      4. Open the AI drawer.
+      5. Verify: The previous conversation is visible in the terminal scrollback.
+      6. Verify: The agent can continue the conversation with context.
+
+  - id: EXEC-10
+    type: property
+    description: |
+      New Conversation.
+      1. Have an existing conversation in the AI drawer.
+      2. Click "New Conversation".
+      3. Verify: Confirmation dialog appears.
+      4. Confirm.
+      5. Verify: Terminal clears. New Claude Code session starts.
+      6. Verify: Agent sends a fresh greeting.
+
+  - id: EXEC-11
+    type: property
+    description: |
+      Proposal timeout.
+      1. Open AI drawer. Ask the agent to pause a job.
+      2. Verify: Proposal card appears.
+      3. Do NOT click Accept or Reject. Wait for the timeout (default 5 minutes, or configure shorter for testing).
+      4. Verify: Card changes to gray "Expired" state.
+      5. Verify: Agent receives timeout and may offer to re-propose.
+
+  - id: EXEC-12
+    type: property
+    description: |
+      Multiple proposals.
+      1. Ask the agent to optimize schedules (which generates multiple proposals).
+      2. Verify: First proposal card appears.
+      3. Accept it.
+      4. Verify: Second proposal appears.
+      5. Reject it with feedback.
+      6. Verify: Agent adapts and may propose an alternative or move to the next.
+
+  - id: EXEC-13
+    type: property
+    description: |
+      Sudo operation through AI.
+      1. Ask the agent to pause a system-level job (requires sudo).
+      2. Verify: Proposal card appears with lock icon indicating sudo required.
+      3. Click Accept.
+      4. Verify: Sudo password prompt appears (same as Phase 26 prompt).
+      5. Enter password.
+      6. Verify: Operation executes. Agent confirms.
+
+  - id: EXEC-14
+    type: property
+    description: |
+      AI disabled.
+      1. Go to Settings > Cron Manager. Disable "AI Assistant".
+      2. Open the cron manager view.
+      3. Verify: The AI drawer button is NOT visible in the header.
+      4. Verify: `Cmd+Shift+A` does nothing.
+      5. Re-enable. Verify: Button reappears and shortcut works.
+
+  - id: EXEC-15
+    type: property
+    description: |
+      Health monitoring on startup.
+      1. Have 1 failing job and 1 job that missed its scheduled run.
+      2. Open the AI drawer (new conversation).
+      3. Verify: Agent's first message mentions both issues by name.
+      4. Verify: Agent offers to investigate.
+      5. Type "yes" or "investigate the first one".
+      6. Verify: Agent performs failure diagnosis on the specified job.

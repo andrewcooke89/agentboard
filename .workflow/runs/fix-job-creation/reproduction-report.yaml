@@ -1,0 +1,88 @@
+verdict: pass
+
+reproduced: true
+
+reproduction_output: |
+  === FRESH REPRODUCTION TEST (2026-02-27) ===
+  Running: bun test src/server/__tests__/cronDuplicateDetection.test.ts
+
+  === Test 1: Duplicate Detection ===
+  Crontab after first create:
+
+  * * * * * echo hello # test job
+
+  Crontab after second create:
+
+  * * * * * echo hello # test job
+  * * * * * echo hello # test job
+
+  Occurrences of job line: 2
+
+  === Test 2: Flock Wrapper ===
+  Written crontab entry:
+
+  * * * * * sleep 120 # long running job
+
+  Has flock wrapper: false
+
+  === Test Results ===
+  2 pass, 0 fail
+
+  === CODE ANALYSIS ===
+
+  Bug 1: No Duplicate Detection (cronManager.ts:1029-1040)
+  --------------------------------------------------------
+  async createCronJob(config: CronCreateConfig): Promise<string> {
+    this.validateCronCommand(config.command)
+
+    const crontab = await this.readCrontab()
+    const comment = config.comment ? ` # ${config.comment}` : ''
+    const newLine = `${config.schedule} ${config.command}${comment}`
+    const updated = crontab.endsWith('\n') ? crontab + newLine + '\n' : crontab + '\n' + newLine + '\n'
+    // NO DUPLICATE CHECK - just appends unconditionally!
+    await this.writeCrontab(updated)
+    ...
+  }
+
+  Bug 2: No Flock Wrapper (cronManager.ts:1034)
+  ----------------------------------------------
+  const newLine = `${config.schedule} ${config.command}${comment}`
+  // No flock -n /tmp/lockfile wrapper around command
+
+  Bug 3: Manual runs ARE guarded (cronHandlers.ts:68)
+  ---------------------------------------------------
+  const activeManualRuns = new Set<string>()  // Only guards handleCronJobRunNow
+  // Scheduled runs have no coordination with this mechanism
+
+notes: |
+  ## Bug Confirmed (Fresh Reproduction 2026-02-27)
+
+  Both issues from the bug spec are reproducible via unit test:
+
+  ### Issue 1: No Duplicate Detection
+  - **Location**: `cronManager.ts:1029-1040` (createCronJob method)
+  - **Evidence**: Creating identical cron jobs twice results in duplicate entries
+  - **Root Cause**: Method reads crontab, appends new line, writes back
+    without checking for existing entries with same schedule+command
+  - **Test**: `src/server/__tests__/cronDuplicateDetection.test.ts`
+
+  ### Issue 2: No Concurrency Guard for Scheduled Runs
+  - **Location**: `cronManager.ts:1034` (newLine construction)
+  - **Evidence**: Crontab entries written without flock wrapper
+  - **Root Cause**: Entry is bare `schedule command` without file locking
+  - **Impact**: Concurrent instances if job runs longer than interval
+
+  ### Manual Runs ARE Protected
+  - **Location**: `cronHandlers.ts:68` (activeManualRuns Set)
+  - Manual "Run Now" has concurrent-run protection
+  - Only scheduled runs lack protection
+
+  ### Previous Findings (Preserved)
+  1. Bug 1 (silent WebSocket failure): Code inspection confirms sendMessage()
+     drops messages silently when not connected.
+  2. Bug 2 (no duplicate detection): Live test created two identical crontab
+     entries when submitting same create request twice.
+  3. Bug 3 (no scheduled run guard): Code confirms activeManualRuns only
+     guards manual "Run Now" executions.
+
+  Verdict: pass (bugs ARE reproducible as specified)

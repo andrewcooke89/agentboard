@@ -1,0 +1,68 @@
+id: WU-006
+title: "History & Log Services"
+description: |
+  Create the CronHistoryService and CronLogService backend services. The history service
+  collects run history from journalctl/syslog and merges with manual runs from the DB.
+  The log service provides log aggregation from journal/syslog/mail with pagination support.
+
+dependencies: [WU-001, WU-002]
+
+files:
+  created:
+    - path: src/server/cronHistoryService.ts
+      purpose: |
+        CronHistoryService class:
+        - getRunHistory(jobId, limit, before?): Promise<JobRunRecord[]> -- merged system + DB history
+        - recordManualRun(jobId, result): Promise<void> -- insert into cron_run_history
+        - getSystemdHistory(unitName, limit): Promise<JobRunRecord[]> -- parse journalctl
+        - getCronHistory(command, limit): Promise<JobRunRecord[]> -- parse syslog/journald CRON entries
+        - mergeHistory(system, manual): JobRunRecord[] -- deduplicate and sort newest-first
+    - path: src/server/cronLogService.ts
+      purpose: |
+        CronLogService class:
+        - getLogs(jobId, lines, offset?): Promise<string[]> -- paginated log retrieval
+        - getSystemdLogs(unitName, lines, offset?): Promise<string[]> -- journalctl -u {service}
+        - getCronLogs(command, lines): Promise<string[]> -- syslog/mail spool parsing
+        - detectLogRedirection(command): string | null -- find log file from command redirections
+
+acceptance_criteria:
+  - req: REQ-30
+    type: contract
+    check: "History shows last 50 runs; pagination via 'Load more'; sources merged from journal/syslog + DB manual runs"
+  - req: REQ-31
+    type: contract
+    check: "Logs from journalctl for systemd; syslog/mail/redirection for cron; paginated"
+  - req: REQ-39
+    type: contract
+    check: "Manual runs recorded in cron_run_history with trigger: 'manual' and merged into timeline"
+  - req: REQ-62
+    type: contract
+    check: "Duration extracted from journal timestamps for systemd; syslog pairs for cron"
+
+test_specs:
+  - id: TEST-32
+    description: "History timeline displays runs newest first with exit code badges"
+  - id: TEST-36
+    description: "Pagination -- first 50 shown, 'Load more' fetches remaining"
+  - id: TEST-37
+    description: "Systemd logs displayed from journalctl with line numbers"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronHistoryService API (getRunHistory, recordManualRun)"
+      consumers: [WU-007]
+    - name: "CronLogService API (getLogs)"
+      consumers: [WU-007]
+  imports:
+    - from: WU-001
+      name: "JobRunRecord, CronJob types"
+    - from: WU-002
+      name: "Database tables (cron_run_history)"
+
+implementation_notes: |
+  For systemd history: `journalctl -u {serviceName} --output=json -n {limit}` gives structured
+  entries with timestamps and exit codes. For cron history: parse syslog entries matching
+  `CRON[{pid}]` with the job's command. Merge by sorting all records by timestamp DESC and
+  deduplicating (manual runs from DB vs. system log entries can overlap if the manual trigger
+  also shows in syslog). Log redirection detection: regex for `>> /path/to/log` or `> /path/to/log`
+  or `2>&1 | tee /path/to/log` patterns in the command string.

@@ -1,0 +1,106 @@
+verdict: pass
+
+root_cause: |
+  App.tsx was never updated when the cron-ai feature was added. The stores
+  (cronAiStore.ts, cronStore.ts), shared types (types.ts ServerMessage union),
+  and settings (settingsStore.ts cronAiEnabled) were all extended with cron-ai
+  support, but the WebSocket message handler and keyboard shortcut handler in
+  App.tsx — the only consumer that wires incoming WS messages to store actions —
+  were never modified. The four cron-ai-* message types are silently dropped
+  because no if-branch matches them, and Cmd+Shift+A does nothing because no
+  keyboard handler exists for it.
+
+location:
+  file: "src/client/App.tsx"
+  line_range: "200-509"
+  function: "subscribe callback (WebSocket message handler) + handleKeyDown (keyboard handler at lines 600-684)"
+
+mechanism: |
+  Missing wiring / incomplete feature integration.
+
+  The WebSocket message handler (lines 200–509) uses a chain of
+  `if (message.type === '...')` blocks. The cron manager messages
+  (cron-jobs, cron-job-update, etc.) are handled at lines 455–488,
+  but the four cron-ai-* message types added to the ServerMessage
+  union in types.ts (lines 131–134) have no corresponding if-branches.
+  Messages arrive, match no condition, and are silently ignored.
+
+  The keyboard handler (lines 600–684) has shortcuts for Cmd+Shift+T,
+  Cmd+Shift+W, Cmd+Shift+M, Cmd+Shift+C but no Cmd+Shift+A entry.
+  useCronAiStore is not even imported in the file.
+
+  This is not a race condition or logic error — it is simply missing code.
+  The feature was partially integrated: types, stores, and backend handlers
+  exist, but the frontend dispatch layer was never connected.
+
+fix_approach: |
+  All changes are confined to src/client/App.tsx:
+
+  1. ADD IMPORT (after existing store imports, around line 38):
+     import { useCronAiStore } from './stores/cronAiStore'
+
+  2. ADD cronAiEnabled SELECTOR (with existing useSettingsStore usage):
+     const cronAiEnabled = useSettingsStore((state) => state.cronAiEnabled)
+     (Or use getState() inline in the keyboard handler — either works.)
+
+  3. ADD FOUR WS MESSAGE HANDLERS (after cron-notification block, after line 488):
+
+     a) cron-ai-proposal:
+        Call useCronAiStore.getState().handleCronAiProposal(message.proposal)
+
+     b) cron-ai-navigate:
+        Switch on message.action:
+        - 'select_job': call useCronStore.getState().setSelectedJob(payload.jobId)
+          and scroll to matching DOM element via
+          document.querySelector('[data-job-id="..."]')?.scrollIntoView({ behavior: 'smooth' })
+        - 'switch_tab': call useCronStore.getState().setActiveTab(payload.tab)
+        - 'show_timeline': call useCronStore.setState({ timelineVisible: true })
+          and optionally useCronStore.getState().setTimelineRange(payload.range)
+          if range is present
+        - 'filter': conditionally call setFilterMode, setFilterSource, setFilterTags
+          based on which payload fields are present
+        Unknown actions must be silently ignored (no throw).
+
+     c) cron-ai-session-status:
+        Call useCronAiStore.getState().handleCronAiSessionStatus(message.status)
+        AND useCronAiStore.getState().setSessionWindowId(message.windowId ?? null)
+
+     d) cron-ai-mcp-status:
+        Call useCronAiStore.getState().handleCronAiMcpStatus(message.connected)
+
+  4. ADD KEYBOARD SHORTCUT (after Cmd+Shift+C block, after line 679):
+     Bind [mod]+Shift+A to useCronAiStore.getState().toggleDrawer()
+     gated on useSettingsStore.getState().cronAiEnabled being true.
+     Call event.preventDefault() when the shortcut fires and cronAiEnabled is true.
+
+  5. VERIFY: Run `bun test src/client/__tests__/app.WU012.test.tsx` — all 21-24
+     tests should pass.
+
+  Key details from test expectations:
+  - cron-ai-navigate with missing payload fields (e.g., no jobId) must NOT throw
+  - Non-existent jobId still sets selectedJobId (no existence check needed)
+  - show_timeline sets timelineVisible via useCronStore.setState() (not a store method)
+  - filter handler must apply each field independently (mode, source, tags can
+    appear in any combination)
+  - Keyboard shortcut must call preventDefault() only when cronAiEnabled is true
+
+risk_assessment: |
+  LOW RISK. The fix is purely additive — adding new if-branches to an existing
+  handler chain and a new keyboard shortcut entry. No existing behavior is
+  modified.
+
+  Specific risks:
+  - Typo in message type string → handler silently misses messages.
+    Mitigation: TypeScript's discriminated union on ServerMessage will catch
+    misspelled type literals at compile time.
+  - scrollIntoView on non-existent element → safe, querySelector returns null
+    and optional chaining prevents the call.
+  - useCronStore.setState({ timelineVisible: true }) is a direct state mutation
+    bypassing any store method. This is fine for Zustand but could diverge if
+    a setTimelineVisible method is added later. Acceptable for now since the
+    store has no such method and the tests expect this pattern.
+  - Keyboard shortcut collision with browser/OS shortcuts — Cmd+Shift+A is not
+    a common browser shortcut on any major platform, and follows the same
+    pattern as the existing Cmd+Shift+C/M/T/W shortcuts.
+
+  No database, API, or backend changes required. No migration needed.

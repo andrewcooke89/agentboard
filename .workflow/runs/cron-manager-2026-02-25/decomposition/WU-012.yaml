@@ -1,0 +1,57 @@
+id: WU-012
+title: "Overview & Script Tabs"
+description: |
+  Implement CronOverviewTab: schedule section with human-readable description,
+  raw expression, live countdown to next run, last run timestamp with exit code
+  and duration badges. Duration stats: last duration, rolling 10-run avg, trend
+  arrow (up/>1.2x, down/<0.8x, flat), yellow warning if last >2x avg. Systemd
+  jobs show raw timer+service unit files (INI syntax highlighted via highlight.js).
+  Cron jobs show raw crontab line + environment variables. Implement CronScriptTab:
+  read-only syntax-highlighted code viewer (highlight.js), auto-detect language,
+  line numbers, inline command in code block if no script file, file path
+  breadcrumb, "Open in Terminal" button. Implement CronScheduleEditor: inline
+  text input with live cronstrue preview, validation with red border on invalid.
+files:
+  - path: src/client/components/cron/CronOverviewTab.tsx
+    action: modify
+    description: "Implement overview with schedule, duration stats, raw config"
+  - path: src/client/components/cron/CronScriptTab.tsx
+    action: modify
+    description: "Implement syntax-highlighted script viewer"
+  - path: src/client/components/cron/CronScheduleEditor.tsx
+    action: modify
+    description: "Implement inline schedule editor with live preview"
+dependencies:
+  - WU-011
+requirements:
+  - REQ-22
+  - REQ-23
+  - REQ-24
+  - REQ-25
+  - REQ-34
+  - REQ-35
+  - REQ-36
+  - REQ-43
+  - REQ-44
+  - REQ-63
+acceptance_criteria:
+  - type: unit_test
+    description: "Schedule section shows human-readable desc and raw expression"
+  - type: unit_test
+    description: "Live countdown updates to next run"
+  - type: unit_test
+    description: "Duration stats with trend arrow and warning threshold"
+  - type: unit_test
+    description: "Systemd unit files displayed with INI syntax highlighting"
+  - type: unit_test
+    description: "Script viewer with syntax highlighting and line numbers"
+  - type: unit_test
+    description: "Schedule editor shows live cronstrue preview"
+  - type: unit_test
+    description: "Invalid schedule shows red border and error message"
+interfaces:
+  exports:
+    - "CronOverviewTab component"
+    - "CronScriptTab component"
+    - "CronScheduleEditor component"
+estimated_loc: 250

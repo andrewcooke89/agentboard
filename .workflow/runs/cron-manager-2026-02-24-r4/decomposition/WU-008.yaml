@@ -1,0 +1,70 @@
+id: WU-008
+title: "Frontend Zustand Store"
+description: |
+  Create the cronStore Zustand store for managing all cron manager client-side state.
+  This includes the job list, selected job, detail data, filter/sort/search state,
+  UI state (collapsed groups, active tab, timeline visibility), WebSocket message
+  handlers, and localStorage persistence for user preferences.
+
+dependencies: [WU-001]
+
+files:
+  created:
+    - path: src/client/stores/cronStore.ts
+      changes: |
+        - useCronStore Zustand store with persist middleware
+        - State: jobs: CronJob[], selectedJobId: string | null, selectedJobDetail: CronJobDetail | null,
+          loading: boolean, hasLoaded: boolean, systemdAvailable: boolean,
+          searchQuery: string, sortMode: string, filterMode: string, filterSource: string | null,
+          filterTags: string[], collapsedGroups: Set<string>, activeTab: string,
+          timelineVisible: boolean, timelineRange: string,
+          selectedJobIds: Set<string> (bulk selection), bulkSelectMode: boolean,
+          runningJobs: Set<string> (jobs with active manual runs)
+        - WS handlers: handleCronJobs(jobs, systemdAvailable), handleCronJobUpdate(job),
+          handleCronJobRemoved(jobId), handleCronJobDetail(detail),
+          handleCronOperationResult(jobId, operation, success, error),
+          handleCronRunStarted(jobId, runId), handleCronRunOutput(jobId, runId, chunk),
+          handleCronRunCompleted(jobId, runId, exitCode, duration),
+          handleCronBulkProgress(completed, total, failures),
+          handleCronNotification(jobId, event, message, severity)
+        - Actions: setSelectedJob(id), setSearchQuery(q), setSortMode(mode),
+          setFilterMode(mode), setFilterSource(source), setFilterTags(tags),
+          toggleGroupCollapse(group), setActiveTab(tab), toggleTimeline(),
+          setTimelineRange(range), toggleBulkSelect(jobId), selectRange(fromId, toId),
+          clearSelection(), toggleBulkSelectMode()
+        - Derived selectors: filteredJobs(), groupedJobs(), allTags(), selectedJobs()
+        - Persist: selectedJobId, sortMode, filterMode, filterSource, filterTags,
+          collapsedGroups, activeTab, timelineVisible, timelineRange via localStorage
+
+acceptance_criteria:
+  - req: REQ-89
+    type: contract
+    check: "selectedJobId, sortMode, filterMode, filterSource, filterTags, collapsedGroups, activeTab, timelineVisible, timelineRange persisted via localStorage"
+
+test_specs: []
+  # Store logic tested via integration with UI components
+
+cross_wu_interfaces:
+  exports:
+    - name: "useCronStore hook"
+      consumers: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+      contract: |
+        useCronStore(): {
+          // State
+          jobs, selectedJobId, selectedJobDetail, systemdAvailable, searchQuery,
+          sortMode, filterMode, filterSource, filterTags, collapsedGroups, activeTab,
+          timelineVisible, timelineRange, selectedJobIds, bulkSelectMode, runningJobs,
+          // WS handlers
+          handleCronJobs, handleCronJobUpdate, handleCronJobRemoved, ...
+          // Actions
+          setSelectedJob, setSearchQuery, setSortMode, setFilterMode, ...
+          // Selectors
+          filteredJobs, groupedJobs, allTags, selectedJobs
+        }
+
+implementation_notes: |
+  Follow the workflowStore pattern: create<State>()(persist(factory, options)) with
+  createJSONStorage(() => safeStorage). Use useShallow from zustand/react/shallow for
+  selectors that return derived arrays to prevent infinite re-renders. The Set types
+  (collapsedGroups, selectedJobIds, runningJobs) need custom serialization for localStorage.
+  Partialize should only persist UI preferences, not data (jobs list comes from WS).

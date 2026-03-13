@@ -1,0 +1,83 @@
+title: "TypeScript errors in CronAi component test files — type predicate and mock signature mismatches"
+
+description: |
+  Five TypeScript compilation errors across four CronAi component test files prevent
+  `bun run typecheck` from passing. There are two distinct root causes:
+
+  1. **TS2677 — Invalid type predicate on ReactTestInstance.children filter** (4 occurrences):
+     A custom `findTextContent` helper in each test file filters `el.children` with the type
+     predicate `(c): c is string | number`. However, `ReactTestInstance.children` is typed as
+     `Array<ReactTestInstance | string>` — elements are never `number`. TypeScript requires
+     the predicate type to be assignable to the parameter type, and `number` is not assignable
+     to `ReactTestInstance | string`, so the predicate is rejected.
+     The `typeof c === 'number'` branch is dead code — React test renderer children are never
+     numbers at runtime.
+
+  2. **TS2322 — SubscribeServerMessage mock has wrong arity** (1 occurrence):
+     In CronAiTerminal.test.tsx, the `createWsStubs` helper defines a `subscribe` stub as a
+     two-argument function `(type: string, handler: ...)`. The canonical type
+     `SubscribeServerMessage` in `src/shared/types.ts:250` is a single-argument function
+     `(listener: (message: ServerMessage) => void) => () => void`. The stub was written as if
+     subscribe takes a `(type, handler)` pair for per-type dispatch, but the actual interface
+     passes a single listener that receives the full `ServerMessage` object.
+
+reproduction:
+  steps:
+    - "Clone the repository and install dependencies with `bun install`"
+    - "Run `bun run typecheck` from the project root"
+    - "Observe 5 TypeScript errors in the four CronAi test files"
+  environment: "Bun 1.x, TypeScript 5.x, @types/react-test-renderer"
+
+expected: "`bun run typecheck` completes with zero errors in the CronAi test files"
+
+actual: |
+  `bun run typecheck` reports 5 errors:
+    - src/client/components/cron/__tests__/CronAiDrawer.test.tsx(134): TS2677 — type predicate
+      `c is string | number` not assignable to parameter type `string | ReactTestInstance`
+    - src/client/components/cron/__tests__/CronAiProposalCard.test.tsx(117): TS2677 — same
+    - src/client/components/cron/__tests__/CronAiProposalCard.test.tsx(130): TS2677 — same
+    - src/client/components/cron/__tests__/CronAiStatusBar.test.tsx(59): TS2677 — same
+    - src/client/components/cron/__tests__/CronAiTerminal.test.tsx(156): TS2322 — subscribe
+      stub `(type, handler) => ...` not assignable to `SubscribeServerMessage`
+
+affected_files:
+  - "src/client/components/cron/__tests__/CronAiDrawer.test.tsx"
+  - "src/client/components/cron/__tests__/CronAiProposalCard.test.tsx"
+  - "src/client/components/cron/__tests__/CronAiStatusBar.test.tsx"
+  - "src/client/components/cron/__tests__/CronAiTerminal.test.tsx"
+
+root_cause:
+  type_predicate_errors: |
+    The `.filter((c): c is string | number => ...)` type predicate includes `number` in the
+    narrowed type, but `ReactTestInstance.children` elements are `ReactTestInstance | string`.
+    Since `number` is not assignable to `ReactTestInstance | string`, TS2677 fires.
+    Fix: change predicate to `c is string` and remove the dead `typeof c === 'number'` check.
+  subscribe_signature_error: |
+    The mock `subscribe` function takes two parameters `(type, handler)` but the canonical
+    `SubscribeServerMessage` type at `src/shared/types.ts:250` takes one parameter `(listener)`.
+    Fix: rewrite the stub to accept a single `listener` callback and dispatch `ServerMessage`
+    objects directly, matching the actual type signature.
+
+fix_strategy:
+  - file: "src/client/components/cron/__tests__/CronAiDrawer.test.tsx"
+    line: 134
+    change: "Change `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')` to `.filter((c): c is string => typeof c === 'string')`"
+  - file: "src/client/components/cron/__tests__/CronAiProposalCard.test.tsx"
+    lines: [117, 130]
+    change: "Same type predicate fix at both locations"
+  - file: "src/client/components/cron/__tests__/CronAiStatusBar.test.tsx"
+    line: 59
+    change: "Same type predicate fix"
+  - file: "src/client/components/cron/__tests__/CronAiTerminal.test.tsx"
+    line: 156
+    change: "Rewrite subscribe stub to single-argument signature matching SubscribeServerMessage: `(listener) => { listeners.add(listener); return () => listeners.delete(listener) }`"
+
+related_types:
+  - "ReactTestInstance.children: Array<ReactTestInstance | string> (node_modules/@types/react-test-renderer/index.d.ts:28)"
+  - "SubscribeServerMessage = (listener: (message: ServerMessage) => void) => () => void (src/shared/types.ts:250)"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

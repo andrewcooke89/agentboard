@@ -1,0 +1,56 @@
+title: "TEST-39 expects stale conformance-report schema fields in verification template"
+description: |
+  TEST-39 in orchestratorTemplates.test.ts asserts that the verification template
+  at ~/.claude/orchestrator-templates/verification.md contains five strings from the
+  old conformance-report schema: overall_status, acceptance_criteria,
+  constitution_checks, verified, and unverified.
+
+  The template was rewritten with a new criterion-verification-v1.0 schema. The new
+  schema uses different field names:
+    - overall_verdict (was overall_status)
+    - criterion_verifications (was acceptance_criteria)
+    - The old top-level constitution_checks / verified / unverified fields were
+      replaced by per-criterion verdict entries (verdict: VERIFIED, etc.)
+
+  The test short-circuits on the first failing assertion (overall_status, line 84).
+  All five assertions are likely stale and need updating to match the new schema.
+
+  The template change was intentional (the new schema is richer and per-criterion),
+  so the TEST should be updated, not the template.
+
+reproduction:
+  steps:
+    - "Run: bun test src/server/__tests__/orchestratorTemplates.test.ts"
+    - "Observe TEST-39 fails at line 84: expect(content).toContain('overall_status')"
+    - "Verify the template at ~/.claude/orchestrator-templates/verification.md uses overall_verdict not overall_status"
+  environment: "Bun 1.3.9, project root /home/andrew-cooke/tools/agentboard"
+
+expected: "TEST-39 passes — all five assertions match fields present in the current verification template"
+actual: "TEST-39 fails — overall_status not found (and likely acceptance_criteria, constitution_checks, verified, unverified also absent)"
+
+affected_files:
+  - "src/server/__tests__/orchestratorTemplates.test.ts"
+
+root_cause: |
+  The verification template was rewritten with a criterion-verification-v1.0 schema.
+  The test was not updated to reflect the new field names. The five stale assertions are:
+    Line 84: overall_status    → should be overall_verdict
+    Line 85: acceptance_criteria → should be criterion_verifications
+    Line 86: constitution_checks → no direct replacement; could check for 'conformance-report' or 'techniques'
+    Line 87: verified           → should be VERIFIED (uppercase, as used in verdict values)
+    Line 88: unverified         → should be unverified or replaced with NEEDS_FIX / CONCERN (the new verdict values)
+
+fix_approach: |
+  Update the five expect() assertions in TEST-39 (lines 84-88) to check for strings
+  that actually appear in the current verification.md template:
+    - 'overall_verdict' instead of 'overall_status'
+    - 'criterion_verifications' instead of 'acceptance_criteria'
+    - 'conformance-report.yaml' or 'techniques' instead of 'constitution_checks'
+    - 'VERIFIED' instead of 'verified'
+    - 'NEEDS_FIX' or 'CONCERN' instead of 'unverified'
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

@@ -1,0 +1,155 @@
+verdict: pass
+
+root_cause: |
+  Two confirmed defects in the cron job creation path, both in cronManager.ts:
+
+  1. No duplicate detection — createCronJob() reads the existing crontab via
+     `crontab -l`, unconditionally appends the new schedule+command line, and writes
+     it back via `crontab -` with zero checking for an existing entry with matching
+     schedule+command. Similarly, createSystemdTimer() writes unit files with
+     Bun.write() / sudo tee without checking file existence first.
+
+  2. No flock concurrency guard for scheduled runs — the crontab entry is written as
+     bare `${schedule} ${command}` with no mutual-exclusion wrapper. The OS cron
+     daemon starts a new process at each interval regardless of whether the previous
+     instance has completed. Manual "Run Now" IS guarded by an activeManualRuns Set
+     in cronHandlers.ts:68, but this only protects in-process WebSocket-triggered
+     executions — not OS-scheduled runs.
+
+  Note: Bug 1 from the original report ("Create Job button not wired") was
+  investigated and confirmed as a FALSE ALARM — the full chain is wired end-to-end.
+
+bugs:
+  - id: bug-2
+    title: "No duplicate detection on cron job creation"
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "1029-1040"
+      function: "createCronJob"
+    secondary_locations:
+      - file: "src/server/handlers/cronHandlers.ts"
+        line_range: "387-406"
+        function: "handleCronJobCreate"
+        issue: "No pre-check against jobCache or crontab before calling cronManager"
+      - file: "src/server/cronManager.ts"
+        line_range: "1043-1124"
+        function: "createSystemdTimer"
+        issue: "Bun.write/tee overwrites existing unit files without existence check"
+    mechanism: |
+      Missing validation. The execution path is:
+        1. User sends WS message {type: 'cron-job-create', mode: 'cron', config}
+        2. wsRouter dispatches to handleCronJobCreate (cronHandlers.ts:387)
+        3. Handler calls cronManager.createCronJob(config) with NO pre-check (line 392)
+        4. createCronJob validates command chars (line 1030) — only checks for
+           newlines/null bytes, not duplicates
+        5. Reads crontab via `crontab -l` (line 1032)
+        6. Constructs newLine = `${schedule} ${command}${comment}` (line 1034)
+        7. Unconditionally appends newLine to crontab content (line 1035)
+        8. Writes back via `crontab -` (line 1036)
+        9. No code at any layer checks whether an identical line already exists
+
+      For systemd timers, the same pattern:
+        - createSystemdTimer writes to timerPath/servicePath (lines 1112-1113)
+        - Bun.write() silently overwrites if file exists at that path
+        - No Bun.file(timerPath).exists() check is performed
+    fix_approach: |
+      Add duplicate check in createCronJob() before the append:
+        1. Split existing crontab into lines
+        2. For each non-comment, non-empty line, strip inline comments and
+           normalize whitespace
+        3. Compare against the new schedule+command
+        4. If a match exists, throw an Error that handleCronJobCreate will
+           catch and relay as a cron-operation-result with success:false
+
+      For createSystemdTimer:
+        1. Check `await Bun.file(timerPath).exists()` before writing
+        2. If exists, throw an Error ("Timer named X already exists")
+    risk_assessment: |
+      Low risk. The duplicate check is read-only before the write. Edge case:
+      users who intentionally want duplicate crontab entries (extremely rare)
+      would be blocked. A `force` flag could be added later if needed.
+
+      For systemd timers, a TOCTOU race between exists() and write() is
+      theoretically possible but practically irrelevant in single-user context.
+
+  - id: bug-3
+    title: "No concurrent-run guard for OS-scheduled cron executions"
+    location:
+      file: "src/server/cronManager.ts"
+      line_range: "1034"
+      function: "createCronJob"
+    secondary_locations:
+      - file: "src/server/handlers/cronHandlers.ts"
+        line_range: "68, 264-295"
+        function: "handleCronJobRunNow / activeManualRuns"
+        issue: "Guard only covers manual WebSocket-triggered runs, not OS cron daemon"
+    mechanism: |
+      Incomplete guard scope. Two execution paths exist for cron jobs:
+
+      Path A — Manual "Run Now" (GUARDED):
+        - handleCronJobRunNow checks activeManualRuns.has(jobId) (line 266)
+        - Adds to Set before execution (line 270), removes in finally (line 295)
+        - Prevents duplicate manual runs of the same job
+
+      Path B — OS Scheduled Execution (UNGUARDED):
+        - crontab entry at line 1034: `${schedule} ${command}${comment}`
+        - This is a bare command — no flock, no lock file, no PID check
+        - The OS cron daemon spawns the command at each interval unconditionally
+        - If a previous run is still active, a new concurrent instance starts
+        - activeManualRuns is never consulted (daemon is a separate process)
+
+      Additionally, paths A and B have no coordination — a manual run and a
+      scheduled run can overlap simultaneously.
+    fix_approach: |
+      Wrap crontab commands with flock(1) for OS-level mutual exclusion:
+        ```
+        const lockFile = `/tmp/agentboard-cron-${jobName}.lock`
+        const wrappedCmd = `flock -n ${lockFile} ${config.command}`
+        const newLine = `${config.schedule} ${wrappedCmd}${comment}`
+        ```
+      flock -n (non-blocking): if the lock is held, the new invocation exits
+      immediately rather than queuing.
+
+      For systemd timers: Type=oneshot already prevents overlapping scheduled
+      runs (systemd won't start a new instance while oneshot is running), so
+      this is a partial mitigation already in place. Document this behavior.
+    risk_assessment: |
+      Low-medium risk:
+      - flock is standard on Linux (util-linux package) but not macOS.
+        Mitigation: check `which flock` at creation time; warn if unavailable.
+      - Lock files in /tmp/ are cleaned on reboot. Deterministic naming
+        (based on job name) prevents accumulation.
+      - flock -n silently skips overlapping runs with no logging. Users may
+        want to know a run was skipped. Mitigation: consider
+        `flock -n <lock> -c '<cmd>' || logger 'agentboard: skipped <name>'`
+      - Wrapping existing crontab entries retroactively would require a
+        migration step. The fix should apply to newly created jobs only.
+
+# Top-level summary fields (required by pipeline)
+location:
+  file: "src/server/cronManager.ts"
+  line_range: "1029-1040"
+  function: "createCronJob"
+
+mechanism: |
+  Two independent missing-guard defects in createCronJob():
+  (1) unconditional crontab append with no duplicate check against existing entries,
+  (2) bare command in crontab line with no flock wrapper for OS-level mutual exclusion
+  of scheduled runs. The handler layer (handleCronJobCreate) performs no pre-validation
+  either, passing config straight through to cronManager.
+
+fix_approach: |
+  Fix each bug independently in createCronJob():
+  1. Before appending, scan existing crontab lines for matching schedule+command.
+     Throw if duplicate found. For systemd timers, check unit file existence.
+  2. Wrap crontab commands with `flock -n /tmp/agentboard-cron-<name>.lock`
+     to prevent overlapping scheduled runs at the OS level.
+  Both fixes are localized to cronManager.ts with error propagation through
+  the existing handleCronJobCreate try/catch in cronHandlers.ts.
+
+risk_assessment: |
+  Low overall risk. Both fixes are additive guards with no backwards-compatibility
+  concerns. The flock approach has a minor platform portability consideration
+  (Linux-only), and wrapping commands changes the crontab line format, which
+  should be accounted for in job identity/parsing logic. Fixes are independent
+  and can be shipped separately.

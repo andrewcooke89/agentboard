@@ -1,0 +1,78 @@
+verdict: pass
+
+reproduced: true
+
+reproduction_output: |
+  Running: bun test src/server/__tests__/cronJobCreationRegression.test.ts
+
+  Results: 6 pass, 5 fail
+
+  FAILURES:
+
+  1. Bug 2: createCronJob() should detect duplicates > createCronJob throws error when identical schedule+command already exists
+     - Line 144: await expect(buggyCreateCronJob(config)).rejects.toThrow(/duplicate/i)
+     - Expected: Promise that rejects with "duplicate" error
+     - Actual: Promise resolved successfully (no error thrown)
+     - Root cause: createCronJob() unconditionally appends to crontab without checking for existing entries
+
+  2. CronStore: handleCronOperationResult should handle create operation > handleCronOperationResult handles 'create' operation with success feedback
+     - Line 386: expect(result.notifications.length).toBeGreaterThan(0)
+     - Expected: notifications.length > 0
+     - Actual: 0
+     - Root cause: handleCronOperationResult only handles 'pause' and 'resume' operations, not 'create'
+
+  3. CronStore: handleCronOperationResult should handle create operation > handleCronOperationResult handles 'create' operation with error feedback
+     - Line 418: expect(result.notifications.length).toBeGreaterThan(0)
+     - Expected: notifications.length > 0 with message matching /duplicate/i
+     - Actual: 0 (only console.warn logged, no notification pushed)
+     - Root cause: Error case only logs warning, doesn't add notification for 'create' operation
+
+  ADDITIONAL FAILURES (Bug 3 - flock wrapping, not in original spec):
+  - Bug 3: crontab entry includes flock wrapping for concurrent-run protection
+  - Bug 3: flock uses non-blocking mode (-n flag) for fail-fast behavior
+
+  SOURCE CODE VERIFICATION:
+
+  cronManager.ts:1029-1039 - createCronJob():
+    async createCronJob(config: CronCreateConfig): Promise<string> {
+      this.validateCronCommand(config.command)
+      const crontab = await this.readCrontab()
+      const comment = config.comment ? ` # ${config.comment}` : ''
+      const newLine = `${config.schedule} ${config.command}${comment}`
+      const updated = crontab.endsWith('\n') ? crontab + newLine + '\n' : crontab + '\n' + newLine + '\n'
+      await this.writeCrontab(updated)
+      ...
+    }
+    - NO duplicate check before appending
+
+  cronStore.ts:196-213 - handleCronOperationResult():
+    handleCronOperationResult: (jobId, operation, success, error) => {
+      if (error) {
+        console.warn(`cron-operation-result: ${operation} on ${jobId} failed — ${error}`)
+      }
+      if (success) {
+        if (operation === 'pause') { ... }
+        else if (operation === 'resume') { ... }
+        // Missing: 'create' case
+      }
+    }
+    - NO handling for 'create' operation
+
+notes: |
+  Both bugs from the spec are confirmed and reproducible:
+
+  Bug 1 - createCronJob() lacks duplicate detection:
+  - Confirmed in cronManager.ts lines 1029-1039
+  - Function reads crontab, appends new line, writes back
+  - No scan for existing schedule+command pairs before append
+  - Calling twice with identical args creates duplicate crontab entries
+
+  Bug 2 - handleCronOperationResult() ignores 'create' operation:
+  - Confirmed in cronStore.ts lines 196-213
+  - Only handles 'pause' and 'resume' in success path
+  - Error path only logs warning, never pushes notification
+  - No UI feedback for create success or failure
+
+  The 5 test failures correspond to the 2 described bugs plus 3 additional
+  flock-related tests (Bug 3) that were not in the original spec but are
+  tested in the same file.

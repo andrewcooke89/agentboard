@@ -1,0 +1,69 @@
+verdict: pass
+
+title: "Fix: Stale type fixtures in WU012 test files cause TypeScript errors"
+
+description: |
+  Update test fixture data in three WU-012 test files to match the current type
+  definitions in src/shared/types.ts. All changes are mechanical: field renames
+  (type -> operation), field removals (title, payload), field additions (jobId,
+  jobName, etc.), value corrections (source: 'cron' -> 'user-crontab'), and
+  null -> undefined. No production code is modified.
+
+changes:
+  - file: "src/client/__tests__/app.WU012.test.tsx"
+    description: |
+      1. In baseCronJob fixture (~line 217): change `source: 'cron'` to `source: 'user-crontab'`.
+         Add missing required CronJob fields with sensible defaults: scheduleHuman (''),
+         scriptPath (undefined), healthReason (undefined), lastRunDuration (undefined),
+         lastExitCode (undefined), consecutiveFailures (0), avgDuration (undefined),
+         user ('andrew'), requiresSudo (false), avatarUrl (undefined), unitFile (undefined),
+         description (undefined), linkedSessionId (undefined).
+      2. In baseProposal fixture (~line 227-239):
+         - Rename `type: 'create_job'` to `operation: 'create'`
+         - Remove `title` field entirely
+         - Remove `payload: { name, command, schedule }` object
+         - Add flat fields: jobId ('job-1'), jobName ('backup'), jobAvatarUrl (undefined),
+           diff ('+ 0 * * * * /usr/bin/backup'), feedback (undefined), resolvedAt (undefined)
+      3. In editProposal fixture (~line 502-508):
+         - Change `type: 'edit_job'` to `operation: 'edit_frequency'`
+         - Remove `title` field
+         - Remove `payload` object, replace with current interface fields (diff, etc.)
+      4. At ~line 518: change `proposals[0]?.type` to `proposals[0]?.operation`
+    change_type: modify
+
+  - file: "src/client/components/cron/__tests__/CronManager.WU012.test.tsx"
+    description: |
+      1. In baseCronJob fixture (~line 199): change `source: 'cron'` to `source: 'user-crontab'`.
+         Add same missing required CronJob fields as in app.WU012.test.tsx.
+      2. In baseProposal fixture (~line 209-222):
+         - Rename `type: 'create_job'` to `operation: 'create'`
+         - Remove `title` field entirely
+         - Remove `payload: { name, command, schedule }` object
+         - Add flat fields: jobId, jobName, jobAvatarUrl, diff, feedback, resolvedAt
+      3. At ~line 598: remove `title` from the spread override on CronAiProposal.
+         Verify any assertions referencing `title` are updated or removed.
+    change_type: modify
+
+  - file: "src/client/stores/__tests__/cronStoreCreateOperation.test.ts"
+    description: |
+      At ~line 65: change `null` to `undefined` in the handleCronOperationResult call.
+      The function signature is (jobId: string, operation: string, success: boolean, error?: string).
+      The `error` parameter accepts `string | undefined`, not `string | null`.
+      Line 89 passes a string error message which is already correct.
+    change_type: modify
+
+acceptance_criteria:
+  - "`bun run typecheck` passes with zero errors in src/client/__tests__/app.WU012.test.tsx"
+  - "`bun run typecheck` passes with zero errors in src/client/components/cron/__tests__/CronManager.WU012.test.tsx"
+  - "`bun run typecheck` passes with zero errors in src/client/stores/__tests__/cronStoreCreateOperation.test.ts"
+  - "All CronAiProposal fixtures use `operation` (not `type`) with a valid CronAiProposalOperation value"
+  - "No CronAiProposal fixture contains `title` or `payload` fields"
+  - "All CronJob fixtures use a valid JobSource value (not 'cron')"
+  - "No test passes `null` where `string | undefined` is expected"
+  - "Existing test assertions still pass: `bun run test` succeeds for these three files"
+
+regression_risks:
+  - "Risk 1: Tests that assert on `.type` field must be updated to assert on `.operation` — missing this would cause runtime test failures"
+  - "Risk 2: Tests asserting on `title` content (e.g. line 598 spread) need their assertions removed or updated, not just the fixture"
+  - "Risk 3: Adding required CronJob fields with wrong default types (e.g. null instead of undefined for optional fields) could introduce new type errors"
+  - "Risk 4: If any test logic uses `payload.name` or `payload.command` for behavioral verification, the test logic itself needs rewriting, not just fixture updates"

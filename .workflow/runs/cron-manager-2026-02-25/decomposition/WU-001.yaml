@@ -1,0 +1,39 @@
+id: WU-001
+title: "Database Schema & Accessors"
+description: |
+  Add cron_job_prefs and cron_run_history tables to initDatabase() in db.ts.
+  Implement DB accessor functions: upsertJobPrefs, getJobPrefs, getAllJobPrefs,
+  deleteOrphanedPrefs, insertRunHistory, getRunHistory, pruneRunHistory,
+  auto-upsert cron_job_prefs before inserting run history (FK safety).
+files:
+  - path: src/server/db.ts
+    action: modify
+    description: "Add CREATE TABLE statements and accessor functions"
+dependencies: []
+requirements:
+  - REQ-87
+  - REQ-88
+  - REQ-98
+  - REQ-101
+  - REQ-105
+acceptance_criteria:
+  - type: unit_test
+    description: "cron_job_prefs table created with correct schema"
+  - type: unit_test
+    description: "cron_run_history table created with FK to cron_job_prefs"
+  - type: unit_test
+    description: "Auto-upsert creates cron_job_prefs entry before inserting run history"
+  - type: unit_test
+    description: "pruneRunHistory deletes records >90 days and caps at 500 per job"
+  - type: unit_test
+    description: "deleteOrphanedPrefs removes entries not seen in 24h"
+interfaces:
+  exports:
+    - "upsertJobPrefs(jobId: string, prefs: Partial<CronJobPrefs>): void"
+    - "getJobPrefs(jobId: string): CronJobPrefs | null"
+    - "getAllJobPrefs(): CronJobPrefs[]"
+    - "insertRunHistory(record: InsertRunHistory): void"
+    - "getRunHistory(jobId: string, limit: number, before?: string): JobRunRecord[]"
+    - "pruneRunHistory(): void"
+    - "deleteOrphanedPrefs(activeJobIds: string[]): void"
+estimated_loc: 120

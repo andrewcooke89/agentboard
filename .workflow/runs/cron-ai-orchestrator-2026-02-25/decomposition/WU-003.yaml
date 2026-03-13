@@ -1,0 +1,161 @@
+id: WU-003
+title: "CronAiService Core"
+description: |
+  Create the server-side CronAiService — the central coordinator between the MCP server
+  process, the agentboard server, and the UI. Manages the proposal queue (in-memory),
+  UI context state, MCP server WS connection tracking, HTTP route handler methods,
+  config/skill file generation, and session lifecycle. This is the largest single WU
+  but is a cohesive unit: all methods share internal state (proposal map, context, MCP WS ref).
+
+layer: 1
+dependencies:
+  - WU-001
+
+files:
+  new:
+    - path: src/server/cronAiService.ts
+      description: |
+        CronAiService class. Constructor takes: cronManager, historyService, logService,
+        sessionManager, config (port, authToken). Methods grouped by concern:
+
+        **Proposal Queue:**
+        - createProposal(payload): validates per REQ-68, assigns ID, stores in Map, returns Promise<ProposalResult> (long-poll)
+        - resolveProposal(id, approved, feedback?): resolves the long-poll promise, executes mutation if approved
+        - getProposal(id): returns proposal by ID
+        - getPendingProposals(): returns all pending proposals
+        - Timeout: setTimeout per proposal, auto-expires after configured timeout
+
+        **UI Context:**
+        - updateContext(context): updates internal UiContext, forwards to MCP WS if connected
+        - getContext(): returns current UiContext snapshot
+
+        **MCP Server WS:**
+        - registerMcpClient(ws, authToken?): validates auth, stores WS ref
+        - unregisterMcpClient(): clears WS ref
+        - forwardToMcp(message): sends message to MCP WS if connected
+        - handleMcpNavigate(action, payload): forwards navigation to UI clients
+
+        **HTTP Route Handlers** (methods, not Hono routes — wired in WU-004):
+        - handleGetJobs(query): delegates to cronManager.discoverAllJobs() with optional group filter
+        - handleSearchJobs(query): search by name/command/tag
+        - handleGetJobDetail(jobId): delegates to cronManager + historyService + logService
+        - handleGetJobHistory(jobId, limit, before?): delegates to historyService
+        - handleGetJobLogs(jobId, lines, offset?): delegates to logService
+        - handleGetHealth(): returns { healthy, warning, critical } counts
+        - handleGetFailingJobs(): returns warning+critical jobs
+        - handleGetScheduleConflicts(): analyzes job schedules for overlaps
+        - handleGetScheduleLoad(): per-hour density analysis
+        - handleGetDurationTrends(jobId): duration stats from historyService
+        - handleGetContext(): returns current UiContext
+        - handleGetSessions(): returns active sessions (excluding internal)
+        - handlePostProposal(payload): validates and creates proposal (long-poll)
+        - handleGetAiHealth(): returns { status: 'ok', mcpConnected, pendingProposals }
+
+        **Auth Middleware:**
+        - validateAuth(authHeader): checks Bearer token against configured AGENTBOARD_AUTH_TOKEN
+
+        **Config Generation:**
+        - generateMcpConfig(port): writes ~/.agentboard/mcp/cron-manager.json with 0600 perms
+        - generateSkillFile(): writes ~/.agentboard/skills/cron-manager.md with full skill content
+
+        **Session Lifecycle:**
+        - createAiSession(): creates agentboard-cron-ai tmux window with Claude Code startup command
+        - killAiSession(): kills the tmux window
+        - getAiSessionStatus(): returns session status from SessionManager
+    - path: src/server/__tests__/cronAiService.test.ts
+      description: "Unit tests with mocked CronManager, HistoryService, LogService, SessionManager."
+
+cross_wu_interfaces:
+  exports:
+    - "CronAiService class — instantiated in WU-004 (index.ts)"
+    - "HTTP handler methods — registered as Hono routes in WU-004"
+    - "registerMcpClient/handleMcpNavigate — called from WS handlers in WU-004"
+    - "createAiSession/killAiSession — called from WU-013 (session lifecycle)"
+    - "generateMcpConfig/generateSkillFile — called at startup in WU-004"
+  imports:
+    - "CronManager (Phase 26) — for job operations and discovery"
+    - "CronHistoryService — for run history"
+    - "CronLogService — for log queries"
+    - "SessionManager — for tmux window management"
+    - "Types from WU-001 — CronAiProposal, UiContext, ProposalResult, etc."
+
+acceptance_criteria:
+  - id: AC-003-1
+    type: contract
+    description: "createProposal() validates per REQ-68: rejects unknown operations (400), non-existent jobId (404), jobId on create (400), empty description (400), missing required details per operation type (400)."
+  - id: AC-003-2
+    type: contract
+    description: "createProposal() returns a Promise that resolves when the user accepts/rejects or the timeout expires. The HTTP response is held open until resolution."
+  - id: AC-003-3
+    type: contract
+    description: "resolveProposal(id, true) executes the mutation via CronManager (pauseJob, resumeJob, etc.) and returns {success: true, result}. resolveProposal(id, false, feedback) returns {success: false, rejected: true, feedback}."
+  - id: AC-003-4
+    type: contract
+    description: "Proposals auto-expire after configured timeout (default 5min). Expired proposals return {success: false, expired: true}."
+  - id: AC-003-5
+    type: contract
+    description: "validateAuth() returns true when no auth token configured. When configured, requires valid Bearer token. Returns 401 on missing/invalid token."
+  - id: AC-003-6
+    type: contract
+    description: "registerMcpClient() validates auth token in handshake when AGENTBOARD_AUTH_TOKEN configured. Closes WS with code 4001 on invalid token."
+  - id: AC-003-7
+    type: contract
+    description: "generateMcpConfig() writes JSON with correct server URL/WS/auth and 0600 file permissions."
+  - id: AC-003-8
+    type: contract
+    description: "generateSkillFile() writes markdown with role, tools, approval workflow, safety guidelines, proactive behaviors, and tone instructions."
+  - id: AC-003-9
+    type: contract
+    description: "handleGetAiHealth() returns {status: 'ok', mcpConnected: boolean, pendingProposals: number}."
+  - id: AC-003-10
+    type: invariant
+    description: "No sudo credentials are logged or stored by the service. Sudo operations delegate to CronManager which handles credentials via Phase 26 flow."
+
+requirements_covered:
+  - REQ-17   # all mutations through proposals
+  - REQ-20   # accept executes mutation
+  - REQ-22   # proposal timeout
+  - REQ-23   # propose_change blocks until resolution
+  - REQ-27   # context awareness (via getContext)
+  - REQ-33   # skill file generation
+  - REQ-34   # skill file instructs context check
+  - REQ-35   # skill file health greeting
+  - REQ-36   # skill file never direct mutations
+  - REQ-37   # skill file safety guidelines
+  - REQ-39   # skill file failure patterns
+  - REQ-41   # skill file one-at-a-time proposals
+  - REQ-43   # skill file clarifying questions
+  - REQ-44   # skill file auto-greet
+  - REQ-45   # skill file one-time greeting
+  - REQ-59   # 0600 config permissions
+  - REQ-61   # proposal queue on server
+  - REQ-64   # /api/cron-ai/health endpoint
+  - REQ-66   # no sudo credential storage
+  - REQ-67   # auth on routes
+  - REQ-68   # proposal payload validation
+  - REQ-69   # WS auth handshake
+
+tests:
+  - TEST-ID: proposal-create-resolve
+    description: "Create proposal, resolve with accept → mutation executed. Resolve with reject → feedback returned."
+    spec_tests: [TEST-18, TEST-19, TEST-20]
+  - TEST-ID: proposal-timeout
+    description: "Create proposal, wait for timeout → auto-expires with {expired: true}."
+    spec_tests: [TEST-21, TEST-50]
+  - TEST-ID: proposal-validation
+    description: "Invalid payloads rejected per REQ-68 (unknown op, missing jobId, empty description, wrong details)."
+    spec_tests: [TEST-60]
+  - TEST-ID: auth-validation
+    description: "Auth token validates correctly: no token configured → pass, token configured → require Bearer, wrong token → 401."
+    spec_tests: [TEST-59, TEST-61]
+  - TEST-ID: config-generation
+    description: "MCP config JSON has correct URLs, auth token, and 0600 permissions."
+    spec_tests: [TEST-36, TEST-37, TEST-57]
+  - TEST-ID: skill-file-content
+    description: "Skill file contains role, tools, approval workflow, safety guidelines, proactive behaviors."
+    spec_tests: [TEST-35]
+  - TEST-ID: health-endpoint
+    description: "handleGetAiHealth returns correct shape with mcpConnected and pendingProposals."
+    spec_tests: [TEST-54]
+  - TEST-ID: context-tracking
+    description: "updateContext stores new context, getContext returns it, forwardToMcp sends WS message."

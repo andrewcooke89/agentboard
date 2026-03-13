@@ -1,0 +1,23 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  bun run typecheck exits with code 2 and includes these 5 errors in dagEngine.test.ts:
+
+  src/server/__tests__/dagEngine.test.ts(764,16): error TS18048: 'task' is possibly 'undefined'.
+  src/server/__tests__/dagEngine.test.ts(765,16): error TS18048: 'task' is possibly 'undefined'.
+  src/server/__tests__/dagEngine.test.ts(801,14): error TS18048: 'task' is possibly 'undefined'.
+  src/server/__tests__/dagEngine.test.ts(802,14): error TS18048: 'task' is possibly 'undefined'.
+  src/server/__tests__/dagEngine.test.ts(803,14): error TS18048: 'task' is possibly 'undefined'.
+
+  These errors occur because `Array.find()` returns `T | undefined`, but the code
+  accesses `task.prompt` without a null guard. The `expect(task).toBeTruthy()`
+  assertion guards at runtime but does not narrow the type for TypeScript.
+
+notes: |
+  Bug is consistently reproducible. The typecheck command reveals many other
+  TypeScript errors in the codebase (70+ total), but the 5 specific errors in
+  dagEngine.test.ts at lines 764, 765, 801, 802, 803 match the bug specification
+  exactly.
+
+  The fix approach suggested in the spec (adding non-null assertions like `task!.prompt`)
+  is appropriate for a test file where `toBeTruthy()` already guards at runtime.

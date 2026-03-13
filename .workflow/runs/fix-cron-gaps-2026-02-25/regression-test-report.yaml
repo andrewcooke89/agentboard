@@ -1,0 +1,40 @@
+verdict: pass
+
+test_files_created:
+  - "src/server/__tests__/cronConcurrentRunGuard.test.ts"
+  - "src/server/__tests__/cronCleanupScheduling.test.ts"
+  - "src/client/__tests__/cronGapsRegression.test.ts"
+
+test_count: 11
+
+description: |
+  Regression tests covering all 4 cron manager gaps. All 11 tests FAIL
+  against the current unfixed code (0 pass, 11 fail), confirming they
+  reproduce the bugs and will gate the fix.
+
+  GAP-05 — Concurrent-run guard (1 test):
+    Calls handleCronJobRunNow twice for the same jobId while the first is
+    still running. Expects the second call to return a type:'error' message.
+    Currently FAILS because both calls send cron-run-started with no guard.
+
+  GAP-06 — Cleanup scheduling (2 tests):
+    Reads index.ts source and asserts it references cleanOrphanedPrefs and
+    pruneRunHistory (for setInterval wiring). Currently FAILS because
+    index.ts never mentions either method.
+
+  GAP-04 — Animations (6 tests):
+    Checks that each of the 6 cron components (CronJobList, CronManager,
+    CronJobDetail, CronRunNowOutput, CronTimeline, CronEmptyState) imports
+    from 'motion/react' or 'framer-motion'. Currently FAILS because zero
+    cron components import motion.
+
+  GAP-08 — Session linking (2 tests):
+    Checks that CronSessionLink.tsx imports a session store (useSessionStore
+    or equivalent) and does not contain the hardcoded "No active sessions"
+    text. Currently FAILS on both counts.
+
+run_result:
+  total: 11
+  pass: 0
+  fail: 11
+  duration_ms: 14

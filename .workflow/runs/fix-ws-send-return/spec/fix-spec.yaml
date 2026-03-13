@@ -1,0 +1,44 @@
+verdict: pass
+
+title: "Fix: FakeWebSocket mock initializes readyState to OPEN instead of CONNECTING"
+
+description: |
+  Change the FakeWebSocket test mock's initial readyState from FakeWebSocket.OPEN (1)
+  to 0 (CONNECTING) so it matches real WebSocket lifecycle behavior. Real WebSocket
+  instances start in CONNECTING state and only transition to OPEN when the handshake
+  completes (onopen fires). The mock skips this, causing send()-before-open tests to
+  get true instead of the expected false.
+
+  This is a test-only fix. No production code changes are needed.
+
+changes:
+  - file: "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+    description: |
+      1. Add static CONNECTING constant to FakeWebSocket class:
+           static CONNECTING = 0
+         Place it before the existing static OPEN = 1 line (line 21).
+
+      2. Change the readyState initializer (line 25) from:
+           readyState = FakeWebSocket.OPEN
+         to:
+           readyState = FakeWebSocket.CONNECTING
+
+      The existing triggerOpen() method (lines 45-48) already sets
+      readyState = FakeWebSocket.OPEN and calls onopen(), so the full
+      CONNECTING → OPEN lifecycle will work correctly after this change.
+
+      No other changes are needed in this file. Tests that call triggerOpen()
+      before send() are unaffected because triggerOpen() sets readyState=OPEN.
+    change_type: modify
+
+acceptance_criteria:
+  - "FakeWebSocket.readyState initializes to 0 (CONNECTING), not 1 (OPEN)"
+  - "FakeWebSocket class has a static CONNECTING = 0 constant"
+  - "Test 'FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)' passes"
+  - "Test 'send() returns false before connection is established' passes"
+  - "All other tests in webSocketSendReturnBoolean.test.ts continue to pass"
+  - "bun run test completes with no new failures"
+
+regression_risks:
+  - "Risk 1: Tests that assume readyState is OPEN immediately after FakeWebSocket construction would fail. Mitigated: all such tests in this file call triggerOpen() before exercising send(), so they already transition readyState to OPEN explicitly."
+  - "Risk 2: Other test files importing FakeWebSocket could break. Mitigated: FakeWebSocket is defined locally in this file and not exported or imported elsewhere."

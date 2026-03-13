@@ -1,0 +1,4496 @@
+id: TKT-0037
+version: 1
+created_at: 2026-03-13T06:46:28.838Z
+updated_at: 2026-03-13T06:55:29.803Z
+category: style
+severity: medium
+status: open
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/__tests__/wu008-resourcesWsConnectivity.test.ts
+  line_start: 202
+  code_snippet: // This test will fail until connectWebSocket processes incoming messages.
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'ctx' is
+  declared but never used. Unused variables should s..."
+description: "eslint(no-unused-vars): Variable 'ctx' is declared but never used.
+  Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-13T06:55:29.803Z
+    author: system
+    content: "Status changed to validated: minion-fix: Commit failed: Running
+      pre-commit checks...
+
+      Linting...
+
+
+      \  ! eslint(no-unused-vars): Function 'queueNetworkError' is declared but
+      never used.
+
+      \    ,-[src/server/mcp/__tests__/wu008-resourcesWsConnectivity.test.ts:85\
+      :10]
+
+      \ 84 |\ 
+
+      \ 85 | function queueNetworkError() {
+
+      \    :          ^^^^^^^^|^^^^^^^^
+
+      \    :                  `-- 'queueNetworkError' is declared here
+
+      \ 86 |   fetchResponseQueue.push({ error: new TypeError('fetch failed') })
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint-plugin-unicorn(no-single-promise-in-promise-methods): Wrapping
+      single-element array with `Promise.all()` is unnecessary.
+
+      \     ,-[src/server/handlers/cronHandlers.ts:504:40]
+
+      \ 503 |     const prefs = getJobPrefs(ctx.db.db, jobId)
+
+      \ 504 |     const [runHistory] = await
+      Promise.all([historyService.getRunHistory(jobId, 20)])
+
+      \     :                                        ^^^
+
+      \ 505 |\ 
+
+      \     `----
+
+      \  help: Either use the value directly, or switch to `Promise.resolve(…)`.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'getEnvForModel' is imported but
+      never used.
+
+      \    ,-[src/server/scripts/wu-orchestrator.ts:24:69]
+
+      \ 23 | import { loadProjectProfileRaw, extractTestContext,
+      extractModelRoutingConfig } from '../projectProfile'
+
+      \ 24 | import { loadModelRoutingConfig, shouldEscalate, getEscalatedModel,
+      getEnvForModel } from '../modelEnvLoader'
+
+      \    :                                                                     \
+      ^^^^^^^|^^^^^^
+
+      \    :                                                                            \
+      `-- 'getEnvForModel' is imported here
+
+      \ 25 | import type { TestContext } from '../../shared/types'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'beforeEach' is imported but never
+      used.
+
+      \   ,-[src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts:6:32]
+
+      \ 5 |\ 
+
+      \ 6 | import { describe, it, expect, beforeEach, afterEach, mock } from
+      'bun:test'
+
+      \   :                                ^^^^^|^^^^
+
+      \   :                                     `-- 'beforeEach' is imported
+      here
+
+      \ 7 | import type {
+
+      \   `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Type 'CronJobDetail' is imported but never
+      used.
+
+      \    ,-[src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts:9:3]
+
+      \  8 |   CronJob,
+
+      \  9 |   CronJobDetail,
+
+      \    :   ^^^^^^|^^^^^^
+
+      \    :         `-- 'CronJobDetail' is imported here
+
+      \ 10 |   UiContext,
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'fetchFromAgentboard' is imported
+      but never used.
+
+      \     ,-[src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts:120:3]
+
+      \ 119 | import {
+
+      \ 120 |   fetchFromAgentboard,
+
+      \     :   ^^^^^^^^^|^^^^^^^^^
+
+      \     :            `-- 'fetchFromAgentboard' is imported here
+
+      \ 121 |   getHealthSummary,
+
+      \     `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'mock' is imported but never used.
+
+      \    ,-[src/server/mcp/__tests__/wu005-cronMcpServer-readTools.test.ts:16\
+      :55]
+
+      \ 15 |\ 
+
+      \ 16 | import { describe, it, expect, beforeEach, afterEach, mock } from
+      'bun:test'
+
+      \    :                                                       ^^|^
+
+      \    :                                                         `-- 'mock'
+      is imported here
+
+      \ 17 | import type { CronJob, CronJobDetail, JobRunRecord } from
+      '@shared/types'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Variable 'result' is declared but never used.
+      Unused variables should start with a '_'.
+
+      \     ,-[src/server/mcp/__tests__/wu005-cronMcpServer-readTools.test.ts:7\
+      91:13]
+
+      \ 790 |\ 
+
+      \ 791 |       const result = await searchJobs('')
+
+      \     :             ^^^|^^
+
+      \     :                `-- 'result' is declared here
+
+      \ 792 |\ 
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Function 'queueNetworkError' is declared but
+      never used.
+
+      \     ,-[src/server/mcp/__tests__/wu008-resourcesAndWs.test.ts:126:10]
+
+      \ 125 |\ 
+
+      \ 126 | function queueNetworkError() {
+
+      \     :          ^^^^^^^^|^^^^^^^^
+
+      \     :                  `-- 'queueNetworkError' is declared here
+
+      \ 127 |   fetchResponseQueue.push({ error: new TypeError('fetch failed')
+      })
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'beforeEach' is imported but never
+      used.
+
+      \    ,-[src/server/__tests__/health-gaps-regression.test.ts:13:34]
+
+      \ 12 |\ 
+
+      \ 13 | import { describe, test, expect, beforeEach, mock } from 'bun:test'
+
+      \    :                                  ^^^^^|^^^^
+
+      \    :                                       `-- 'beforeEach' is imported
+      here
+
+      \ 14 | import { readFileSync } from 'node:fs'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'mock' is imported but never used.
+
+      \    ,-[src/server/__tests__/health-gaps-regression.test.ts:13:46]
+
+      \ 12 |\ 
+
+      \ 13 | import { describe, test, expect, beforeEach, mock } from 'bun:test'
+
+      \    :                                              ^^|^
+
+      \    :                                                `-- 'mock' is
+      imported here
+
+      \ 14 | import { readFileSync } from 'node:fs'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'resultContent' is declared but
+      never used. Unused parameters should start with a '_'.
+
+      \     ,-[src/server/handlers/workflowHandlers.ts:988:16]
+
+      \ 987 |           steps_state: run.steps_state.map(
+
+      \ 988 |             ({ resultContent, reviewFeedback, reviewIterations,
+      detectedSignals, childSteps, ...rest }: StepRunState) => rest
+
+      \     :                ^^^^^^|^^^^^^
+
+      \     :                      `-- 'resultContent' is declared here
+
+      \ 989 |           ),
+
+      \     `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'reviewFeedback' is declared but
+      never used. Unused parameters should start with a '_'.
+
+      \     ,-[src/server/handlers/workflowHandlers.ts:988:31]
+
+      \ 987 |           steps_state: run.steps_state.map(
+
+      \ 988 |             ({ resultContent, reviewFeedback, reviewIterations,
+      detectedSignals, childSteps, ...rest }: StepRunState) => rest
+
+      \     :                               ^^^^^^^|^^^^^^
+
+      \     :                                      `-- 'reviewFeedback' is
+      declared here
+
+      \ 989 |           ),
+
+      \     `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'reviewIterations' is declared but
+      never used. Unused parameters should start with a '_'.
+
+      \     ,-[src/server/handlers/workflowHandlers.ts:988:47]
+
+      \ 987 |           steps_state: run.steps_state.map(
+
+      \ 988 |             ({ resultContent, reviewFeedback, reviewIterations,
+      detectedSignals, childSteps, ...rest }: StepRunState) => rest
+
+      \     :                                               ^^^^^^^^|^^^^^^^
+
+      \     :                                                       `--
+      'reviewIterations' is declared here
+
+      \ 989 |           ),
+
+      \     `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'detectedSignals' is declared but
+      never used. Unused parameters should start with a '_'.
+
+      \     ,-[src/server/handlers/workflowHandlers.ts:988:65]
+
+      \ 987 |           steps_state: run.steps_state.map(
+
+      \ 988 |             ({ resultContent, reviewFeedback, reviewIterations,
+      detectedSignals, childSteps, ...rest }: StepRunState) => rest
+
+      \     :                                                                 ^\
+      ^^^^^^|^^^^^^^
+
+      \     :                                                                        \
+      `-- 'detectedSignals' is declared here
+
+      \ 989 |           ),
+
+      \     `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'childSteps' is declared but never
+      used. Unused parameters should start with a '_'.
+
+      \     ,-[src/server/handlers/workflowHandlers.ts:988:82]
+
+      \ 987 |           steps_state: run.steps_state.map(
+
+      \ 988 |             ({ resultContent, reviewFeedback, reviewIterations,
+      detectedSignals, childSteps, ...rest }: StepRunState) => rest
+
+      \     :                                                                                  \
+      ^^^^^|^^^^
+
+      \     :                                                                                       \
+      `-- 'childSteps' is declared here
+
+      \ 989 |           ),
+
+      \     `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Variable 'AGENTBOARD_URL' is declared but
+      never used. Unused variables should start with a '_'.
+
+      \   ,-[src/server/mcp/cronMcpServer.ts:8:7]
+
+      \ 7 |\ 
+
+      \ 8 | const AGENTBOARD_URL = process.env.AGENTBOARD_URL ||
+      'http://localhost:4040'
+
+      \   :       ^^^^^^^|^^^^^^
+
+      \   :              `-- 'AGENTBOARD_URL' is declared here
+
+      \ 9 | const AGENTBOARD_WS = process.env.AGENTBOARD_WS ||
+      'ws://localhost:4040/ws'
+
+      \   `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'AGENTBOARD_WS' is declared but
+      never used. Unused variables should start with a '_'.
+
+      \    ,-[src/server/mcp/cronMcpServer.ts:9:7]
+
+      \  8 | const AGENTBOARD_URL = process.env.AGENTBOARD_URL ||
+      'http://localhost:4040'
+
+      \  9 | const AGENTBOARD_WS = process.env.AGENTBOARD_WS ||
+      'ws://localhost:4040/ws'
+
+      \    :       ^^^^^^|^^^^^^
+
+      \    :             `-- 'AGENTBOARD_WS' is declared here
+
+      \ 10 | const AGENTBOARD_AUTH_TOKEN = process.env.AGENTBOARD_AUTH_TOKEN ||
+      ''
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'AGENTBOARD_AUTH_TOKEN' is declared
+      but never used. Unused variables should start with a '_'.
+
+      \    ,-[src/server/mcp/cronMcpServer.ts:10:7]
+
+      \  9 | const AGENTBOARD_WS = process.env.AGENTBOARD_WS ||
+      'ws://localhost:4040/ws'
+
+      \ 10 | const AGENTBOARD_AUTH_TOKEN = process.env.AGENTBOARD_AUTH_TOKEN ||
+      ''
+
+      \    :       ^^^^^^^^^^|^^^^^^^^^^
+
+      \    :                 `-- 'AGENTBOARD_AUTH_TOKEN' is declared here
+
+      \ 11 |\ 
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'mock' is imported but never used.
+
+      \    ,-[src/server/__tests__/wu004-lifecycle.test.ts:9:32]
+
+      \  8 |\ 
+
+      \  9 | import { describe, it, expect, mock } from 'bun:test'
+
+      \    :                                ^^|^
+
+      \    :                                  `-- 'mock' is imported here
+
+      \ 10 | import { readFileSync } from 'node:fs'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'jobId' is declared but never used.
+      Unused parameters should start with a '_'.
+
+      \    ,-[src/server/cronLogService.ts:17:5]
+
+      \ 16 |   async getLogs(
+
+      \ 17 |     jobId: string,
+
+      \    :     ^^|^^
+
+      \    :       `-- 'jobId' is declared here
+
+      \ 18 |     lines: number,
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'lines' is declared but never used.
+      Unused parameters should start with a '_'.
+
+      \    ,-[src/server/cronLogService.ts:18:5]
+
+      \ 17 |     jobId: string,
+
+      \ 18 |     lines: number,
+
+      \    :     ^^|^^
+
+      \    :       `-- 'lines' is declared here
+
+      \ 19 |     offset?: number
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'offset' is declared but never
+      used. Unused parameters should start with a '_'.
+
+      \    ,-[src/server/cronLogService.ts:19:5]
+
+      \ 18 |     lines: number,
+
+      \ 19 |     offset?: number
+
+      \    :     ^^^|^^
+
+      \    :        `-- 'offset' is declared here
+
+      \ 20 |   ): Promise<string[]> {
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'jobId' is declared but never used.
+      Unused parameters should start with a '_'.
+
+      \    ,-[src/server/cronLogService.ts:30:19]
+
+      \ 29 |    */
+
+      \ 30 |   async *tailLogs(jobId: string): AsyncGenerator<string> {
+
+      \    :                   ^^|^^
+
+      \    :                     `-- 'jobId' is declared here
+
+      \ 31 |     // Log sources will be connected via WU-007
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'spyOn' is imported but never
+      used.
+
+      \    ,-[src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts:16:61]
+
+      \ 15 |\ 
+
+      \ 16 | import { describe, it, expect, beforeEach, afterEach, mock, spyOn }
+      from 'bun:test'
+
+      \    :                                                             ^^|^^
+
+      \    :                                                               `--
+      'spyOn' is imported here
+
+      \ 17 | import type { ProposalResult, CronAiProposalOperation } from
+      '@shared/types'
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'beforeEach' is imported but never
+      used.
+
+      \   ,-[src/server/mcp/__tests__/cronMcpServer.test.ts:5:32]
+
+      \ 4 |\ 
+
+      \ 5 | import { describe, it, expect, beforeEach, afterEach, mock } from
+      'bun:test'
+
+      \   :                                ^^^^^|^^^^
+
+      \   :                                     `-- 'beforeEach' is imported
+      here
+
+      \ 6 | import type { CronJob, CronJobDetail, JobRunRecord } from
+      '@shared/types'
+
+      \   `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'getToolSchema' is imported but
+      never used.
+
+      \     ,-[src/server/mcp/__tests__/cronMcpServer.test.ts:101:3]
+
+      \ 100 |   getRegisteredToolNames,
+
+      \ 101 |   getToolSchema,
+
+      \     :   ^^^^^^|^^^^^^
+
+      \     :         `-- 'getToolSchema' is imported here
+
+      \ 102 |   listJobs,
+
+      \     `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Variable 'prefersReducedMotion' is declared
+      but never used. Unused variables should start with a '_'.
+
+      \    ,-[src/client/components/TaskQueue.tsx:20:9]
+
+      \ 19 | export default function TaskQueue({ sendMessage,
+      defaultProjectPath, onWatchTask, onNavigateToWorkflow }: TaskQueueProps) {
+
+      \ 20 |   const prefersReducedMotion = useReducedMotion()
+
+      \    :         ^^^^^^^^^^|^^^^^^^^^
+
+      \    :                   `-- 'prefersReducedMotion' is declared here
+
+      \ 21 |   const tasks = useTaskStore((s) => s.tasks)
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'query' is declared but never used.
+      Unused parameters should start with a '_'.
+
+      \    ,-[src/client/components/cron/__tests__/CronAiDrawer.test.tsx:71:18]
+
+      \ 70 |     innerHeight: 768,
+
+      \ 71 |     matchMedia: (query: string) => ({
+
+      \    :                  ^^|^^
+
+      \    :                    `-- 'query' is declared here
+
+      \ 72 |       matches: false,
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-unused-vars): Variable 'tree' is declared but never used.
+      Unused variables should start with a '_'.
+
+      \     ,-[src/client/components/cron/__tests__/CronAiDrawer.test.tsx:175:1\
+      1]
+
+      \ 174 |     // AnimatePresence should render no motion.div children
+
+      \ 175 |     const tree = renderer!.toJSON()
+
+      \     :           ^^|^
+
+      \     :             `-- 'tree' is declared here
+
+      \ 176 |     // When closed, there should be no visible drawer content
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'DRAWER_MIN_WIDTH' is imported but
+      never used.
+
+      \   ,-[src/client/components/cron/CronAiDrawer.tsx:8:26]
+
+      \ 7 | import { AnimatePresence, motion } from 'motion/react'
+
+      \ 8 | import { useCronAiStore, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from
+      '../../stores/cronAiStore'
+
+      \   :                          ^^^^^^^^|^^^^^^^
+
+      \   :                                  `-- 'DRAWER_MIN_WIDTH' is imported
+      here
+
+      \ 9 | import { useCronStore } from '../../stores/cronStore'
+
+      \   `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Identifier 'DRAWER_MAX_WIDTH' is imported but
+      never used.
+
+      \   ,-[src/client/components/cron/CronAiDrawer.tsx:8:44]
+
+      \ 7 | import { AnimatePresence, motion } from 'motion/react'
+
+      \ 8 | import { useCronAiStore, DRAWER_MIN_WIDTH, DRAWER_MAX_WIDTH } from
+      '../../stores/cronAiStore'
+
+      \   :                                            ^^^^^^^^|^^^^^^^
+
+      \   :                                                    `--
+      'DRAWER_MAX_WIDTH' is imported here
+
+      \ 9 | import { useCronStore } from '../../stores/cronStore'
+
+      \   `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Parameter 'subscribe' is declared but never
+      used. Unused parameters should start with a '_'.
+
+      \    ,-[src/client/components/cron/CronAiDrawer.tsx:29:45]
+
+      \ 28 |  */
+
+      \ 29 | export function CronAiDrawer({ sendMessage, subscribe, children }:
+      CronAiDrawerProps) {
+
+      \    :                                             ^^^^|^^^^
+
+      \    :                                                 `-- 'subscribe' is
+      declared here
+
+      \ 30 |   const drawerOpen = useCronAiStore((s) => s.drawerOpen)
+
+      \    `----
+
+      \  help: Consider removing this parameter.
+
+
+      \  ! eslint(no-control-regex): Unexpected control character
+
+      \      ,-[src/server/cronManager.ts:1236:9]
+
+      \ 1235 |   private validateCronCommand(command: string): void {
+
+      \ 1236 |     if (/[\\n\\r\\0]/.test(command)) {
+
+      \      :         ^^^^^^^^^^
+
+      \ 1237 |       throw new Error('Command contains invalid characters
+      (newline/carriage return/null byte)')
+
+      \      `----
+
+      \  help: '\\0' matches the null character (U+0000), which is a control
+      character.
+
+
+      \  ! eslint(no-unused-vars): Type 'CronJobDetail' is imported but never
+      used.
+
+      \    ,-[src/server/cronManager.ts:11:3]
+
+      \ 10 |   CronJob,
+
+      \ 11 |   CronJobDetail,
+
+      \    :   ^^^^^^|^^^^^^
+
+      \    :         `-- 'CronJobDetail' is imported here
+
+      \ 12 |   JobRunRecord,
+
+      \    `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Variable 'serviceUnit' is declared but never
+      used. Unused variables should start with a '_'.
+
+      \     ,-[src/server/cronManager.ts:994:13]
+
+      \ 993 |       const timerUnit = `${job.name}.timer`
+
+      \ 994 |       const serviceUnit = `${job.name}.service`
+
+      \     :             ^^^^^|^^^^^
+
+      \     :                  `-- 'serviceUnit' is declared here
+
+      \ 995 |\ 
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'baseSession' is declared but never
+      used. Unused variables should start with a '_'.
+
+      \     ,-[src/client/__tests__/app.WU012.test.tsx:207:7]
+
+      \ 206 |\ 
+
+      \ 207 | const baseSession: Session = {
+
+      \     :       ^^^^^|^^^^^
+
+      \     :            `-- 'baseSession' is declared here
+
+      \ 208 |   id: 'session-1',
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'setDbCalls' is declared but never
+      used. Unused variables should start with a '_'.
+
+      \    ,-[src/server/__tests__/cleanup-scheduling-regression.test.ts:33:11]
+
+      \ 32 |     // Find where setDb is called
+
+      \ 33 |     const setDbCalls = src.match(/cronManager\\.setDb\\s*\\(/g) ||
+      []
+
+      \    :           ^^^^^|^^^^
+
+      \    :                `-- 'setDbCalls' is declared here
+
+      \ 34 |\ 
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Function 'findAllTextContent' is declared but
+      never used.
+
+      \     ,-[src/client/components/cron/__tests__/CronAiProposalCard.test.tsx\
+      :124:10]
+
+      \ 123 |\ 
+
+      \ 124 | function findAllTextContent(
+
+      \     :          ^^^^^^^^^|^^^^^^^^
+
+      \     :                   `-- 'findAllTextContent' is declared here
+
+      \ 125 |   root: TestRenderer.ReactTestInstance,
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Function 'findTerminalContainer' is declared
+      but never used.
+
+      \     ,-[src/client/components/cron/__tests__/CronAiTerminal.test.tsx:181\
+      :10]
+
+      \ 180 | /** Find container div (the one useTerminal attaches to) */
+
+      \ 181 | function findTerminalContainer(root: ReactTestInstance):
+      ReactTestInstance | undefined {
+
+      \     :          ^^^^^^^^^^|^^^^^^^^^^
+
+      \     :                    `-- 'findTerminalContainer' is declared here
+
+      \ 182 |   // The container div should use the containerRef from
+      useTerminal
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'React' is assigned a value but
+      never used. Unused variables should start with a '_'.
+
+      \     ,-[src/client/components/cron/__tests__/CronAiTerminal.test.tsx:199\
+      :7]
+
+      \ 198 | describe('CronAiTerminal', () => {
+
+      \ 199 |   let React: typeof import('react')
+
+      \     :       ^^|^^
+
+      \     :         `-- 'React' is declared here
+
+      \ 200 |   let act: typeof TestRenderer.act
+
+      \ 201 |   let create: typeof TestRenderer.create
+
+      \ 202 |   let CronAiTerminal: React.ComponentType<{
+
+      \ 203 |     sessionId: string | null
+
+      \ 204 |     tmuxTarget: string | null
+
+      \ 205 |     sendMessage: SendClientMessage
+
+      \ 206 |     subscribe: SubscribeServerMessage
+
+      \ 207 |   }>
+
+      \ 208 |\ 
+
+      \ 209 |   beforeEach(async () => {
+
+      \ 210 |     setupDom()
+
+      \ 211 |     globalAny.localStorage = createStorage()
+
+      \ 212 |     mockUseTerminalCalls = []
+
+      \ 213 |     mockContainerRef = { current: null }
+
+      \ 214 |     mockTerminalRef = { current: null }
+
+      \ 215 |     mockSearchAddonRef = { current: null }
+
+      \ 216 |     mockSerializeAddonRef = { current: null }
+
+      \ 217 |     mockProgressAddonRef = { current: null }
+
+      \ 218 |     mockInTmuxCopyModeRef = { current: false }
+
+      \ 219 |     mockSetTmuxCopyMode.mockClear()
+
+      \ 220 |\ 
+
+      \ 221 |     // Dynamic import after globals are set up
+
+      \ 222 |     React = await import('react')
+
+      \     :     ^^|^^
+
+      \     :       `-- it was last assigned here
+
+      \ 223 |     const renderer = await import('react-test-renderer')
+
+      \     `----
+
+      \  help: Did you mean to use this variable?
+
+
+      \  ! eslint(no-unused-vars): Identifier 'jest' is imported but never used.
+
+      \   ,-[src/client/components/cron/__tests__/CronManager.WU012.test.tsx:4:\
+      63]
+
+      \ 3 |\ 
+
+      \ 4 | import { afterEach, beforeEach, describe, expect, test, mock, jest }
+      from 'bun:test'
+
+      \   :                                                               ^^|^
+
+      \   :                                                                 `--
+      'jest' is imported here
+
+      \ 5 | import TestRenderer, { act } from 'react-test-renderer'
+
+      \   `----
+
+      \  help: Consider removing this import.
+
+
+      \  ! eslint(no-unused-vars): Function 'makeJobDetail' is declared but
+      never used.
+
+      \    ,-[src/server/__tests__/cronAiService.test.ts:50:10]
+
+      \ 49 |\ 
+
+      \ 50 | function makeJobDetail(overrides: Partial<CronJobDetail> = {}):
+      CronJobDetail {
+
+      \    :          ^^^^^^|^^^^^^
+
+      \    :                `-- 'makeJobDetail' is declared here
+
+      \ 51 |   return {
+
+      \    `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'freshRun' is declared but never
+      used. Unused variables should start with a '_'.
+
+      \     ,-[src/server/__tests__/dagEngine.test.ts:756:15]
+
+      \ 755 |         dagEngine.tick(run, parsed)
+
+      \ 756 |         const freshRun = workflowStore.getRun(run.id)!
+
+      \     :               ^^^^|^^^
+
+      \     :                   `-- 'freshRun' is declared here
+
+      \ 757 |\ 
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'freshRun' is declared but never
+      used. Unused variables should start with a '_'.
+
+      \     ,-[src/server/__tests__/dagEngine.test.ts:794:13]
+
+      \ 793 |       dagEngine.tick(run, parsed)
+
+      \ 794 |       const freshRun = workflowStore.getRun(run.id)!
+
+      \     :             ^^^^|^^^
+
+      \     :                 `-- 'freshRun' is declared here
+
+      \ 795 |\ 
+
+      \     `----
+
+      \  help: Consider removing this declaration.
+
+
+      \  ! eslint(no-unused-vars): Variable 'wf' is declared but never used.
+      Unused variables should start with a '_'.
+
+      \      ,-[src/server/__tests__/dagEngine.test.ts:1552:13]
+
+      \ 1551 |\ 
+
+      \ 1552 |       const wf = createWorkflowDef(workflowStore, yaml,
+      'native-action-test')
+
+      \      :             ^|
+
+      \      :              `-- 'wf' is declared here
+
+      \ 1553 |       // Use parseWorkflowYAML directly — schema rejects unknown
+      actions now,
+
+      \      `----
+
+      \  help: Consider removing this declaration.
+
+
+      Found 46 warnings and 0 errors.
+
+      Finished in 33ms on 369 files with 90 rules using 32 threads.
+
+      Type checking...
+
+      Running tests...
+
+      bun test v1.3.9 (cf6cdbbb)
+
+
+      src/client/__tests__/renderComponents.test.tsx:
+
+      Download the React DevTools for a better development experience:
+      https://reactjs.org/link/react-devtools
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+
+      src/client/__tests__/app.WU012.test.tsx:
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+
+      src/client/__tests__/app.test.tsx:
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+      Failed to fetch server info: TypeError: fetch() URL is invalid
+
+      \ code: \"ERR_INVALID_URL\"
+
+
+      \      at authFetch
+      (/home/andrew-cooke/tools/agentboard/src/client/utils/api.ts:46:26)
+
+      \      at <anonymous>
+      (/home/andrew-cooke/tools/agentboard/src/client/App.tsx:850:5)
+
+      \      at commitHookEffectListMount
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:13038:26)
+
+      \      at commitPassiveMountOnFiber
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14461:11)
+
+      \      at commitPassiveMountEffects_complete
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14421:9)
+
+      \      at commitPassiveMountEffects_begin
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14408:7)
+
+      \      at commitPassiveMountEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:14396:3)
+
+      \      at flushPassiveEffectsImpl
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16287:3)
+
+      \      at flushPassiveEffects
+      (/home/andrew-cooke/tools/agentboard/node_modules/react-test-renderer/cjs\
+      /react-test-renderer.development.js:16236:14)
+
+
+
+      src/server/__tests__/cronDuplicateAndOpResultRegression.test.ts:
+
+      cron-operation-result: create on job-123 failed — Duplicate cron entry:
+      identical schedule and command already exists
+
+      {\"level\":30,\"time\":1773384892422,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"foo\":\"bar\",\"event\":\"test_event\"}
+
+      {\"level\":40,\"time\":1773384892424,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"event\":\"warn_event\"}
+
+      {\"level\":30,\"time\":1773384892425,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"event\":\"info_event\"}
+
+      {\"level\":30,\"time\":1773384892426,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"event\":\"info_event\"}
+
+      {\"level\":30,\"time\":1773384892427,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"key\":\"value\",\"event\":\"my_custom_event\"}
+
+      {\"level\":30,\"time\":1773384892428,\"pid\":1265759,\"hostname\":\"andre\
+      w-cooke-System\",\"event\":\"correct_event\",\"other\":\"data\"}
+
+
+      src/server/__tests__/perWorkUnitEngine.test.ts:
+
+      selectSpecialist: using specialist 'workhorse-rust' for work unit
+      'test-unit' (tag: 'rust') — verify this agent is defined in your pipeline
+      config
+
+      selectSpecialist: using specialist 'workhorse-rust' for work unit
+      'rust-unit' (tag: 'rust') — verify this agent is defined in your pipeline
+      config
+
+      selectSpecialist: using specialist 'workhorse-frontend' for work unit
+      'frontend-unit' (tag: 'frontend') — verify this agent is defined in your
+      pipeline config
+
+      [2026-03-13 06:54:55.468 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"glm\",
+
+      \      \"gemini-flash\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 2
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:54:56.575 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 2
+
+      \    \e[35msuccessful\e[39m: 2
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:54:56.576 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"glm\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:54:57.948 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:54:57.948 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"a\",
+
+      \      \"b\",
+
+      \      \"c\",
+
+      \      \"d\",
+
+      \      \"e\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 2
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:54:58.860 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 2
+
+      \    \e[35msuccessful\e[39m: 2
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+
+      src/server/__tests__/index.test.ts:
+
+      [modelEnvLoader] Failed to load undefined: 47 |  */
+
+      48 | export function loadModelEnvs(path: string): void {
+
+      49 |   configPath = path
+
+      50 |\ 
+
+      51 |   try {
+
+      52 |     const content = fs.readFileSync(path, 'utf-8')
+
+      \                            ^
+
+      TypeError: path must be a string or a file descriptor
+
+      \ code: \"ERR_INVALID_ARG_TYPE\"
+
+
+      \      at loadModelEnvs
+      (/home/andrew-cooke/tools/agentboard/src/server/modelEnvLoader.ts:52:24)
+
+      \      at /home/andrew-cooke/tools/agentboard/src/server/index.ts:50:1
+
+      \      at requestImportModule (2:1)
+
+
+      [modelEnvLoader] Using default \"claude\" config
+
+      [2026-03-13 06:54:58.883 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:54:58.898 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:54:58.899 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:54:58.899 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:54:58.899 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:54:58.899 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:54:58.900 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [modelEnvLoader] Failed to load undefined: 47 |  */
+
+      48 | export function loadModelEnvs(path: string): void {
+
+      49 |   configPath = path
+
+      50 |\ 
+
+      51 |   try {
+
+      52 |     const content = fs.readFileSync(path, 'utf-8')
+
+      \                            ^
+
+      TypeError: path must be a string or a file descriptor
+
+      \ code: \"ERR_INVALID_ARG_TYPE\"
+
+
+      \      at loadModelEnvs
+      (/home/andrew-cooke/tools/agentboard/src/server/modelEnvLoader.ts:52:24)
+
+      \      at /home/andrew-cooke/tools/agentboard/src/server/index.ts:50:1
+
+      \      at requestImportModule (2:1)
+
+
+      [modelEnvLoader] Using default \"claude\" config
+
+      [2026-03-13 06:54:58.902 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:54:58.903 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+
+      src/server/__tests__/amendmentHandler.test.ts:
+
+      [SEC-1] amendment_signal_field_too_large: issue field 102401 bytes exceeds
+      max 102400
+
+      [SEC-1] amendment_signal_field_too_large: proposed_addition field 102401
+      bytes exceeds max 102400
+
+      [2026-03-13 06:55:12.382 +0000] \e[32mINFO\e[39m (-p):
+
+      \    \e[35mtmuxWindow\e[39m: \"agentboard-kill:1\"
+
+      \    \e[35mevent\e[39m: \"window_killed\"
+
+
+      src/server/__tests__/perWorkUnitEngine.edgeCases.test.ts:
+
+      selectSpecialist: using specialist 'workhorse-rust' for work unit
+      'test-unit' (tag: 'rust') — verify this agent is defined in your pipeline
+      config
+
+      selectSpecialist: using specialist 'workhorse-c++' for work unit
+      'test-unit' (tag: 'c++') — verify this agent is defined in your pipeline
+      config
+
+      selectSpecialist: using specialist 'workhorse-' for work unit 'test-unit'
+      (tag: '') — verify this agent is defined in your pipeline config
+
+
+      src/server/__tests__/signalProtocol.test.ts:
+
+      Failed to read signal file
+      /tmp/signal-test-1773384912392-idm082hf4ak/invalid.yaml (attempt 1/3):
+      YAMLException: bad indentation of a mapping entry (1:11)
+
+
+      \ 1 | not: valid: yaml: {{{{
+
+      ---------------^
+
+      Failed to read signal file
+      /tmp/signal-test-1773384912392-idm082hf4ak/invalid.yaml (attempt 2/3):
+      YAMLException: bad indentation of a mapping entry (1:11)
+
+
+      \ 1 | not: valid: yaml: {{{{
+
+      ---------------^
+
+      Failed to read signal file
+      /tmp/signal-test-1773384912392-idm082hf4ak/invalid.yaml after 3 attempts:
+      YAMLException: bad indentation of a mapping entry (1:11)
+
+
+      \ 1 | not: valid: yaml: {{{{
+
+      ---------------^
+
+      Signal file /tmp/signal-test-1773384913392-g2co9nk7w79/signal.yaml has
+      unknown signal_type \"unknown_type\", mapping to \"error\"
+
+      Signal file /tmp/signal-test-1773384913393-vc6rx3vo8ni/signal.yaml has
+      version 99 > current 1, attempting best-effort parse
+
+      [2026-03-13 06:55:13.403 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogPath\e[39m:
+      \"/tmp/agentboard-poller-Vy2NIm/claude/projects/-home-andrew-cooke-tools-\
+      agentboard-fixtures-alpha/session-known.jsonl\"
+
+      \    \e[35mwindowCount\e[39m: 1
+
+      \    \e[35mmatched\e[39m: true
+
+      \    \e[35mmethod\e[39m: \"exact-rg\"
+
+      \    \e[35mmatchedWindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mmatchedName\e[39m: \"alpha\"
+
+      \    \e[35mevent\e[39m: \"log_match_attempt\"
+
+      [2026-03-13 06:55:13.403 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 1
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 1
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.403 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.404 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogPath\e[39m:
+      \"/tmp/agentboard-poller-aINrMl/claude/projects/-home-andrew-cooke-tools-\
+      agentboard-fixtures-alpha/session-1.jsonl\"
+
+      \    \e[35mwindowCount\e[39m: 1
+
+      \    \e[35mmatched\e[39m: true
+
+      \    \e[35mmethod\e[39m: \"exact-rg\"
+
+      \    \e[35mmatchedWindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mmatchedName\e[39m: \"alpha\"
+
+      \    \e[35mevent\e[39m: \"log_match_attempt\"
+
+      [2026-03-13 06:55:13.404 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 1
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.405 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogPath\e[39m:
+      \"/tmp/agentboard-poller-PtEiC8/claude/projects/-home-andrew-cooke-tools-\
+      agentboard-fixtures-alpha/session-a.jsonl\"
+
+      \    \e[35mwindowCount\e[39m: 1
+
+      \    \e[35mmatched\e[39m: true
+
+      \    \e[35mmethod\e[39m: \"exact-rg\"
+
+      \    \e[35mmatchedWindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mmatchedName\e[39m: \"alpha\"
+
+      \    \e[35mevent\e[39m: \"log_match_attempt\"
+
+      [2026-03-13 06:55:13.405 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 1
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.406 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogPath\e[39m:
+      \"/tmp/agentboard-poller-PtEiC8/claude/projects/-home-andrew-cooke-tools-\
+      agentboard-fixtures-alpha/session-b.jsonl\"
+
+      \    \e[35mwindowCount\e[39m: 1
+
+      \    \e[35mmatched\e[39m: true
+
+      \    \e[35mmethod\e[39m: \"exact-rg\"
+
+      \    \e[35mmatchedWindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mmatchedName\e[39m: \"alpha\"
+
+      \    \e[35mevent\e[39m: \"log_match_attempt\"
+
+      [2026-03-13 06:55:13.406 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogPath\e[39m:
+      \"/tmp/agentboard-poller-PtEiC8/claude/projects/-home-andrew-cooke-tools-\
+      agentboard-fixtures-alpha/session-b.jsonl\"
+
+      \    \e[35msessionId\e[39m: \"claude-session-b\"
+
+      \    \e[35mmatchedWindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mclaimedBySessionId\e[39m: \"claude-session-a\"
+
+      \    \e[35mevent\e[39m: \"log_match_skipped_window_claimed\"
+
+      [2026-03-13 06:55:13.406 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 2
+
+      \    \e[35mnewSessions\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.407 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35morphanCount\e[39m: 1
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_start\"
+
+      [2026-03-13 06:55:13.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35msessionId\e[39m: \"claude-session-orphan\"
+
+      \    \e[35mwindow\e[39m: \"agentboard:1\"
+
+      \    \e[35mdisplayName\e[39m: \"alpha\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_success\"
+
+      [2026-03-13 06:55:13.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35morphanCount\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 1
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_complete\"
+
+      [2026-03-13 06:55:13.511 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35morphanCount\e[39m: 1
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_start\"
+
+      [2026-03-13 06:55:13.511 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 1
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 0
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:13.511 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35morphanCount\e[39m: 1
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_complete\"
+
+
+      src/server/__tests__/reviewRouter.test.ts:
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'gemini-flash', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'claude-sonnet', using default (no env
+      vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [modelEnvLoader] Unknown model 'glm', using default (no env vars)
+
+      [2026-03-13 06:55:13.645 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/path/file.ts\"
+
+      \    \e[35mmodel\e[39m: \"glm\"
+
+      \    \e[35mevent\e[39m: \"l1_review_starting\"
+
+      [2026-03-13 06:55:13.645 +0000] \e[31mERROR\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/path/file.ts\"
+
+      \    \e[35mevent\e[39m: \"l1_review_file_read_failed\"
+
+      \    error: \"ENOENT: no such file or directory, open
+      '/nonexistent/path/file.ts'\"
+
+      [2026-03-13 06:55:13.645 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/tmp/l1-review-Mjislr/test.ts\"
+
+      \    \e[35mmodel\e[39m: \"glm\"
+
+      \    \e[35mevent\e[39m: \"l1_review_starting\"
+
+      [2026-03-13 06:55:13.645 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"no_api_key\"
+
+      \    \e[35mtarget\e[39m: \"/tmp/l1-review-Mjislr/test.ts\"
+
+      \    \e[35mevent\e[39m: \"l1_review_gemini_skipped\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/file.ts\"
+
+      \    \e[35mmodel\e[39m: \"glm\"
+
+      \    \e[35mevent\e[39m: \"l1_review_starting\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[31mERROR\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/file.ts\"
+
+      \    \e[35mevent\e[39m: \"l1_review_file_read_failed\"
+
+      \    error: \"ENOENT: no such file or directory, open
+      '/nonexistent/file.ts'\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/path/file.ts\"
+
+      \    \e[35mmodel\e[39m: \"claude\"
+
+      \    \e[35ml1_passed\e[39m: true
+
+      \    \e[35mevent\e[39m: \"l2_review_starting\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[31mERROR\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/path/file.ts\"
+
+      \    \e[35mevent\e[39m: \"l2_review_file_read_failed\"
+
+      \    error: \"ENOENT: no such file or directory, open
+      '/nonexistent/path/file.ts'\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/tmp/l2-review-dfXJ0z/test.ts\"
+
+      \    \e[35mmodel\e[39m: \"claude\"
+
+      \    \e[35ml1_passed\e[39m: true
+
+      \    \e[35mevent\e[39m: \"l2_review_starting\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"no_api_key\"
+
+      \    \e[35mtarget\e[39m: \"/tmp/l2-review-dfXJ0z/test.ts\"
+
+      \    \e[35mevent\e[39m: \"l2_review_gemini_skipped\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/file.ts\"
+
+      \    \e[35mmodel\e[39m: \"claude\"
+
+      \    \e[35ml1_passed\e[39m: true
+
+      \    \e[35mevent\e[39m: \"l2_review_starting\"
+
+      [2026-03-13 06:55:13.646 +0000] \e[31mERROR\e[39m:
+
+      \    \e[35mtarget\e[39m: \"/nonexistent/file.ts\"
+
+      \    \e[35mevent\e[39m: \"l2_review_file_read_failed\"
+
+      \    error: \"ENOENT: no such file or directory, open
+      '/nonexistent/file.ts'\"
+
+
+      src/server/__tests__/conditionEvaluator.test.ts:
+
+      [conditionEvaluator] Path traversal blocked: /nonexistent-path-xyz-123 not
+      in allowed directories
+
+      [conditionEvaluator] Path traversal blocked in expression:
+      /nonexistent-xyz-123 not in allowed directories
+
+
+      src/server/__tests__/conditionEvaluator.injection.test.ts:
+
+      [conditionEvaluator] Path traversal blocked: ../../../etc/passwd not in
+      allowed directories
+
+      [conditionEvaluator] Path traversal blocked: /etc/passwd not in allowed
+      directories
+
+      [conditionEvaluator] Path traversal blocked:
+      %2e%2e%2f%2e%2e%2fetc%2fpasswd not in allowed directories
+
+      [conditionEvaluator] Path traversal blocked:
+      /tmp/safe\0/../../../etc/passwd not in allowed directories
+
+      [conditionEvaluator] Path traversal blocked: /etc/passwd not in allowed
+      directories
+
+      [conditionEvaluator] Path traversal blocked: ../../../etc/passwd not in
+      allowed directories
+
+      [conditionEvaluator] Path traversal blocked: /etc/passwd not in allowed
+      directories
+
+      [conditionEvaluator] Path traversal blocked in expression: /etc/passwd not
+      in allowed directories
+
+      [conditionEvaluator] Path traversal blocked in expression:
+      ../../../etc/passwd not in allowed directories
+
+      [conditionEvaluator] Path traversal blocked in expression: /etc/shadow not
+      in allowed directories
+
+      [2026-03-13 06:55:19.361 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"implementor\"
+
+      \    \e[35mbudget\e[39m: 10000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.362 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919361-25atl7sgick/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 45
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.363 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"reviewer\"
+
+      \    \e[35mbudget\e[39m: 15000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.363 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919363-as3gbz2iffv/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 45
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.363 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"implementor\"
+
+      \    \e[35mbudget\e[39m: 10000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.363 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919363-81idzizxdgs/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 45
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.363 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"planner\"
+
+      \    \e[35mbudget\e[39m: 10000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"project_facts\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919363-5mp02nhlkib/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 17
+
+      \    \e[35msources\e[39m: [
+
+      \      \"project_facts\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"reviewer\"
+
+      \    \e[35mbudget\e[39m: 10000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"blackboard\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919364-xsvzmnepvw/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 17
+
+      \    \e[35msources\e[39m: [
+
+      \      \"blackboard\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"implementor\"
+
+      \    \e[35mbudget\e[39m: 10000
+
+      \    \e[35msources\e[39m: [
+
+      \      \"memory\",
+
+      \      \"related_wos\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919364-q04pxcapus/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 0
+
+      \    \e[35msources\e[39m: []
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.364 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"reviewer\"
+
+      \    \e[35mbudget\e[39m: 500
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.365 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919364-df0rmk22th/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 45
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.365 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"planner\"
+
+      \    \e[35mbudget\e[39m: 500
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\",
+
+      \      \"blackboard\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.365 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919365-u3oe93pgark/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 58
+
+      \    \e[35msources\e[39m: [
+
+      \      \"blackboard\",
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.365 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mprofile\e[39m: \"implementor\"
+
+      \    \e[35mbudget\e[39m: 500
+
+      \    \e[35msources\e[39m: [
+
+      \      \"blackboard\",
+
+      \      \"codebase\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_preparing\"
+
+      [2026-03-13 06:55:19.366 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpath\e[39m:
+      \"/tmp/ctx-librarian-1773384919365-e0r1ffpyk7r/run/context-briefing.md\"
+
+      \    \e[35mtokens\e[39m: 56
+
+      \    \e[35msources\e[39m: [
+
+      \      \"codebase\",
+
+      \      \"blackboard\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"context_briefing_created\"
+
+      [2026-03-13 06:55:19.368 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.383 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.386 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.387 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.389 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.390 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.392 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.393 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.394 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.395 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.400 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.401 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.407 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mconfigured\e[39m: \"pipe-pane\"
+
+      \    \e[35mresolved\e[39m: \"pipe-pane\"
+
+      \    \e[35mevent\e[39m: \"terminal_mode_resolved\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mactiveSessionCount\e[39m: 0
+
+      \    \e[35mwindowCount\e[39m: 0
+
+      \    \e[35mactiveWindows\e[39m: []
+
+      \    \e[35mtmuxWindows\e[39m: []
+
+      \    \e[35mevent\e[39m: \"startup_state\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mmessage\e[39m: \"Log polling requires match worker; skipping
+      cycle\"
+
+      \    \e[35mevent\e[39m: \"log_match_worker_disabled\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mlogsScanned\e[39m: 0
+
+      \    \e[35mnewSessions\e[39m: 0
+
+      \    \e[35mmatches\e[39m: 0
+
+      \    \e[35morphans\e[39m: 0
+
+      \    \e[35merrors\e[39m: 1
+
+      \    \e[35mdurationMs\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"log_poll\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mreason\e[39m: \"match_worker_disabled\"
+
+      \    \e[35mevent\e[39m: \"orphan_rematch_skip\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mpollIntervalMs\e[39m: 5000
+
+      \    \e[35mmaxConcurrent\e[39m: 5
+
+      \    \e[35mrateLimitPerHour\e[39m: 30
+
+      \    \e[35mevent\e[39m: \"task_worker_started\"
+
+      [2026-03-13 06:55:19.408 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35murl\e[39m: \"http://localhost:4040\"
+
+      \    \e[35mtailscaleUrl\e[39m: null
+
+      \    \e[35mevent\e[39m: \"server_started\"
+
+      [2026-03-13 06:55:19.421 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\",
+
+      \      \"model-b\",
+
+      \      \"model-c\",
+
+      \      \"model-d\",
+
+      \      \"model-e\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 2
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:20.584 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 2
+
+      \    \e[35msuccessful\e[39m: 2
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:20.585 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mrequests_this_minute\e[39m: 7
+
+      \    \e[35mlimit\e[39m: 2
+
+      \    \e[35mevent\e[39m: \"draft_swarm_rate_limited\"
+
+      [2026-03-13 06:55:20.585 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:21.315 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:21.316 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\",
+
+      \      \"model-b\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 2
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:22.377 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 2
+
+      \    \e[35msuccessful\e[39m: 2
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:22.378 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:22.378 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:22.378 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:22.927 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:23.455 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:23.742 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:23.742 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:24.897 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:24.897 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:25.660 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:25.660 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:26.411 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 1
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:26.412 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mrequests_this_minute\e[39m: 16
+
+      \    \e[35mlimit\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_rate_limited\"
+
+      [2026-03-13 06:55:26.412 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mrequests_this_minute\e[39m: 16
+
+      \    \e[35mlimit\e[39m: 2
+
+      \    \e[35mevent\e[39m: \"draft_swarm_rate_limited\"
+
+      [2026-03-13 06:55:26.412 +0000] \e[33mWARN\e[39m:
+
+      \    \e[35mrequests_this_minute\e[39m: 16
+
+      \    \e[35mlimit\e[39m: 2
+
+      \    \e[35mevent\e[39m: \"draft_swarm_rate_limited\"
+
+      [2026-03-13 06:55:26.412 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:26.513 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 1
+
+      \    \e[35msuccessful\e[39m: 0
+
+      \    \e[35mfailed\e[39m: 1
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:26.513 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\",
+
+      \      \"model-b\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:27.512 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 2
+
+      \    \e[35msuccessful\e[39m: 2
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:27.513 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mmodels\e[39m: [
+
+      \      \"model-a\",
+
+      \      \"model-b\",
+
+      \      \"model-c\"
+
+      \    ]
+
+      \    \e[35mmax_concurrent\e[39m: 3
+
+      \    \e[35mcomplexity_trigger\e[39m: [
+
+      \      \"simple\"
+
+      \    ]
+
+      \    \e[35mevent\e[39m: \"draft_swarm_starting\"
+
+      [2026-03-13 06:55:28.834 +0000] \e[32mINFO\e[39m:
+
+      \    \e[35mtotal\e[39m: 3
+
+      \    \e[35msuccessful\e[39m: 3
+
+      \    \e[35mfailed\e[39m: 0
+
+      \    \e[35mevent\e[39m: \"draft_swarm_completed\"
+
+      [2026-03-13 06:55:28.860 +0000] \e[31mERROR\e[39m:
+
+      \    \e[35mport\e[39m: 4040
+
+      \    \e[35mprocessName\e[39m: \"node\"
+
+      \    \e[35mevent\e[39m: \"port_in_use\"
+
+
+      src/server/__tests__/dualEngine.test.ts:
+
+      [workflowSchema] WARNING: Pipeline \"dag-pipeline\" declares engine: dag,
+      but AGENTBOARD_FORCE_LEGACY_ENGINE=true is forcing sequential (legacy)
+      engine.
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"dag-pipeline\" (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] WARNING: Pipeline \"auto-dag-pipeline\" declares engine:
+      dag, but AGENTBOARD_FORCE_LEGACY_ENGINE=true is forcing sequential
+      (legacy) engine.
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"auto-dag-pipeline\" (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"sequential-pipeline\"
+      (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] WARNING: Pipeline \"dag-pipeline\" declares engine: dag,
+      but AGENTBOARD_FORCE_LEGACY_ENGINE=true is forcing sequential (legacy)
+      engine.
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"dag-pipeline\" (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"sequential-pipeline\"
+      (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] WARNING: Pipeline \"dag-pipeline\" declares engine: dag,
+      but AGENTBOARD_FORCE_LEGACY_ENGINE=true is forcing sequential (legacy)
+      engine.
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"dag-pipeline\" (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+      [workflowSchema] WARNING: Pipeline \"edge-case\" declares engine: dag, but
+      AGENTBOARD_FORCE_LEGACY_ENGINE=true is forcing sequential (legacy) engine.
+
+      [workflowSchema] Engine override active: using legacy (sequential) engine
+      for pipeline \"edge-case\" (AGENTBOARD_FORCE_LEGACY_ENGINE=true).
+
+
+      \ 2060 pass
+
+      \ 5 skip
+
+      \ 0 fail
+
+      \ 5272 expect() calls
+
+      Ran 2065 tests across 144 files. [38.07s]
+
+      bun test v1.3.9 (cf6cdbbb)
+
+
+      src/server/__tests__/isolated/indexHandlers.test.ts:
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > websocket open sends sessions and
+      registry broadcasts [42.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > handles invalid payloads and unknown
+      types [2.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > refreshes sessions and creates new
+      sessions [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > returns errors for kill and rename when
+      sessions are missing
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > handles kill and rename success paths
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > attaches terminals and forwards
+      input/output [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > validates tmux target on terminal attach
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > handles copy-mode commands for active
+      session [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > pins and unpins sessions with validation
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > validates session resume errors [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > resumes sessions and broadcasts
+      activation
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server message handlers > websocket close disposes all terminals
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server signal handlers > SIGINT and SIGTERM cleanup terminals and
+      exit [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > server-info returns tailscale ip when
+      available [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > returns no response for successful
+      websocket upgrades [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > returns upgrade failure for websocket
+      requests
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > handles paste-image requests with and
+      without files [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > returns 500 when paste-image upload fails
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > returns session preview for existing logs
+      [1.00ms]
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server fetch handlers > returns 404 when session preview log is
+      missing
+
+      1 | })
+
+      2 | {
+
+      \    ^
+
+      SyntaxError: Export named 'initPoolTables' not found in module
+      '/home/andrew-cooke/tools/agentboard/src/server/db.ts'.
+
+      \      at requestImportModule (2:1)
+
+      (fail) server startup side effects > prunes unattached websocket sessions
+      on startup [1.00ms]
+
+
+      \ 0 pass
+
+      \ 21 fail
+
+      Ran 21 tests across 1 file. [67.00ms]
+
+      22 |     stdout: 'inherit',
+
+      23 |     stderr: 'inherit',
+
+      24 |   })
+
+      25 |   const exitCode = await proc.exited
+
+      26 |   if (exitCode !== 0) {
+
+      27 |     throw new Error(`Command failed (${exitCode}): ${cmd.join(' ')}`)
+
+      \                   ^
+
+      error: Command failed (1): bun test src/server/__tests__/isolated/
+
+      \      at runCommand
+      (/home/andrew-cooke/tools/agentboard/scripts/test-runner.ts:27:15)
+
+      \      at async main
+      (/home/andrew-cooke/tools/agentboard/scripts/test-runner.ts:52:13)
+
+      \n"
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

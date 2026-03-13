@@ -1,0 +1,72 @@
+title: "Health computation unwired, poll interval hardcoded, cleanup not scheduled"
+severity: critical
+type: backend
+
+affected_area:
+  - src/server/cronManager.ts
+  - src/server/handlers/cronHandlers.ts
+  - src/client/stores/settingsStore.ts
+
+reproduction:
+  steps:
+    - "Start agentboard with cron manager enabled"
+    - "Navigate to Cron Manager (Cmd+Shift+C)"
+    - "Observe that all jobs show health='unknown' with no health badges"
+    - "Check settings — poll interval control exists but has no effect (still 30s)"
+    - "Run jobs over time — orphan cleanup and history pruning never run"
+  environment: "Linux, systemd available"
+
+expected: |
+  - Health badges show critical/warning/healthy based on failure streaks and missed runs
+  - Poll interval defaults to 5s and respects settings (2-30s range)
+  - Orphan cleanup runs hourly, history pruning runs daily
+
+actual: |
+  - All jobs show health='unknown' forever
+  - Poll interval is hardcoded to 30000ms
+  - Orphan cleanup and history pruning methods exist but are never called
+
+affected_requirements:
+  - REQ-08  # Poll interval configurable default 5s
+  - REQ-58  # Health computation
+  - REQ-60  # Health reason strings
+  - REQ-61  # Missed run detection
+  - REQ-62  # Duration averaging
+  - REQ-98  # Orphan cleanup scheduled
+  - REQ-101 # History pruning scheduled
+
+root_cause_hints: |
+  The methods exist (computeHealth(), detectMissedRun(), getRecentDurations(),
+  cleanOrphanedPrefs(), pruneRunHistory()) but are never wired into the polling loop
+  or scheduled via setInterval.
+
+  In cronHandlers.ts:95 — startPolling(30000) is hardcoded.
+  The polling loop broadcasts jobs but never calls computeHealth().
+
+fix_approach: |
+  1. In cronHandlers.ts startPolling():
+     - Read cronPollInterval from settings (default 5000, clamp 2000-30000)
+     - Pass interval to setTimeout instead of hardcoded 30000
+
+  2. In the polling loop (after discoverAllJobs()):
+     - For each job, call computeHealth() to populate health and healthReason
+     - Call getRecentDurations() to populate avgDuration and lastRunDuration
+     - Call detectMissedRun() to check for missed runs
+
+  3. Orphan cleanup scheduling:
+     - Add setInterval for cleanOrphanedPrefs() every hour (3600000ms)
+     - Clear interval on cleanup/stop
+
+  4. History pruning scheduling:
+     - Add setInterval for pruneRunHistory() daily (86400000ms)
+     - Clear interval on cleanup/stop
+
+acceptance_criteria:
+  - "Jobs show health badges (critical/warning/healthy/unknown) after polling"
+  - "Health reason appears in overview tab when not healthy"
+  - "Missed runs are detected and flagged (health=critical, reason='Missed run at...')"
+  - "Duration stats (last/avg/trend) populate in overview tab"
+  - "Poll interval setting changes take effect on next poll cycle"
+  - "Minimum 2s and maximum 30s enforced for poll interval"
+  - "Orphan cleanup runs hourly (verify via log or DB inspection)"
+  - "History pruning runs daily (verify via log or DB inspection)"

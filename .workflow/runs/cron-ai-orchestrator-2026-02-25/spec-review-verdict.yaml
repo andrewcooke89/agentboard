@@ -1,0 +1,132 @@
+verdict: PASS
+
+reviewer: spec-reviewer
+reviewed_at: "2026-02-25"
+iteration: 2
+spec_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-ai-orchestrator-2026-02-25/refined-spec.yaml
+
+constitution_checks:
+  security:
+    result: pass
+    notes: |
+      All security concerns from iteration 1 are resolved:
+
+      Auth token enforcement is now comprehensive:
+      - REQ-67: All /api/cron-ai/* HTTP routes validate AGENTBOARD_AUTH_TOKEN when configured.
+        TEST-59 covers 5 cases (no header -> 401, wrong token -> 401, valid token -> 200,
+        POST with token, second route to verify middleware).
+      - REQ-69: WebSocket handshake now requires auth token when configured. MCP server must
+        include authToken in cron-ai-mcp-register message. CronAiService closes with code 4001
+        on missing/invalid token. TEST-61 covers 4 cases including the "no auth configured"
+        passthrough. Parity between HTTP and WS auth paths is achieved.
+
+      Proposal payload validation is now specified:
+      - REQ-68: Enumerates validation rules per operation type — operation enum check (400),
+        jobId existence for non-create (404), jobId must be null for create (400), non-empty
+        description (400), details schema per operation type (create requires command+schedule,
+        edit_frequency requires schedule, set_tags requires tags array, link_session requires
+        sessionId). TEST-60 covers 7 invalid payload cases plus 1 valid case.
+
+      Previously-passing security items remain sound:
+      - REQ-59: MCP config file 0600 permissions. TEST-57 covers.
+      - REQ-66 (invariant): Sudo credentials never touch MCP server. Phase 26 UI prompt after
+        proposal acceptance. RISK-04 documents the multi-step flow.
+      - Credential passing via env vars in the generated MCP config is appropriate.
+      - Proposal descriptions displayed in React components — default escaping prevents XSS.
+
+  architecture:
+    result: pass
+    notes: |
+      All architecture concerns from iteration 1 are resolved:
+
+      OQ-01 (CLI flags) is resolved:
+      - Validated against Claude Code 2.1.56. --system-prompt, --allowedTools, --mcp-config,
+        --resume all confirmed. Minimum version constraint added: "2.1.x". No fallback needed.
+        This was the primary blocker — now cleared.
+
+      OQ-03 (session cleanup) is resolved:
+      - REQ-70: Kill agentboard-cron-ai tmux window on SIGTERM/SIGINT via SessionManager.
+        Persist on crash/SIGKILL. Documented in Section 8 (Session Management Integration).
+
+      Existing architectural strengths confirmed:
+      - Scope: 2 new backend files, 5 new frontend components, 1 new store, 6 modified files,
+        12 explicitly excluded Phase 26 files. Clean boundaries.
+      - Follows existing conventions: Hono, React 18, Zustand, xterm.js, motion/react, Tailwind.
+      - CronAiService as server-side coordinator is correct — keeps proposal state and context
+        in the server, not in the ephemeral MCP server process.
+      - MCP server (separate process) communicates via HTTP (reads) + WebSocket (events).
+        Clear protocol with typed message catalog.
+      - HTTP long-poll for proposals is sequential (REQ-41: one at a time for schedule
+        optimization). Max 1 concurrent long-poll connection. Documented timeout (5 min default).
+
+      Minor notes (non-blocking, for implementors):
+      - OQ-02 (batch-approve) remains needs_clarification. One-at-a-time is a fine MVP. Can be
+        addressed in a follow-up if users request batch approval.
+      - Proposal card overlay on xterm.js (REQ-46) is a non-trivial rendering challenge.
+        The spec describes the mechanism (marker line -> React overlay at scroll position).
+        Implementation risk acknowledged; not a spec deficiency.
+
+  quality:
+    result: pass
+    notes: |
+      Coverage is now comprehensive:
+
+      Requirements: 70 acceptance criteria (REQ-01 through REQ-70):
+      - behavioral (30+): UI interactions, drawer behavior, agent behaviors, navigation
+      - contract (25+): MCP tools, protocol, API, proposals, config generation, validation
+      - invariant (7): REQ-07, 17, 23, 36, 37, 45, 66 — safety properties
+      All types match valid_acceptance_types in the feature_spec_v1 schema.
+
+      Tests: 61 test specifications (TEST-01 through TEST-61) + 15 execution tests (EXEC-01
+      through EXEC-15). All 3 missing test gaps from iteration 1 are filled:
+      - TEST-59: Auth token validation on HTTP API routes (5 cases). Covers REQ-67.
+      - TEST-60: Invalid proposal rejection (7 cases + 1 valid). Covers REQ-68.
+      - TEST-61: WS handshake auth (4 cases). Covers REQ-69.
+
+      Open questions: 2 of 3 resolved. OQ-02 (batch-approve) remains needs_clarification but
+      was explicitly deemed non-blocking in iteration 1.
+
+      Risks: 8 risks (RISK-01 through RISK-08) with concrete mitigations, all traceable to
+      requirements. Risk coverage is thorough for MCP failure modes, session lifecycle,
+      sudo operations, performance, and connection loss.
+
+      Refinement tracing: All iteration 2 changes are documented in the changes list with
+      clear prefixes (RESOLVED, REQ-ADD, TEST-ADD, ARCH-FIX, CONSTRAINT-ADD).
+
+      Minor notes (non-blocking):
+      - REQ-60 specifies HTTP retry (3 attempts) but no dedicated test. TEST-56 covers graceful
+        degradation broadly. Minor gap — implementor can add retry-specific assertions.
+      - REQ-32 (smooth animation) + TEST-30 — animation testing in unit tests is limited.
+        EXEC-08 covers this at the integration level. Acceptable.
+
+feedback: |
+  All 3 blocking issues and both recommended improvements from iteration 1 have been
+  addressed with clear requirements, detailed validation rules, and comprehensive tests.
+  The spec is ready for decomposition.
+
+  **Resolved from iteration 1:**
+  1. OQ-01 (CLI flags): Validated against Claude Code 2.1.56. Minimum version 2.1.x
+     constraint added. No fallback needed.
+  2. REQ-67 test coverage: TEST-59 added with 5 auth validation cases.
+  3. Proposal validation: REQ-68 added with per-operation-type schema rules. TEST-60 added
+     with 7 invalid payload test cases.
+  4. OQ-03 (session cleanup): REQ-70 added. Kill on SIGTERM, persist on crash.
+  5. WS auth: REQ-69 added with token in handshake. TEST-61 with 4 cases.
+
+  **Remaining minor items (non-blocking, for implementors):**
+  - OQ-02 (batch-approve): One-at-a-time is fine for MVP. Can revisit if users need it.
+  - HTTP retry test: REQ-60 specifies 3 retries but no dedicated test. Add during
+    implementation if desired.
+  - Animation testing (REQ-32/TEST-30): Covered by EXEC-08 at integration level.
+
+  **Strengths (carried from iteration 1):**
+  - Propose-and-approve flow is well-designed with clear lifecycle (REQ-17 through REQ-24).
+  - Bidirectional UI sync protocol is thorough with full WebSocket message catalog.
+  - MCP server error handling (REQ-60) with exponential backoff and graceful degradation.
+  - Sudo credential isolation (REQ-66) is correctly designed.
+  - Skill file design (Section 4) provides comprehensive agent behavioral guidance.
+  - 8 risks with concrete mitigations covering all major failure modes.
+  - Clean separation between Phase 26 internals (excluded) and Phase 27 additions.
+  - CronAiService as server-side coordinator is the right architecture.
+  - New iteration 2 additions (REQ-68, 69, 70 + TEST-59, 60, 61) are well-written with
+    specific validation rules, error codes, and multi-case test specifications.

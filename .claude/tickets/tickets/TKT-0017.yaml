@@ -1,0 +1,32 @@
+id: TKT-0017
+version: 1
+created_at: 2026-03-13T06:46:28.834Z
+updated_at: 2026-03-13T06:46:28.834Z
+category: style
+severity: medium
+status: open
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/client/components/cron/CronAiDrawer.tsx
+  line_start: 8
+  code_snippet: import { AnimatePresence, motion } from 'motion/react'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Identifier
+  'DRAWER_MIN_WIDTH' is imported but never used."
+description: "eslint(no-unused-vars): Identifier 'DRAWER_MIN_WIDTH' is imported
+  but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

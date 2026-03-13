@@ -1,0 +1,22 @@
+verdict: pass
+
+files_changed:
+  - path: "src/server/__tests__/dagEngine.test.ts"
+    description: |
+      Non-null assertion operators (!) already added to 5 property accesses on `task` variables:
+      - Lines 764-765: expect(task!.prompt) in "spawn_session injects typed inputs into prompt" test
+      - Lines 801-803: expect(task!.prompt) in "spawn_session keeps reference inputs as paths only" test
+
+description: |
+  The fix was already applied to the codebase. All 5 occurrences of `task.prompt` access
+  following `expect(task).toBeTruthy()` guards now use the non-null assertion operator (`task!.prompt`).
+
+  This resolves the TypeScript TS18048 errors where Array.find() returns T | undefined,
+  but the expect().toBeTruthy() runtime guard does not narrow the type for TypeScript's
+  type system.
+
+  Verification:
+  - bun run typecheck shows 0 errors in dagEngine.test.ts
+  - 111 of 112 dagEngine tests pass (1 unrelated failure in gemini_offload test)
+
+tests_expected_to_pass: true

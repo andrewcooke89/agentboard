@@ -1,0 +1,78 @@
+id: WU-017
+title: "Tags & Avatars"
+description: |
+  Implement the tag input component with autocomplete and the avatar system including
+  DiceBear URL generation, fallback rendering, and style configurability. Enhance
+  CronJobRow and CronJobDetail to fully integrate tag pills and avatar display.
+
+dependencies: [WU-010, WU-012]
+
+files:
+  created:
+    - path: src/client/components/cron/CronTagInput.tsx
+      changes: |
+        - Tag input component with autocomplete dropdown
+        - "+" button to open input
+        - Autocomplete populated with all existing tags across all jobs (from cronStore.allTags)
+        - Free-text entry allowed for new tags
+        - On add: sends cron-job-set-tags via WS with updated tag array
+        - Tag pills: colored (deterministic color from tag name hash), removable via "x"
+        - Auto-tag suggestion on first discovery: suggest tags based on command content
+          heuristics (backup, cleanup, monitoring keywords)
+        - Suggestions are dismissable and only shown once per job (tracked via cron_job_prefs)
+
+acceptance_criteria:
+  - req: REQ-11
+    type: contract
+    check: "Avatar URL uses DiceBear pattern with configurable style and job name seed"
+  - req: REQ-12
+    type: contract
+    check: "Avatar 28x28 in list, 48x48 in detail header; loaded as <img> with DiceBear URL"
+  - req: REQ-13
+    type: behavioral
+    check: "Avatar fallback: colored circle with first letter on DiceBear error/timeout > 3s"
+  - req: REQ-64
+    type: contract
+    check: "Tags stored in cron_job_prefs as JSON array; displayed as colored pills on row and in detail header"
+  - req: REQ-65
+    type: behavioral
+    check: "Tag autocomplete with existing tags; free-text entry for new tags"
+  - req: REQ-66
+    type: behavioral
+    check: "List filter includes all existing tags; selecting tags filters with OR logic"
+  - req: REQ-67
+    type: behavioral
+    check: "Auto-tag suggestions based on command heuristics; dismissable; shown once per job"
+
+test_specs:
+  - id: TEST-09
+    description: "Avatar URL: 'daily-backup' -> DiceBear bottts URL with seed"
+  - id: TEST-10
+    description: "Avatar style change to pixel-art updates all URLs"
+  - id: TEST-11
+    description: "Avatar fallback: colored circle with first letter on img error"
+  - id: TEST-59
+    description: "Add tag: click '+', type 'backup', tag pill appears, WS message sent"
+  - id: TEST-60
+    description: "Remove tag: click 'x', tag removed, WS message sent"
+  - id: TEST-61
+    description: "Tag autocomplete: typing 'mon' shows 'monitoring'"
+  - id: TEST-62
+    description: "Filter by 'backup' tag shows only tagged jobs"
+  - id: TEST-63
+    description: "Auto-tag suggestion for command containing 'backup'; dismiss hides it"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-010
+      name: "CronJobRow (enhances with avatar and tag integration)"
+    - from: WU-012
+      name: "CronJobDetail (enhances header with tag management and avatar)"
+
+implementation_notes: |
+  Avatar fallback: use onError handler on <img> to swap to a <div> with the first letter
+  and a background color derived from a simple hash of the job name (mod N colors).
+  Tag color generation: hash the tag name to an index into a predefined palette of
+  ~12 distinct colors. The auto-tag heuristic scans command for keywords: 'backup',
+  'clean', 'purge', 'monitor', 'check', 'sync', 'deploy', 'log', 'rotate'.
+  Suggestion dismissal tracked via a 'suggestedTagsDismissed' flag in cron_job_prefs.

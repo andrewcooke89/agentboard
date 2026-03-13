@@ -1,0 +1,40 @@
+```yaml
+affected_areas:
+  files:
+    - src/client/components/cron/__tests__/CronAiDrawer.test.tsx
+    - src/client/components/cron/__tests__/CronAiProposalCard.test.tsx
+    - src/client/components/cron/__tests__/CronAiStatusBar.test.tsx
+    - src/client/components/cron/__tests__/CronAiTerminal.test.tsx
+  components:
+    - CronAiDrawer (test file)
+    - CronAiProposalCard (test file)
+    - CronAiStatusBar (test file)
+    - CronAiTerminal (test file)
+
+bug_summary: |
+  TypeScript compilation errors are occurring in four CronAi component test files, causing `bun run typecheck` to fail.
+  There are two distinct issues:
+  1. Invalid type predicates in `findTextContent`/`findAllTextContent` helper functions, where `number` is incorrectly included in the predicate for `ReactTestInstance.children`.
+  2. An incorrect signature for the `subscribe` mock in `CronAiTerminal.test.tsx`, which does not match the `SubscribeServerMessage` type.
+
+reproduction_summary: |
+  1. Clone the repository and install dependencies (`bun install`).
+  2. Run `bun run typecheck` from the project root.
+  3. Observe 5 TypeScript errors across 4 test files within the `cron` component directory.
+
+severity_assessment: |
+  **Major**. The bug prevents `bun run typecheck` from passing, indicating a broken build or CI pipeline for type checking. This directly impacts developer productivity and code quality assurance by allowing type inconsistencies to go undetected.
+
+suggested_investigation_areas:
+  - **Type Predicate Fixes:**
+    - Examine `findTextContent` and `findAllTextContent` helper functions in:
+      - `src/client/components/cron/__tests__/CronAiDrawer.test.tsx` (line 134)
+      - `src/client/components/cron/__tests__/CronAiProposalCard.test.tsx` (lines 117, 130)
+      - `src/client/components/cron/__tests__/CronAiStatusBar.test.tsx` (line 59)
+    - Change the type predicate from `c is string | number` to `c is string` as `ReactTestInstance.children` does not contain `number` types.
+  - **Subscribe Mock Signature Fix:**
+    - Investigate `src/client/components/cron/__tests__/CronAiTerminal.test.tsx` (line 156).
+    - Rewrite the `subscribe` stub to conform to the `SubscribeServerMessage` type, accepting a single listener callback.
+    - Update the associated `emit` helper to broadcast `ServerMessage` objects to all registered listeners.
+    - Reference `src/shared/types.ts` for the correct `SubscribeServerMessage` type definition.
+```

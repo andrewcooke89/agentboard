@@ -1,0 +1,13 @@
+title: "Test Feature for Context Injection"
+description: |
+  A simple test feature to verify the context-assisted pipeline works end-to-end.
+  This feature adds a greeting function.
+
+acceptance_criteria:
+  - "greet(name) returns 'Hello, {name}!'"
+  - "Empty string returns 'Hello, World!'"
+
+affected_areas:
+  - path: "src/test/greeting.ts"
+    change_type: create
+    description: "New greeting utility function"

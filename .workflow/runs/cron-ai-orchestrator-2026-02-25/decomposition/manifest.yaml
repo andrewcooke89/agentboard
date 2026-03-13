@@ -1,0 +1,171 @@
+feature: "Cron AI Orchestrator"
+spec_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-ai-orchestrator-2026-02-25/refined-spec.yaml
+project_path: /home/andrew-cooke/tools/agentboard
+decomposed_by: "decomposition-orchestrator"
+date: "2026-02-25"
+
+summary: |
+  Decomposes the Cron AI Orchestrator feature (Phase 27) into 13 atomic work units.
+  The feature adds an AI assistant drawer to the cron manager view, backed by a custom
+  MCP server (20+ tools), a server-side coordinator (CronAiService), and a propose-and-approve
+  mutation flow. The decomposition follows a layered dependency structure:
+
+  Layer 0 (Foundation): Shared types
+  Layer 1 (Core): Store/settings, CronAiService, MCP server core
+  Layer 2 (Wiring): Server integration, MCP tools, UI components
+  Layer 3 (Integration): Full integration, session lifecycle
+
+work_units:
+  - id: WU-001
+    title: "Shared Types & Interfaces"
+    layer: 0
+    dependencies: []
+    files_touched: 1
+    key_deliverable: "All cron-ai-* types in src/shared/types.ts"
+
+  - id: WU-002
+    title: "CronAi Store & Settings Extensions"
+    layer: 1
+    dependencies: [WU-001]
+    files_touched: 2
+    key_deliverable: "cronAiStore.ts (new) + settingsStore AI fields"
+
+  - id: WU-003
+    title: "CronAiService Core"
+    layer: 1
+    dependencies: [WU-001]
+    files_touched: 2
+    key_deliverable: "cronAiService.ts (new) — proposal queue, context, config gen, session lifecycle"
+
+  - id: WU-004
+    title: "Server Wiring & Lifecycle"
+    layer: 2
+    dependencies: [WU-003]
+    files_touched: 2
+    key_deliverable: "HTTP routes + WS handlers wired in index.ts/wsRouter.ts"
+
+  - id: WU-005
+    title: "MCP Server Core & Read Tools"
+    layer: 1
+    dependencies: [WU-001]
+    files_touched: 1
+    key_deliverable: "cronMcpServer.ts (new) — stdio transport, HTTP client, 7 read tools"
+
+  - id: WU-006
+    title: "MCP Server Health & Analysis Tools"
+    layer: 2
+    dependencies: [WU-005]
+    files_touched: 1
+    key_deliverable: "7 additional MCP tools (health, analysis, context)"
+
+  - id: WU-007
+    title: "MCP Server Write & Navigation Tools"
+    layer: 2
+    dependencies: [WU-005, WU-004]
+    files_touched: 1
+    key_deliverable: "propose_change tool + 4 navigation tools"
+
+  - id: WU-008
+    title: "MCP Server Resources & WS Connectivity"
+    layer: 2
+    dependencies: [WU-005, WU-004]
+    files_touched: 1
+    key_deliverable: "MCP resources + WS client with reconnection"
+
+  - id: WU-009
+    title: "CronAi Drawer Shell"
+    layer: 2
+    dependencies: [WU-002]
+    files_touched: 3
+    key_deliverable: "CronAiDrawer + CronAiHeader + CronAiStatusBar components"
+
+  - id: WU-010
+    title: "CronAi Terminal"
+    layer: 3
+    dependencies: [WU-009]
+    files_touched: 1
+    key_deliverable: "CronAiTerminal.tsx — xterm.js for AI session"
+
+  - id: WU-011
+    title: "CronAi Proposal Card"
+    layer: 2
+    dependencies: [WU-002]
+    files_touched: 1
+    key_deliverable: "CronAiProposalCard.tsx — inline proposal card with 4 states"
+
+  - id: WU-012
+    title: "CronManager + App Integration"
+    layer: 3
+    dependencies: [WU-009, WU-004]
+    files_touched: 2
+    key_deliverable: "AI button, keyboard shortcuts, WS dispatch, bidirectional context sync"
+
+  - id: WU-013
+    title: "Session Lifecycle & Shutdown Integration"
+    layer: 3
+    dependencies: [WU-004, WU-010]
+    files_touched: 2
+    key_deliverable: "AI tmux window create/kill/reattach, shutdown cleanup"
+
+dependency_graph: |
+  WU-001 (Types)
+  ├── WU-002 (Store/Settings) ──── WU-009 (Drawer Shell) ──── WU-010 (Terminal)
+  │                            └── WU-011 (Proposal Card)          │
+  │                                                                 │
+  ├── WU-003 (CronAiService) ──── WU-004 (Server Wiring) ─┬── WU-007 (Write/Nav Tools)
+  │                                                         ├── WU-008 (Resources/WS)
+  │                                                         ├── WU-012 (App Integration) ←── WU-009
+  │                                                         └── WU-013 (Session Lifecycle) ←── WU-010
+  │
+  └── WU-005 (MCP Core) ──── WU-006 (Health/Analysis Tools)
+                          ├── WU-007 (Write/Nav Tools) ←── WU-004
+                          └── WU-008 (Resources/WS) ←── WU-004
+
+execution_order:
+  parallel_group_1: [WU-001]
+  parallel_group_2: [WU-002, WU-003, WU-005]   # all depend only on WU-001
+  parallel_group_3: [WU-004, WU-006, WU-009, WU-011]
+  parallel_group_4: [WU-007, WU-008, WU-010, WU-012]
+  parallel_group_5: [WU-013]
+
+stats:
+  total_work_units: 13
+  total_files_new: 9
+  total_files_modified: 6
+  total_files: 15
+  max_files_per_wu: 3
+  max_dependencies_per_wu: 2
+  deepest_dependency_chain: 4   # WU-001 → WU-005 → WU-007, or WU-001 → WU-002 → WU-009 → WU-012
+  layers: 4
+
+files_inventory:
+  new:
+    - src/client/stores/cronAiStore.ts                    # WU-002
+    - src/server/cronAiService.ts                         # WU-003, WU-013
+    - src/server/__tests__/cronAiService.test.ts          # WU-003
+    - src/server/mcp/cronMcpServer.ts                     # WU-005, WU-006, WU-007, WU-008
+    - src/client/components/cron/CronAiDrawer.tsx          # WU-009, WU-013
+    - src/client/components/cron/CronAiHeader.tsx           # WU-009
+    - src/client/components/cron/CronAiStatusBar.tsx        # WU-009
+    - src/client/components/cron/CronAiTerminal.tsx         # WU-010
+    - src/client/components/cron/CronAiProposalCard.tsx     # WU-011
+  modified:
+    - src/shared/types.ts                                 # WU-001
+    - src/client/stores/settingsStore.ts                  # WU-002
+    - src/server/index.ts                                 # WU-004
+    - src/server/wsRouter.ts                              # WU-004
+    - src/client/components/cron/CronManager.tsx           # WU-012
+    - src/client/App.tsx                                  # WU-012
+
+requirements_coverage:
+  covered:
+    - REQ-01 through REQ-70   # all 70 requirements
+  test_coverage:
+    - TEST-01 through TEST-61  # all 61 test specifications
+
+validation:
+  dag_acyclic: true
+  max_deps_per_wu: 2           # constraint: ≤3 ✓
+  max_files_per_wu: 3          # constraint: ≤5 ✓
+  total_files: 15              # constraint: ≤50 ✓
+  total_wus: 13                # constraint: ≤20 ✓

@@ -1,0 +1,34 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  TypeScript typecheck failed with 100+ errors across multiple test files.
+
+  Key errors matching bug spec (confirmed):
+
+  1. src/client/__tests__/app.WU012.test.tsx(217,3): error TS2322: Type '"cron"' is not assignable to type 'JobSource'.
+  2. src/client/__tests__/app.WU012.test.tsx(229,3): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'CronAiProposal'.
+  3. src/client/components/cron/__tests__/CronManager.WU012.test.tsx(199,3): error TS2322: Type '"cron"' is not assignable to type 'JobSource'.
+  4. src/client/components/cron/__tests__/CronManager.WU012.test.tsx(211,3): error TS2353: Object literal may only specify known properties, and 'type' does not exist in type 'CronAiProposal'.
+  5. src/client/components/cron/__tests__/CronManager.WU012.test.tsx(598,56): error TS2353: Object literal may only specify known properties, and 'title' does not exist in type 'CronAiProposal'.
+  6. src/client/stores/__tests__/cronStoreCreateOperation.test.ts(65,64): error TS2345: Argument of type 'null' is not assignable to parameter of type 'string | undefined'.
+
+  Additional errors discovered (beyond original spec):
+  - webSocketSendReturnBoolean.test.ts: void vs boolean type mismatches
+  - cronDuplicateDetection.test.ts: private method access, missing 'tags' field
+  - cronFlockWrapping.test.ts: missing 'tags' field in CronCreateConfig
+  - cronJobCreationRegression.test.ts: invalid 'ping' type, argument count mismatches
+  - cronManager.ts: undefined vs null type mismatches
+
+notes: |
+  Bug is consistently reproducible. All 5 error types mentioned in the bug spec
+  were confirmed:
+
+  1. 'cron' is not assignable to JobSource - CONFIRMED
+  2. 'type' does not exist on CronAiProposal (should be 'operation') - CONFIRMED
+  3. 'title' does not exist on CronAiProposal - CONFIRMED
+  4. 'payload' does not exist on CronAiProposal - (implied by 'type' error context)
+  5. 'null' is not assignable to 'string | undefined' - CONFIRMED
+
+  The reproduction also revealed additional stale test files with similar type
+  mismatches, suggesting a broader test fixture update may be needed beyond the
+  3 files listed in the spec.

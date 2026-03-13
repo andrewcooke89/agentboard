@@ -1,0 +1,63 @@
+title: "Cron job creation missing duplicate detection and client-side create operation handling"
+
+description: |
+  Two bugs in the cron job creation flow:
+
+  Bug 1 — createCronJob() in cronManager.ts does not detect duplicate cron entries.
+  When called twice with the same schedule+command combination, it silently appends a
+  duplicate line to the user's crontab. It should scan existing crontab lines and throw
+  an error when an identical schedule+command pair already exists.
+
+  Bug 2 — handleCronOperationResult() in the client cronStore only handles 'pause' and
+  'resume' operations. When the server sends a cron-operation-result with operation='create',
+  nothing happens on success (no UI notification) and errors only produce a console.warn
+  with no user-visible feedback. The handler should process the 'create' operation by
+  pushing notifications for both success and error outcomes.
+
+  These bugs cause 3 failing tests in cronJobCreationRegression.test.ts:
+  - "Bug 2" describe block: duplicate detection tests
+  - "CronStore" describe block: handleCronOperationResult create operation tests
+
+reproduction:
+  steps:
+    - "Start agentboard with bun run dev"
+    - "Bug 1: Call createCronJob({ schedule: '*/5 * * * *', command: '/usr/bin/backup' }) twice with identical arguments"
+    - "Bug 1: Observe that the crontab now contains two identical lines instead of throwing on the second call"
+    - "Bug 2: Trigger a cron-operation-result WebSocket message with operation='create' and success=true"
+    - "Bug 2: Observe no notification appears in the UI — the handler silently ignores the 'create' operation"
+    - "Bug 2: Trigger a cron-operation-result with operation='create', success=false, error='Duplicate job already exists'"
+    - "Bug 2: Observe only a console.warn fires — no user-facing error notification is pushed"
+    - "Run: bun test src/server/__tests__/cronJobCreationRegression.test.ts"
+    - "Observe 3 test failures in the Bug 2 and CronStore describe blocks"
+  environment: "Bun 1.x, TypeScript 5.x, Linux"
+
+expected: |
+  Bug 1: createCronJob() should parse the existing crontab, compare each line's schedule
+  and command against the new entry, and throw an Error matching /duplicate/i when a match
+  is found. Different schedules with the same command, or different commands with the same
+  schedule, should be allowed.
+
+  Bug 2: handleCronOperationResult() should include an 'else if (operation === "create")'
+  branch. On success, it should push a notification with a message matching /created/i.
+  On error, it should push a notification with the error message (matching /duplicate/i
+  when the server reports a duplicate).
+
+actual: |
+  Bug 1: createCronJob() unconditionally appends to the crontab without checking for
+  existing entries. Duplicate schedule+command pairs are silently written, leading to
+  the same job running multiple times per trigger.
+
+  Bug 2: handleCronOperationResult() only handles 'pause' and 'resume' operations.
+  The 'create' operation is completely ignored — success gives no feedback and errors
+  only produce a console.warn with no notification pushed to the store.
+
+affected_files:
+  - "src/server/cronManager.ts"
+  - "src/client/stores/cronStore.ts"
+  - "src/server/__tests__/cronJobCreationRegression.test.ts"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

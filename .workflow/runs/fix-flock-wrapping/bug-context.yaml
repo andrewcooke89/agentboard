@@ -1,0 +1,26 @@
+```yaml
+affected_areas:
+  - src/server/cronManager.ts
+  - src/server/__tests__/cronFlockWrapping.test.ts
+  - src/server/__tests__/cronJobCreationRegression.test.ts
+  - "{{ affected_spec_path }}" # Placeholder from original spec, assuming it points to a relevant spec file.
+bug_summary: |
+  The `createCronJob()` function in `src/server/cronManager.ts` is missing `flock` mutual exclusion wrapping when writing cron commands to the crontab. This allows concurrent executions of the same cron job, leading to potential data corruption, duplicate operations, or resource contention if a job runs longer than its schedule.
+reproduction_summary: |
+  1. Run `bun test src/server/__tests__/cronFlockWrapping.test.ts` and observe 6 failures.
+  2. Run `bun test src/server/__tests__/cronJobCreationRegression.test.ts` and observe 2 failures.
+  3. Inspect `createCronJob()` in `src/server/cronManager.ts` (around line 1029) to confirm the absence of `flock` wrapping.
+severity_assessment:
+  level: major
+  impact: |
+    Lack of mutual exclusion can lead to significant issues in production:
+    - Data corruption: Multiple instances of a job modifying the same data concurrently.
+    - Duplicate operations: Actions being performed more than once, leading to incorrect state or resource waste.
+    - Resource contention: Overlapping jobs competing for limited resources, potentially causing performance degradation or deadlocks.
+    - System instability: Unpredictable behavior due to race conditions.
+suggested_investigation_areas:
+  - **File:** `src/server/cronManager.ts`
+  - **Function:** `createCronJob()`
+  - **Specific lines:** Around lines 1029-1040, where the crontab line `newLine` is constructed.
+  - **Focus:** The logic for constructing the `newLine` needs to be modified to incorporate `flock` wrapping. This involves computing the `jobId` and lock file path *before* constructing the command string, and then inserting `flock -n /tmp/agentboard-cron-<jobId>.lock` before the original command.
+```

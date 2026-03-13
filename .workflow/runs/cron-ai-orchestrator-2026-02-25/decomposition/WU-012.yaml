@@ -1,0 +1,114 @@
+id: WU-012
+title: "CronManager + App Integration"
+description: |
+  Wire the AI drawer into the cron manager view and the main App component. Adds the
+  AI toggle button to the CronManager header, renders the CronAiDrawer, registers the
+  Cmd+Shift+A keyboard shortcut, handles all cron-ai-* WS messages in App.tsx, and
+  implements bidirectional context sync (UI selection → server, agent navigation → UI).
+
+layer: 3
+dependencies:
+  - WU-009
+  - WU-004
+
+files:
+  modified:
+    - path: src/client/components/cron/CronManager.tsx
+      changes:
+        - "Add AI drawer toggle button in the header bar (brain/sparkle icon) next to existing Timeline and Create buttons"
+        - "Button hidden when settingsStore.cronAiEnabled === false (REQ-51)"
+        - "Render CronAiDrawer component (from WU-009) as a child of CronManager"
+        - "Add useEffect that watches cronStore.selectedJobId, activeTab, filterMode, filterSource, filterTags and sends cron-ai-context-update WS messages when they change (if drawer is open)"
+    - path: src/client/App.tsx
+      changes:
+        - "Add Cmd+Shift+A / Ctrl+Shift+A keyboard shortcut to toggle AI drawer (cronAiStore.toggleDrawer)"
+        - "Add WS message handlers in subscribe useEffect for: cron-ai-proposal → cronAiStore.handleCronAiProposal, cron-ai-navigate → drive cronStore (setSelectedJobId, setActiveTab, setTimelineVisible, setFilterMode etc.), cron-ai-session-status → cronAiStore.setSessionStatus, cron-ai-mcp-status → cronAiStore.setMcpConnected"
+        - "Handle cron-ai-navigate actions: select_job → cronStore.setSelectedJobId + scrollIntoView, switch_tab → cronStore.setActiveTab, show_timeline → cronStore.setTimelineVisible(true), filter → cronStore.setFilterMode/setFilterSource/setFilterTags"
+
+cross_wu_interfaces:
+  imports:
+    - "CronAiDrawer from WU-009"
+    - "useCronAiStore from WU-002 — toggleDrawer, WS handlers"
+    - "useSettingsStore from WU-002 — cronAiEnabled"
+    - "useCronStore (existing) — selectedJobId, activeTab, filters (read-only for sync)"
+    - "WS message types from WU-001 — cron-ai-* variants"
+
+acceptance_criteria:
+  - id: AC-012-1
+    type: behavioral
+    description: "AI toggle button appears in CronManager header when cronAiEnabled=true, hidden when false."
+  - id: AC-012-2
+    type: behavioral
+    description: "Clicking the AI button toggles the drawer open/closed."
+  - id: AC-012-3
+    type: behavioral
+    description: "Cmd+Shift+A (Mac) / Ctrl+Shift+A (other) toggles the drawer from anywhere in the app."
+  - id: AC-012-4
+    type: behavioral
+    description: "WS cron-ai-proposal messages create proposals in cronAiStore (card appears in drawer)."
+  - id: AC-012-5
+    type: behavioral
+    description: "WS cron-ai-navigate select_job messages select the job in cronStore and scroll the list."
+  - id: AC-012-6
+    type: behavioral
+    description: "WS cron-ai-navigate switch_tab messages switch the detail pane tab."
+  - id: AC-012-7
+    type: behavioral
+    description: "WS cron-ai-navigate show_timeline messages open the timeline."
+  - id: AC-012-8
+    type: behavioral
+    description: "WS cron-ai-navigate filter messages apply filters to the job list."
+  - id: AC-012-9
+    type: behavioral
+    description: "When the user selects a job in the list (with drawer open), a cron-ai-context-update WS message is sent within 500ms."
+  - id: AC-012-10
+    type: behavioral
+    description: "Navigation is visually smooth (animated scroll to selected job, no jarring jumps)."
+
+requirements_covered:
+  - REQ-01   # toggle button and keyboard shortcut
+  - REQ-25   # context update on selection
+  - REQ-26   # context update on tab/filter change
+  - REQ-28   # select_job drives UI
+  - REQ-29   # navigate_to_tab drives UI
+  - REQ-30   # show_timeline drives UI
+  - REQ-31   # filter_jobs drives UI
+  - REQ-32   # smooth navigation
+  - REQ-51   # button hidden when disabled
+  - REQ-52   # context update latency <500ms
+  - REQ-53   # navigation latency <300ms
+
+tests:
+  - TEST-ID: ai-button-toggle
+    description: "AI button toggles drawer. Hidden when cronAiEnabled=false."
+    spec_tests: [TEST-01, TEST-49]
+  - TEST-ID: keyboard-shortcut
+    description: "Cmd+Shift+A toggles drawer. Escape also closes."
+    spec_tests: [TEST-51]
+  - TEST-ID: ws-proposal-dispatch
+    description: "cron-ai-proposal WS message creates proposal in store and renders card."
+    spec_tests: [TEST-18]
+  - TEST-ID: ws-navigate-select
+    description: "cron-ai-navigate select_job selects job in list."
+    spec_tests: [TEST-26]
+  - TEST-ID: ws-navigate-tab
+    description: "cron-ai-navigate switch_tab switches detail tab."
+    spec_tests: [TEST-27]
+  - TEST-ID: ws-navigate-timeline
+    description: "cron-ai-navigate show_timeline opens timeline."
+    spec_tests: [TEST-28]
+  - TEST-ID: ws-navigate-filter
+    description: "cron-ai-navigate filter applies filter to list."
+    spec_tests: [TEST-29]
+  - TEST-ID: context-sync-selection
+    description: "Selecting a job sends cron-ai-context-update within 500ms."
+    spec_tests: [TEST-31]
+  - TEST-ID: context-sync-tab
+    description: "Switching tab sends cron-ai-context-update."
+    spec_tests: [TEST-32]
+  - TEST-ID: context-sync-filter
+    description: "Changing filter sends cron-ai-context-update."
+    spec_tests: [TEST-33]
+  - TEST-ID: tab-navigation
+    description: "Tab key cycles between terminal, proposal buttons, drawer controls."
+    spec_tests: [TEST-52]

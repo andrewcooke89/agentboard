@@ -1,0 +1,82 @@
+title: "TypeScript errors in MCP server test files: fetch mock casting and invalid SessionSource value"
+
+description: |
+  Three MCP server test files have TypeScript compilation errors caught by `bun run typecheck`.
+  There are two distinct issues:
+
+  1. **Fetch mock casting (TS2352) — 4 locations across 3 files:** Bun's `mock()` returns a
+     `Mock<T>` type that is not directly assignable to `typeof globalThis.fetch` because the
+     mock wrapper is missing the `preconnect` property that exists on the real `fetch` signature.
+     Direct casts like `mock(...) as typeof fetch` fail. The fix is to use a double cast through
+     `unknown`: `mock(...) as unknown as typeof fetch`.
+
+     In wu007-writeNavigationTools.test.ts, the pattern is slightly different — zero-argument
+     arrow functions are cast to `typeof globalThis.fetch`, which also fails because the
+     function signature doesn't match. Same fix: cast through `unknown`.
+
+  2. **Invalid SessionSource value (TS2322) — 2 locations in 1 file:** Test fixture data in
+     wu006-healthAnalysisTools.test.ts uses `source: 'tmux'` for session objects, but the
+     `SessionSource` type (defined in `src/shared/types.ts:3`) only accepts `'managed' | 'external'`.
+     The test fixtures need to use a valid value — `'external'` is semantically correct for
+     sessions discovered from tmux windows.
+
+reproduction:
+  steps:
+    - "Clone the repository and install dependencies with `bun install`"
+    - "Run `bun run typecheck` (or `npx tsc --noEmit`) from the project root"
+    - "Observe 6 TypeScript errors across 3 test files in src/server/mcp/__tests__/"
+  environment: "Bun 1.x, TypeScript 5.x"
+
+expected: "`bun run typecheck` completes with zero errors in the MCP test files"
+
+actual: |
+  `bun run typecheck` reports 6 errors:
+  - src/server/mcp/__tests__/cronMcpServer.test.ts(79,22): TS2352 — Conversion of Mock<...> to typeof fetch may be a mistake (missing 'preconnect')
+  - src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(103,22): TS2352 — same fetch mock casting issue
+  - src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(1259,11): TS2322 — Type '"tmux"' not assignable to type 'SessionSource | undefined'
+  - src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts(1269,11): TS2322 — Type '"tmux"' not assignable to type 'SessionSource | undefined'
+  - src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts(352,26): TS2352 — Conversion of () => Promise<Response> to typeof fetch missing 'preconnect'
+  - src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts(1102,26): TS2352 — same arrow-function-to-fetch casting issue
+
+affected_files:
+  - "src/server/mcp/__tests__/cronMcpServer.test.ts"
+  - "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+  - "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+
+root_cause: |
+  1. Bun's `mock()` wrapper type includes metadata properties that make `Mock<T>` structurally
+     incompatible with `T` when `T` has additional static properties like `preconnect` on
+     `typeof fetch`. A direct `as typeof fetch` cast is insufficient — TypeScript requires an
+     intermediate `unknown` cast to bridge structurally incompatible types.
+
+  2. The `SessionSource` type is `'managed' | 'external'` (src/shared/types.ts:3) but test
+     fixtures were written with the value `'tmux'` which is not a valid member of the union.
+
+fix_approach: |
+  1. **Fetch mock casting (4 locations):** Insert `unknown` intermediate cast:
+
+     - cronMcpServer.test.ts line 79 (col 22):
+       `}) as typeof fetch` → `}) as unknown as typeof fetch`
+
+     - wu006-healthAnalysisTools.test.ts line 103 (col 22):
+       `}) as typeof fetch` → `}) as unknown as typeof fetch`
+
+     - wu007-writeNavigationTools.test.ts line 352 (col 26):
+       `}) as typeof globalThis.fetch` → `}) as unknown as typeof globalThis.fetch`
+
+     - wu007-writeNavigationTools.test.ts line 1102 (col 26):
+       `}) as typeof globalThis.fetch` → `}) as unknown as typeof globalThis.fetch`
+
+  2. **SessionSource value (2 locations):** Replace invalid value:
+
+     - wu006-healthAnalysisTools.test.ts line 1259:
+       `source: 'tmux'` → `source: 'external'`
+
+     - wu006-healthAnalysisTools.test.ts line 1269:
+       `source: 'tmux'` → `source: 'external'`
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

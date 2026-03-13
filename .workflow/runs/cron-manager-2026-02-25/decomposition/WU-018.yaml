@@ -1,0 +1,43 @@
+id: WU-018
+title: "Notifications"
+description: |
+  Implement notification handling in cronStore: in-app toasts for first failure,
+  3+ consecutive failures, missed run, manual run completion. Toast with cron icon
+  prefix, clickable to navigate to job. Desktop notifications via Notification API:
+  opt-in, disabled by default, requires settings enable + browser permission.
+  Rate limit: max 1 desktop notification per job per 5 minutes. Failure, missed
+  run, manual run categories independently toggleable. Auto-tag suggestions on
+  first discovery (heuristics: backup, cleanup, monitoring); dismissable via
+  auto_tags_dismissed flag.
+files:
+  - path: src/client/stores/cronStore.ts
+    action: modify
+    description: "Add notification handlers and rate limiting"
+dependencies:
+  - WU-008
+requirements:
+  - REQ-67
+  - REQ-68
+  - REQ-69
+  - REQ-70
+  - REQ-71
+  - REQ-100
+acceptance_criteria:
+  - type: unit_test
+    description: "Toast shown on first failure"
+  - type: unit_test
+    description: "Toast shown on 3+ consecutive failures"
+  - type: unit_test
+    description: "Toast shown on missed run"
+  - type: unit_test
+    description: "Toast clickable to navigate to job"
+  - type: unit_test
+    description: "Desktop notification rate limited to 1 per job per 5 min"
+  - type: unit_test
+    description: "Notification categories independently toggleable"
+  - type: unit_test
+    description: "Auto-tag suggestions shown only when auto_tags_dismissed = false"
+interfaces:
+  exports:
+    - "notification handler functions in cronStore"
+estimated_loc: 120

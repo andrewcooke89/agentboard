@@ -1,0 +1,43 @@
+verdict: pass
+root_cause: |
+  The ternary fallback values for avgDuration and lastRunDuration use `undefined`
+  instead of `null`. The CronJob interface (src/shared/types.ts:782,786) defines
+  both fields as `number | null`, but the enrichment code in cronManager.ts uses
+  `undefined` as the fallback when there are no durations in the run history.
+
+location:
+  file: "src/server/cronManager.ts"
+  line_range: "564-567"
+  function: "listJobs"
+
+mechanism: |
+  Type mismatch — wrong nullish sentinel value. In the listJobs() method, run
+  history durations are computed and assigned to local variables:
+
+    const avgDuration = durations.length > 0 ? Math.round(...) : undefined   // line 564-566
+    const lastRunDuration = durations.length > 0 ? durations[0] : undefined  // line 567
+
+  These variables are then spread into a CronJob object at lines 579-585.
+  TypeScript infers the type as `number | undefined`, which is incompatible with
+  the CronJob interface's `number | null` for both fields, producing TS2322 errors
+  at lines 582-583 where the assignment occurs.
+
+fix_approach: |
+  Change the two `undefined` fallback values to `null` on lines 566 and 567:
+
+    const avgDuration = durations.length > 0
+      ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+      : null
+    const lastRunDuration = durations.length > 0 ? durations[0] : null
+
+  This is a pure type-correctness fix — no runtime behavior change since both
+  `undefined` and `null` are falsy and JSON.stringify treats them equivalently
+  (both omit or become null). The fix aligns the implementation with the interface.
+
+risk_assessment: |
+  Minimal risk. Changing `undefined` to `null` has no functional impact:
+  - Both are falsy in JS conditionals
+  - JSON serialization already converts undefined to null (or omits the field)
+  - All consumers already handle `number | null` per the CronJob interface
+  - No downstream code distinguishes between undefined and null for these fields
+  The fix is a two-character change (x2) with zero behavioral side effects.

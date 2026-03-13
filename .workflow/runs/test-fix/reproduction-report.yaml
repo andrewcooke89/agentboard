@@ -1,0 +1,14 @@
+verdict: pass
+reproduced: false
+reproduction_output: "N/A - test bug for pipeline validation, no actual defect to reproduce"
+notes: |
+  This is a synthetic test case for validating the fix-pipeline workflow.
+  The bug spec has:
+  - No actual reproduction steps (marked N/A)
+  - Identical expected and actual behavior
+  - No affected files
+  - Severity: minor
+
+  As a pipeline validation test, the "pass" verdict indicates the bug spec
+  was processed correctly by the reproduction agent. No actual code execution
+  or bug reproduction was required or possible.

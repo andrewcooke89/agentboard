@@ -1,0 +1,128 @@
+id: WU-011
+title: "CronAi Proposal Card"
+description: |
+  Create the proposal card React component rendered inline in the AI drawer's terminal
+  area. Cards are overlaid on the terminal at the correct scroll position, detected via
+  a marker in the terminal output. Each card shows operation type, job info, diff preview,
+  reasoning, and interactive Accept/Reject buttons. Four visual states with distinct
+  color coding and ARIA labels for accessibility.
+
+layer: 2
+dependencies:
+  - WU-002
+
+files:
+  new:
+    - path: src/client/components/cron/CronAiProposalCard.tsx
+      description: |
+        Proposal card component. Renders as an absolute-positioned overlay within the
+        terminal container, positioned at the terminal line where the marker appears.
+
+        **Marker Detection:**
+        - Terminal output includes markers like `<!-- PROPOSAL:abc123 -->`
+        - Parent (CronAiTerminal) scans terminal buffer for markers and passes position info
+        - Card renders at the marker's Y offset in the terminal scroll container
+
+        **Card Layout:**
+        - Operation type badge: colored chip (Create=green, Edit=blue, Pause=yellow,
+          Resume=green, Delete=red, Run Now=orange, Set Tags=purple, Link=cyan)
+        - Job name + avatar (from CronJob.avatarUrl or fallback icon)
+        - Diff preview: formatted per operation type (REQ-24)
+        - Description/reasoning text from agent
+        - Accept button (green) + Reject button (red outline)
+        - Timestamp (relative: "2m ago")
+
+        **Reject Flow:**
+        - Clicking Reject expands a text input for feedback
+        - Submit feedback sends cron-ai-proposal-response WS message
+
+        **Card States:**
+        - Pending: blue border, buttons active
+        - Accepted: green border, "Approved ✓" badge, buttons disabled
+        - Rejected: red border, "Rejected" badge + feedback text, buttons disabled
+        - Expired: gray border, "Expired (no response)" badge, buttons disabled
+
+        **Diff Formatting (per REQ-24):**
+        - Create: full config (command, schedule + human-readable, tags)
+        - Edit frequency: "0 3 * * *" (At 3 AM) → "0 4 * * *" (At 4 AM)
+        - Pause/Resume: "active → paused" or "paused → active"
+        - Delete: full job summary
+        - Set tags: '["backup"] → ["backup", "critical"]'
+        - Run Now: job name and command
+
+        Props: proposal (CronAiProposal), onAccept, onReject(feedback?).
+        ARIA: role="article", aria-label="Proposal: {operation} {jobName}",
+        buttons have aria-label "Accept proposal" / "Reject proposal".
+
+cross_wu_interfaces:
+  exports:
+    - "CronAiProposalCard — rendered by CronAiTerminal overlay system"
+  imports:
+    - "CronAiProposal from WU-001 (types) and WU-002 (store)"
+
+acceptance_criteria:
+  - id: AC-011-1
+    type: behavioral
+    description: "Card shows operation type badge, job name+avatar, diff preview, description, and Accept/Reject buttons for pending proposals."
+  - id: AC-011-2
+    type: behavioral
+    description: "Diff is formatted correctly per operation type: create shows full config, edit shows old→new schedule, delete shows job summary, etc."
+  - id: AC-011-3
+    type: behavioral
+    description: "Pending: blue border, active buttons. Accepted: green border, 'Approved' badge, disabled buttons. Rejected: red border, 'Rejected' badge + feedback, disabled. Expired: gray border, 'Expired' badge, disabled."
+  - id: AC-011-4
+    type: behavioral
+    description: "Reject button expands feedback input. Submitting feedback sends proposal response."
+  - id: AC-011-5
+    type: behavioral
+    description: "Card remains interactive (Accept/Reject clickable) when scrolled above current terminal viewport."
+  - id: AC-011-6
+    type: behavioral
+    description: "Card has ARIA role='article', aria-label describing operation and job name. Buttons have descriptive aria-labels."
+  - id: AC-011-7
+    type: behavioral
+    description: "Card rendering is asynchronous and does not block terminal output."
+
+requirements_covered:
+  - REQ-19   # card display (operation, job, diff, reasoning, buttons, timestamp)
+  - REQ-24   # diff per operation type
+  - REQ-46   # React overlay at marker position
+  - REQ-47   # interactive when scrolled
+  - REQ-48   # card state visual styles
+  - REQ-54   # async card rendering
+  - REQ-56   # ARIA labels
+
+tests:
+  - TEST-ID: card-pending-state
+    description: "Pending card renders with blue border, active buttons, all content fields."
+    spec_tests: [TEST-47]
+  - TEST-ID: card-accepted-state
+    description: "Accepted card shows green border, 'Approved' badge, disabled buttons."
+    spec_tests: [TEST-47]
+  - TEST-ID: card-rejected-state
+    description: "Rejected card shows red border, 'Rejected' badge, feedback text, disabled buttons."
+    spec_tests: [TEST-47]
+  - TEST-ID: card-expired-state
+    description: "Expired card shows gray border, 'Expired' badge, disabled buttons."
+    spec_tests: [TEST-47]
+  - TEST-ID: card-diff-create
+    description: "Create proposal shows full job config diff."
+    spec_tests: [TEST-23]
+  - TEST-ID: card-diff-edit
+    description: "Edit frequency shows old→new schedule with human-readable."
+    spec_tests: [TEST-24]
+  - TEST-ID: card-diff-delete
+    description: "Delete proposal shows full job summary."
+    spec_tests: [TEST-25]
+  - TEST-ID: card-reject-feedback
+    description: "Reject click expands feedback input, submit sends response."
+    spec_tests: [TEST-20]
+  - TEST-ID: card-survives-scroll
+    description: "Card above viewport is still visible and interactive on scroll up."
+    spec_tests: [TEST-46]
+  - TEST-ID: card-aria
+    description: "Card has correct ARIA role and labels."
+    spec_tests: [TEST-53]
+  - TEST-ID: card-persists-rerender
+    description: "Cards survive component re-renders via store persistence."
+    spec_tests: [TEST-48]

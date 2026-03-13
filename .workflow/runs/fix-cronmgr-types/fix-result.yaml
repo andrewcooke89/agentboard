@@ -1,0 +1,23 @@
+verdict: pass
+files_changed:
+  - path: "src/server/cronManager.ts"
+    description: |
+      Changed fallback values for avgDuration and lastRunDuration from `undefined` to `null`
+      in the listJobs() method (lines 566-567). This aligns with the CronJob interface
+      which defines both fields as `number | null`.
+description: |
+  Fixed two TS2322 type errors by changing the ternary fallback values for avgDuration
+  and lastRunDuration from `undefined` to `null` in cronManager.ts. The CronJob interface
+  in src/shared/types.ts defines both fields as `number | null`, but the enrichment code
+  was using `undefined` as the fallback when there are no durations in the run history.
+
+  Changes made:
+  - Line 566: `: undefined` → `: null` (avgDuration fallback)
+  - Line 567: `: undefined` → `: null` (lastRunDuration fallback)
+
+  This is a pure type-correctness fix with no runtime behavior change since both
+  `undefined` and `null` are falsy and JSON serialization handles them equivalently.
+
+  Pre-existing test failures in client component tests are unrelated to this change
+  (localStorage mocking issues, React DevTools errors, etc.).
+tests_expected_to_pass: true

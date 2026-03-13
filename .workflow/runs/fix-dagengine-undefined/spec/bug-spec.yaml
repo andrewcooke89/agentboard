@@ -1,0 +1,50 @@
+title: "TypeScript 'possibly undefined' errors in dagEngine.test.ts"
+description: |
+  The test file src/server/__tests__/dagEngine.test.ts has 5 TypeScript strict-null errors
+  (TS18048) where the variable `task` is possibly undefined. The variable is assigned from
+  `Array.find()` which returns `T | undefined`, but is then accessed without a null guard.
+
+  Affected lines:
+    - Line 764: expect(task.prompt).toContain('## Context')
+    - Line 765: expect(task.prompt).toContain('KEY_CONTEXT: This is critical info')
+    - Line 801: expect(task.prompt).toContain('Input files:')
+    - Line 802: expect(task.prompt).toContain('- /path/to/spec.yaml')
+    - Line 803: expect(task.prompt).not.toContain('##')
+
+  In both cases the pattern is:
+    const task = tasks.find(t => t.projectPath === '/tmp/test')
+    expect(task).toBeTruthy()
+    expect(task.prompt)...   // TS18048 here
+
+  The `expect(task).toBeTruthy()` guards at runtime but does not narrow the type for TypeScript.
+
+reproduction:
+  steps:
+    - "Run: bun run typecheck"
+    - "Observe 5 TS18048 errors in src/server/__tests__/dagEngine.test.ts"
+  environment: "Bun 1.x, TypeScript 5.x with strict null checks"
+
+expected: "bun run typecheck passes with no errors in dagEngine.test.ts"
+actual: |
+  5 TypeScript errors:
+    src/server/__tests__/dagEngine.test.ts(764,16): error TS18048: 'task' is possibly 'undefined'.
+    src/server/__tests__/dagEngine.test.ts(765,16): error TS18048: 'task' is possibly 'undefined'.
+    src/server/__tests__/dagEngine.test.ts(801,14): error TS18048: 'task' is possibly 'undefined'.
+    src/server/__tests__/dagEngine.test.ts(802,14): error TS18048: 'task' is possibly 'undefined'.
+    src/server/__tests__/dagEngine.test.ts(803,14): error TS18048: 'task' is possibly 'undefined'.
+
+affected_files:
+  - "src/server/__tests__/dagEngine.test.ts"
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+fix_approach: |
+  Add non-null assertions (task!) after the toBeTruthy() guard, or use an explicit
+  if-guard that narrows the type. Since these are test files where the toBeTruthy()
+  assertion already ensures the value exists at runtime, the simplest fix is the
+  non-null assertion operator:
+    expect(task!.prompt).toContain(...)
+
+verdict: pass

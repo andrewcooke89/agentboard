@@ -1,0 +1,43 @@
+id: WU-017
+title: "Schedule Timeline"
+description: |
+  Implement CronTimeline: collapsible timeline above split pane, toggled via
+  "Timeline" button. 24h (default, 1-hour buckets) and 7-day (daily buckets)
+  modes. Stacked bars colored by health status. Hover tooltip lists specific
+  jobs in bucket. Click job name in tooltip selects it. Computed client-side
+  using cron-parser for next-run projection, capped at 500 data points.
+  Empty state message when no jobs.
+files:
+  - path: src/client/components/cron/CronTimeline.tsx
+    action: modify
+    description: "Implement 24h/7d stacked bar timeline"
+  - path: src/client/components/cron/CronManager.tsx
+    action: modify
+    description: "Wire timeline toggle into root layout"
+dependencies:
+  - WU-009
+requirements:
+  - REQ-77
+  - REQ-78
+  - REQ-79
+  - REQ-80
+  - REQ-93
+acceptance_criteria:
+  - type: unit_test
+    description: "Timeline toggles visibility via button"
+  - type: unit_test
+    description: "24h mode shows 1-hour buckets"
+  - type: unit_test
+    description: "7-day mode shows daily buckets"
+  - type: unit_test
+    description: "Bars colored by health status"
+  - type: unit_test
+    description: "Hover tooltip lists jobs in bucket"
+  - type: unit_test
+    description: "Click job name selects it"
+  - type: performance
+    description: "Renders within 100ms for 200 jobs / 7 days"
+interfaces:
+  exports:
+    - "CronTimeline component"
+estimated_loc: 200

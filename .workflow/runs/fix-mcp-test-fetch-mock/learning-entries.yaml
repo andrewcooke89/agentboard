@@ -1,0 +1,48 @@
+```yaml
+learning_patterns:
+  - bug_id: "TypeScript errors in MCP server test files"
+    bug_title: "TypeScript errors in MCP server test files: fetch mock casting and invalid SessionSource value"
+    analysis:
+      bug_reproduction:
+        ease: "Easy"
+        reason: |
+          The bug was easily reproducible by running a standard type-checking command (`bun run typecheck` or `npx tsc --noEmit`). The bug specification provided clear steps, specific commands, and detailed error messages including file paths, line numbers, column numbers, and TypeScript error codes (TS2352, TS2322). The environment was also clearly specified. This deterministic nature of type errors makes reproduction straightforward.
+      root_cause:
+        location: "Test files (src/server/mcp/__tests__/) and a shared type definition (src/shared/types.ts)."
+        systemic_issue:
+          - type: "TypeScript type system nuance / third-party library typing"
+            description: |
+              The `fetch` mock casting issue (TS2352) highlights a common challenge when mocking complex native APIs (like `globalThis.fetch` with its static `preconnect` property) using testing framework mocks (Bun's `mock()`). The framework's mock type (`Mock<T>`) did not structurally match the target type (`typeof fetch`), necessitating the `as unknown as T` pattern. This is a known TypeScript behavior for bridging structurally incompatible types. While not a flaw in the application's logic, it's a recurring pattern in TypeScript testing that developers need to be aware of.
+            impact: "Affects multiple test files mocking `fetch`."
+          - type: "Test data authoring error"
+            description: |
+              The `SessionSource` value issue (TS2322) was a direct mismatch between a literal string used in test fixture data (`'tmux'`) and a defined union type (`'managed' | 'external'`). This was explicitly identified as a "test authoring mistake." The type definition itself was correct, but the test data did not conform to it.
+            impact: "Isolated to specific test fixtures, but indicative of potential for invalid test data if not type-checked."
+      fix_complexity:
+        touched_expected_files: "Yes"
+        spread_further: "No"
+        complexity_level: "Very Low"
+        details: |
+          The fix was highly localized, touching only the three affected test files explicitly listed in the bug specification. Each fix involved simple, one-line modifications: adding `as unknown` for the fetch mocks or changing a string literal for the SessionSource values. No new files were created, and no significant refactoring was required.
+      regression_risk:
+        concerns: "Very Low"
+        reason: |
+          The changes were exclusively confined to test files, ensuring no impact on production code.
+          1.  The `as unknown as T` pattern for fetch mocks is a standard and safe TypeScript workaround for type incompatibilities in tests; it does not alter runtime behavior.
+          2.  Correcting `'tmux'` to `'external'` aligns the test data with the actual type definition. Since `'tmux'` was never a valid `SessionSource` value, any existing test logic was already operating on an incorrect premise. The change makes the tests more semantically correct without altering intended test behavior.
+          All 238 tests in the affected files continued to pass, confirming no unintended regressions.
+      process_gaps:
+        potential_earlier_detection:
+          - type: "Developer Education / Tooling for Type Nuances"
+            description: |
+              **Fetch mock casting (TS2352):** While `bun run typecheck` successfully caught this, the need for `as unknown as T` is a common TypeScript nuance when mocking APIs with complex type signatures (e.g., static properties).
+              *   **Prevention:** Could be mitigated by providing project-specific helper functions for `fetch` mocks that encapsulate this pattern, or through documentation/coding guidelines. A custom lint rule could also enforce the correct casting pattern for known problematic mocks.
+          - type: "Strict Type Enforcement / Code Review for Test Data"
+            description: |
+              **Invalid SessionSource value (TS2322):** This was a direct type mismatch in test fixture data. `typecheck` caught it, indicating the static analysis is working.
+              *   **Prevention:** Stricter IDE integration that highlights such errors immediately during authoring, or more diligent code reviews where reviewers are acutely aware of type definitions for test data, could catch this earlier. However, given `typecheck` caught it, the automated process is effective.
+        how_it_was_caught: "The bug was caught by `bun run typecheck`, indicating that the project's continuous integration or local development workflow includes static type analysis, which is effective for detecting these kinds of issues."
+        recommendations:
+          - "Consider creating project-specific helper utilities or wrappers for common mock patterns (e.g., `mockFetch` that correctly handles the `as unknown as typeof fetch` casting) to abstract away TypeScript complexities and reduce boilerplate."
+          - "Reinforce developer awareness of specific union types and their valid members, particularly when authoring test fixtures, potentially through code review checklists or documentation."
+```

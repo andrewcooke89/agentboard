@@ -1,0 +1,71 @@
+id: WU-011
+title: "Bulk Selection & Actions"
+description: |
+  Add bulk selection mode with checkboxes, shift+click range selection, and the floating
+  bulk action bar with Pause All, Resume All, Delete All buttons. Also implement the
+  group header context menu with group-level operations.
+
+dependencies: [WU-010]
+
+files:
+  created:
+    - path: src/client/components/cron/CronBulkActions.tsx
+      changes: |
+        - CronBulkActions floating bar component
+        - Shows when selectedJobIds.size > 0
+        - Displays: selected count, "Pause All" button, "Resume All" button,
+          "Delete All" button (red/destructive), "Deselect" button
+        - Pause All: sends cron-bulk-pause with selected IDs via WS
+        - Resume All: sends cron-bulk-resume via WS
+        - Delete All: shows confirmation dialog listing all selected job names first
+        - Progress tracking from cron-bulk-operation-progress WS messages
+        - Animated entrance from bottom (motion.div)
+        - Group context menu (right-click on group header):
+          "Pause all in group", "Resume all in group", "Select all in group"
+
+acceptance_criteria:
+  - req: REQ-19
+    type: behavioral
+    check: "Checkboxes visible on hover or select mode; shift+click selects range; bulk bar appears with selected count"
+  - req: REQ-20
+    type: behavioral
+    check: "Right-click group header shows context menu with pause/resume/select all in group"
+  - req: REQ-54
+    type: behavioral
+    check: "Floating bulk action bar at bottom with Pause All, Resume All, Delete All, Deselect"
+  - req: REQ-55
+    type: contract
+    check: "Bulk operations iterate sequentially; single sudo prompt covers all; progress reported"
+  - req: REQ-56
+    type: behavioral
+    check: "Bulk Delete shows confirmation listing all names; individual failures don't abort remaining"
+  - req: REQ-57
+    type: behavioral
+    check: "Group context menu provides group-scoped pause/resume/select actions"
+
+test_specs:
+  - id: TEST-21
+    description: "Bulk selection -- 3 checkboxes clicked, bar shows '3 selected'"
+  - id: TEST-22
+    description: "Shift+click range select -- jobs 1-4 selected"
+  - id: TEST-45
+    description: "Bulk pause -- 3 user jobs paused with progress"
+  - id: TEST-46
+    description: "Bulk delete with confirmation -- 2 jobs listed, confirmed, removed"
+  - id: TEST-47
+    description: "Bulk with mixed sudo -- single prompt for user+system jobs"
+  - id: TEST-48
+    description: "Group context menu -- select all in group"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-010
+      name: "CronJobList (extends with checkbox column and context menu)"
+
+implementation_notes: |
+  The bulk action bar should use position: fixed or sticky at the bottom of the list pane.
+  Shift+click range selection: track lastClickedId in the store; on shift+click, select
+  all jobs between lastClickedId and current in the filtered/sorted order. The context menu
+  can use a simple absolute-positioned div on right-click with stopPropagation. For bulk
+  delete confirmation, reuse the confirmation dialog pattern from CronDeleteConfirm (WU-016)
+  or implement an inline version here.

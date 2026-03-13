@@ -1,0 +1,40 @@
+title: "WebSocketManager.send() returns true before connection is established"
+description: |
+  The FakeWebSocket test mock in webSocketSendReturnBoolean.test.ts initializes
+  readyState to FakeWebSocket.OPEN (1) instead of 0 (CONNECTING). Real WebSocket
+  instances start in CONNECTING state and only transition to OPEN when onopen fires.
+
+  This causes the test "send() returns false before connection is established" to
+  fail: after manager.connect() creates the WebSocket but before triggerOpen() is
+  called, the mock already has readyState === 1 (OPEN), so send() returns true
+  instead of the expected false.
+
+  The production code in useWebSocket.ts:97-103 is correct — it checks
+  this.ws?.readyState === WebSocket.OPEN before sending. The bug is entirely in
+  the test mock's incorrect initial state.
+
+reproduction:
+  steps:
+    - "Run: bun test src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+    - "Observe test 'FakeWebSocket.readyState starts at 0 (CONNECTING), not 1 (OPEN)' fails"
+    - "Observe test 'send() returns false before connection is established' fails"
+  environment: "Bun 1.x, TypeScript 5.x, bun:test"
+
+expected: |
+  FakeWebSocket mock should initialize readyState to 0 (CONNECTING), matching
+  real WebSocket behavior. send() should return false when called after connect()
+  but before the connection is established (triggerOpen not yet called).
+
+actual: |
+  FakeWebSocket initializes readyState to FakeWebSocket.OPEN (1). This makes
+  send() return true immediately after connect(), even though the connection
+  handshake has not completed. The test expects false but gets true.
+
+affected_files:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

@@ -1,0 +1,46 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  Static code analysis confirms the bug:
+
+  1. SessionList.tsx (correct pattern):
+     - Imports: motion, AnimatePresence, useReducedMotion from 'motion/react'
+     - Wraps session lists in: <AnimatePresence initial={false}>
+     - Uses: <motion.div> with initial/animate/exit props
+     - Respects: prefersReducedMotion for accessibility
+
+  2. TaskQueue.tsx (buggy - no animations):
+     - No imports from motion/framer-motion
+     - Uses plain: {runningTasks.map((task) => <TaskItem ... />)}
+     - No AnimatePresence wrapper around task lists
+     - Lines 147-159, 167-179, 186-197
+
+  3. TaskItem.tsx (buggy - no animations):
+     - No imports from motion/framer-motion
+     - Uses plain: <div className="..."> as root element (line 79)
+     - No motion.div wrapper
+     - No useReducedMotion hook
+
+  The pattern discrepancy is unambiguous - TaskQueue and TaskItem use plain
+  React elements while SessionList and other components use the established
+  framer-motion pattern with AnimatePresence, motion.div, and reduced motion support.
+notes: |
+  Bug verified through static code analysis - no runtime testing required.
+  The missing animation pattern is evident from import statements and JSX structure.
+
+  Components WITH animations (correct pattern):
+  - SessionList.tsx
+  - PendingReviewDashboard.tsx
+  - CronJobList.tsx
+  - CronAiDrawer.tsx
+
+  Components WITHOUT animations (bug):
+  - TaskQueue.tsx
+  - TaskItem.tsx
+
+  Fix should add:
+  - Import motion, AnimatePresence, useReducedMotion from 'motion/react'
+  - Wrap task list mappings in AnimatePresence with initial={false}
+  - Replace root div in TaskItem with motion.div
+  - Add initial/animate/exit props with opacity and height transitions
+  - Respect prefersReducedMotion for accessibility

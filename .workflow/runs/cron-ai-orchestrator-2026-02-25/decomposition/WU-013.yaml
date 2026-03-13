@@ -1,0 +1,89 @@
+id: WU-013
+title: "Session Lifecycle & Shutdown Integration"
+description: |
+  Integrate the AI session lifecycle with agentboard's SessionManager. Handles creating
+  the agentboard-cron-ai tmux window on first drawer open, reattaching on subsequent
+  opens, killing on New Conversation, filtering from the main session list, and cleaning
+  up on graceful server shutdown.
+
+layer: 3
+dependencies:
+  - WU-004
+  - WU-010
+
+files:
+  modified:
+    - path: src/server/cronAiService.ts
+      changes:
+        - "Implement createAiSession(): calls SessionManager.createWindow('~/.agentboard/', 'agentboard-cron-ai', startupCommand) where startupCommand = 'claude --mcp-config ~/.agentboard/mcp/cron-manager.json --system-prompt \"$(cat ~/.agentboard/skills/cron-manager.md)\" --allowedTools \"mcp__cron-manager__*\" --resume'"
+        - "Implement killAiSession(): calls SessionManager.killWindow() for the AI window"
+        - "Implement getAiSessionStatus(): returns 'offline'|'starting'|'working'|'waiting' based on SessionManager state + log polling"
+        - "Implement isAiSession(name): returns true if name starts with 'agentboard-' (for filtering)"
+        - "Handle drawer-open WS message: check if window exists → reattach, else create"
+        - "Handle new-conversation WS message: kill window, create new one, notify UI"
+    - path: src/client/components/cron/CronAiDrawer.tsx
+      changes:
+        - "On mount (drawer opens): send cron-ai-drawer-open WS message to trigger session creation"
+        - "On New Conversation confirm: send cron-ai-new-conversation WS message"
+        - "On receiving cron-ai-session-status: update cronAiStore.sessionStatus"
+        - "Pass session info to CronAiTerminal for tmux window attachment"
+
+cross_wu_interfaces:
+  imports:
+    - "CronAiService from WU-003 — createAiSession, killAiSession, getAiSessionStatus"
+    - "SessionManager (existing) — createWindow, killWindow"
+    - "CronAiTerminal from WU-010 — receives session info for attachment"
+    - "WS protocol from WU-004 — cron-ai-drawer-open, cron-ai-new-conversation, cron-ai-session-status"
+
+acceptance_criteria:
+  - id: AC-013-1
+    type: behavioral
+    description: "First drawer open: if no agentboard-cron-ai tmux window exists, creates one with SessionManager.createWindow(projectPath='~/.agentboard/', name='agentboard-cron-ai', command=Claude startup command)."
+  - id: AC-013-2
+    type: behavioral
+    description: "Subsequent drawer opens: if window exists, reattaches terminal without creating a new window."
+  - id: AC-013-3
+    type: behavioral
+    description: "New Conversation: kills existing window, creates fresh one, terminal reconnects."
+  - id: AC-013-4
+    type: invariant
+    description: "AI session (agentboard-cron-ai) does NOT appear in the main session list. Filtered by isAiSession() check."
+  - id: AC-013-5
+    type: contract
+    description: "Claude Code startup command is exactly: claude --mcp-config ~/.agentboard/mcp/cron-manager.json --system-prompt \"$(cat ~/.agentboard/skills/cron-manager.md)\" --allowedTools \"mcp__cron-manager__*\" --resume"
+  - id: AC-013-6
+    type: behavioral
+    description: "On graceful shutdown (SIGTERM/SIGINT), the AI tmux window is killed. On crash (SIGKILL), it persists and is reattached on next startup."
+  - id: AC-013-7
+    type: behavioral
+    description: "Session status updates in real-time: offline → starting → waiting/working, using same log-polling mechanism as regular sessions."
+
+requirements_covered:
+  - REQ-05   # persistent tmux session
+  - REQ-06   # create on first open, reattach on subsequent
+  - REQ-07   # not in main session list
+  - REQ-08   # New Conversation kills + recreates
+  - REQ-62   # projectPath = ~/.agentboard/
+  - REQ-65   # correct Claude Code startup command
+  - REQ-70   # shutdown cleanup
+
+tests:
+  - TEST-ID: session-create-first-open
+    description: "First drawer open creates tmux window with correct command."
+    spec_tests: [TEST-05]
+  - TEST-ID: session-reattach
+    description: "Session exists → drawer reattaches, scrollback preserved."
+    spec_tests: [TEST-06]
+  - TEST-ID: session-not-in-list
+    description: "AI session filtered from main session list."
+    spec_tests: [TEST-07]
+  - TEST-ID: session-new-conversation
+    description: "New Conversation kills window, creates fresh one."
+    spec_tests: [TEST-08]
+  - TEST-ID: session-status-tracking
+    description: "Status transitions: offline → starting → waiting. Shows 'working' during processing."
+    spec_tests: [TEST-09]
+  - TEST-ID: session-shutdown-cleanup
+    description: "Graceful shutdown kills AI window. Crash leaves it for reattach."
+  - TEST-ID: session-startup-command
+    description: "Tmux window created with correct claude CLI command including --mcp-config, --system-prompt, --allowedTools, --resume."

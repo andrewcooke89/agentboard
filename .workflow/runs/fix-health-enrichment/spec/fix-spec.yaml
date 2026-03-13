@@ -1,0 +1,48 @@
+verdict: pass
+
+title: "Fix: startPolling() health enrichment regression test regex cannot handle deep brace nesting"
+
+description: |
+  The regression test in health-gaps-regression.test.ts (test 1, line 21-42) uses a regex
+  that only handles one level of brace nesting to extract the startPolling() method body.
+  The actual method has 3+ levels of nesting (method → setInterval callback → if/for blocks),
+  so the regex terminates prematurely at the closing brace of the `if (this.pollingInterval)`
+  guard, never reaching the enrichAllJobsWithHealth call on line 537.
+
+  The production code is already correct — enrichAllJobsWithHealth(newJobs) IS called between
+  discoverAllJobs() and computeDiff() in the working tree. Only the test regex needs fixing.
+
+  The fix replaces the broken regex on line 25 with a lazy [\s\S]*? match anchored to
+  method-level indentation, consistent with the pattern already used successfully by test 2
+  (line 54-55) in the same file.
+
+changes:
+  - file: "src/server/__tests__/health-gaps-regression.test.ts"
+    description: |
+      Replace the regex on line 25 that extracts the startPolling method body.
+
+      Current (broken — handles only 1 level of brace nesting):
+        /startPolling\s*\([^)]*\)\s*:\s*void\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/s
+
+      Replacement (handles arbitrary nesting via lazy match + indent anchor):
+        /startPolling\s*\([^)]*\)\s*:\s*void\s*\{([\s\S]*?)^\s{2}\}/m
+
+      This uses [\s\S]*? to lazily match all content (including nested braces at any
+      depth), anchored by `^\s{2}\}` which matches the method-closing brace at 2-space
+      indent (class method level). This is the same strategy proven by test 2 on line 54.
+
+      No other changes needed in this file — tests 2-6 (lines 44-153) already use correct
+      regex patterns and pass.
+    change_type: modify
+
+acceptance_criteria:
+  - "bun test src/server/__tests__/health-gaps-regression.test.ts passes all 6 tests with 0 failures"
+  - "Test 1 (line 21) correctly extracts the full startPolling method body including the enrichAllJobsWithHealth call"
+  - "The extracted methodBody contains 'enrichAllJobsWithHealth' (the enrichment call on line 537 of cronManager.ts)"
+  - "No production code changes — only test infrastructure modified"
+  - "bun run typecheck passes with no new errors"
+
+regression_risks:
+  - "Risk 1: If cronManager.ts method indentation changes from 2-space to something else, the indent-anchored regex would break. Mitigated by the codebase enforcing 2-space indentation via linting (oxlint)."
+  - "Risk 2: If a closing brace at 2-space indent appears inside the method body (e.g., a top-level if block's closing brace), the lazy match could terminate too early. Mitigated because startPolling's internal blocks are all indented at 4+ spaces; only the method-closing brace sits at 2-space indent."
+  - "Risk 3: No risk to production behavior — this change only modifies a source-reading regression test, not runtime code."

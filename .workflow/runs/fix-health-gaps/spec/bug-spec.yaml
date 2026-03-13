@@ -1,0 +1,94 @@
+# Bug Specification: Health computation unwired, poll interval hardcoded, orphan cleanup and history pruning not scheduled
+# Generated: 2026-02-27
+# Updated: 2026-02-27 — re-verified against current source
+
+title: "Health computation unwired from API handlers, orphan cleanup and history pruning gated on WS client connection"
+
+description: |
+  Three confirmed wiring gaps in the Cron Manager subsystem. A fourth issue (poll
+  interval hardcoded) has already been fixed but is documented here for completeness.
+
+  1. **Health computation unwired from API handlers** — `cronAiService.ts` handlers
+     (`handleGetJobs` at line 293, `handleSearchJobs` at line 302, `handleGetJobDetail`
+     at line 313) always call `cm.discoverAllJobs()` directly, bypassing the
+     health-enriched `jobCache`. Jobs returned by `discoverAllJobs()` have
+     `health: 'unknown'` because `enrichAllJobsWithHealth()` is never invoked on that
+     code path.
+
+     The cache-aware handlers (`handleGetHealth` at line 349, `handleGetFailingJobs`
+     at line 363, `handleGetScheduleConflicts` at line 371, `handleGetScheduleLoad`
+     at line 398) fall back to `cm.discoverAllJobs()` when `jobCache` is empty,
+     returning unenriched data with all health counts at zero.
+
+     Note: the polling loop in `cronManager.ts:535-548` DOES call
+     `enrichAllJobsWithHealth()` correctly, but the cronAiService handlers never read
+     from the enriched cache for their primary data paths.
+
+  2. **Poll interval hardcoded (FIXED)** — Previously `cronHandlers.ts` called
+     `startPolling(5000)` with a literal value. This is now fixed:
+     - `config.ts:105-108` defines `cronPollIntervalMs` from `CRON_POLL_INTERVAL_MS` env var
+     - `cronHandlers.ts:139` calls `cronManager.startPolling(config.cronPollIntervalMs)`
+     Regression tests exist to guard against re-introduction.
+
+  3. **Orphan cleanup gated on jobCache** — `cleanOrphanedPrefs()` is scheduled in
+     `index.ts:318-324` (30s initial delay) and `index.ts:328-334` (24h interval),
+     but both calls are gated on `cronManager.jobCache.size > 0`. The `jobCache` is
+     only populated when `startPollingLifecycle()` runs (triggered by first WS client
+     connection via `cronHandlers.ts:126-141`). If no client connects, the cache stays
+     empty and cleanup never executes.
+
+     Note: `setDb()` IS now called at startup (`index.ts:117`), so the null-db issue
+     for cleanup is resolved. The remaining problem is the `jobCache.size > 0` guard.
+     `deleteOrphanedPrefs` handles an empty job list safely (db.ts:761).
+
+  4. **History pruning gated on jobCache** — `pruneRunHistory()` is called alongside
+     orphan cleanup in the same gated blocks (`index.ts:321,331`). Same root cause:
+     if no WS client has connected, `jobCache.size === 0` and pruning silently skips.
+     `pruneRunHistory` only deletes old rows from `cron_run_history` by timestamp/count
+     and does not need a populated cache at all.
+
+reproduction:
+  steps:
+    - "Start the agentboard server with `bun run dev`"
+    - "Do NOT open the web UI (no WebSocket client connects)"
+    - "Wait 30+ seconds for the initial cleanup timeout to fire"
+    - "Observe logs — no `cron_cleanup_initial` entry appears because jobCache.size === 0"
+    - "Connect a WS client and call handleGetJobs — returns jobs with health: 'unknown'"
+    - "Call handleGetHealth before first poll completes — returns { healthy: 0, warning: 0, critical: 0 }"
+    - "Even after polling starts, handleGetJobs/handleSearchJobs still return unenriched data"
+  environment: "Bun 1.x, TypeScript 5.x, any OS with tmux and cron jobs configured"
+
+expected: |
+  1. API handlers (handleGetJobs, handleSearchJobs, handleGetJobDetail) should read from
+     the health-enriched jobCache when available, falling back to discoverAllJobs() only
+     when necessary, and enriching the result before returning.
+  2. Poll interval is configurable via CRON_POLL_INTERVAL_MS (ALREADY FIXED).
+  3. Orphan cleanup should execute on schedule regardless of whether a WS client has
+     connected. The jobCache.size > 0 guard should be removed or replaced with a
+     standalone job discovery call for cleanup purposes.
+  4. History pruning should execute on schedule unconditionally — it operates on
+     timestamps/row counts and has no dependency on jobCache.
+
+actual: |
+  1. handleGetJobs (line 293), handleSearchJobs (line 302), and handleGetJobDetail (line 313)
+     always call discoverAllJobs() directly, returning jobs with health: 'unknown'.
+     handleGetHealth (line 349) falls back to discoverAllJobs() when cache is empty,
+     returning all-zero health counts.
+  2. Poll interval is now configurable via config.cronPollIntervalMs (FIXED).
+  3. cleanOrphanedPrefs() is gated on jobCache.size > 0 (index.ts:319,329). Without a
+     WS client triggering startPollingLifecycle(), jobCache stays empty and cleanup skips.
+  4. pruneRunHistory() is in the same gated block (index.ts:321,331). Same skip behavior.
+
+affected_files:
+  - "src/server/cronAiService.ts"        # handleGetJobs/Search/Detail bypass enriched cache; health handlers fall back to raw discovery
+  - "src/server/index.ts"                # cleanup/prune scheduling gated on jobCache.size > 0
+  - "src/server/cronManager.ts"          # enrichAllJobsWithHealth() only called from polling loop, not from API handlers
+  - "src/server/handlers/cronHandlers.ts" # startPollingLifecycle() is the only path that populates jobCache
+  - "src/server/config.ts"              # cronPollIntervalMs exists (bug 2 FIXED)
+  - "src/server/db.ts"                  # pruneDbRunHistory() SQL correct but unreachable when jobCache guard blocks
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

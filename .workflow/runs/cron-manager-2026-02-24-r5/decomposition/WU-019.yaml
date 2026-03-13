@@ -1,0 +1,102 @@
+id: WU-019
+title: "Session Integration & Notifications"
+description: |
+  Implement bidirectional agentboard session integration (auto-link by project path,
+  manual link, navigation between views) and the notification system (in-app toasts,
+  desktop notifications, rate limiting, per-category toggles).
+
+dependencies: [WU-010, WU-012]
+
+files:
+  created:
+    - path: src/client/components/cron/CronSessionLink.tsx
+      changes: |
+        - Session link components for detail header:
+          - Linked session chip (clickable, navigates to session view)
+          - "Link to Session" dropdown button: shows active sessions for manual linking
+          - Sends cron-job-link-session WS message on link/unlink
+        - Auto-link logic: when job's scriptPath or command references a directory
+          matching an active session's projectPath, auto-set linkedSessionId
+        - Navigation: clicking linked session sets activeView to 'sessions' and
+          selectedSessionId to the linked session
+        - Notification system:
+          - In-app toast notifications for: first failure, 3+ consecutive failures,
+            missed scheduled run, manual run completion
+          - Toast includes cron icon prefix, clickable to navigate to the job
+          - Desktop notifications via Notification API (opt-in, permission request)
+          - Rate limiting: max 1 desktop notification per job per 5 minutes
+          - All categories independently toggleable via settings
+  modified:
+    - path: src/client/components/SessionList.tsx
+      changes: |
+        - Add clock icon to sessions that have linked cron jobs
+        - Click clock icon: navigate to cron-manager view filtered to linked jobs
+        - Determine linked status by checking cronStore.jobs for matching linkedSessionId
+
+acceptance_criteria:
+  - req: REQ-68
+    type: behavioral
+    check: "Toast notifications for: first failure, 3+ consecutive, missed run, manual run complete; cron icon; clickable"
+  - req: REQ-69
+    type: behavioral
+    check: "Desktop notifications opt-in; require settings enable + browser permission"
+  - req: REQ-70
+    type: invariant
+    check: "Max 1 desktop notification per job per 5 minutes"
+  - req: REQ-71
+    type: behavioral
+    check: "All notification categories independently toggleable in settings"
+  - req: REQ-72
+    type: contract
+    check: "Auto-link when scriptPath/command matches active session's projectPath"
+  - req: REQ-73
+    type: behavioral
+    check: "'Link to Session' dropdown shows active sessions for manual linking"
+  - req: REQ-74
+    type: behavioral
+    check: "Clicking linked session navigates to session view with that session selected"
+  - req: REQ-75
+    type: behavioral
+    check: "SessionList shows clock icon for sessions with linked cron jobs; click navigates to cron manager"
+  - req: REQ-76
+    type: behavioral
+    check: "'Managed by Agentboard' toggle shows circuit-board badge; filterable"
+
+test_specs:
+  - id: TEST-64
+    description: "Toast on first failure -- toast appears with cron icon and job name"
+  - id: TEST-65
+    description: "Toast on 3 consecutive failures -- critical severity toast"
+  - id: TEST-66
+    description: "Desktop notification on failure -- Notification API called; click focuses tab"
+  - id: TEST-67
+    description: "Rate limiting -- only 1 desktop notification per job per 5 min"
+  - id: TEST-68
+    description: "Notification settings -- disable failure notifs, no toast on failure"
+  - id: TEST-69
+    description: "Auto-link by project path match"
+  - id: TEST-70
+    description: "Manual session link via dropdown"
+  - id: TEST-71
+    description: "Click linked session navigates to session view"
+  - id: TEST-72
+    description: "Managed by Agentboard toggle and filter"
+  - id: TEST-73
+    description: "Clock icon in SessionList for sessions with linked cron jobs"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-010
+      name: "CronJobRow (adds linked session icon)"
+    - from: WU-012
+      name: "CronJobDetail header (adds session link chip and managed toggle)"
+
+implementation_notes: |
+  Notification rate limiting: maintain a Map<jobId, lastNotificationTimestamp> in the
+  cronStore or a module-level variable. Toast notifications should use the existing
+  Toast system in the codebase -- look for existing toast patterns and reuse.
+  Desktop notifications: check Notification.permission, request if 'default', create
+  new Notification() if 'granted'. The auto-link runs on each cronStore.handleCronJobs
+  update, comparing job paths against the session list. For the SessionList clock icon,
+  import useCronStore to check for linked jobs -- keep the dependency lightweight by
+  only importing the specific selector needed.

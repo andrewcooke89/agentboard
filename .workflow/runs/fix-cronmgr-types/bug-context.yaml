@@ -1,0 +1,24 @@
+```yaml
+affected_areas:
+  - src/server/cronManager.ts
+bug_summary: |
+  The `avgDuration` and `lastRunDuration` fields in `src/server/cronManager.ts`
+  (lines 566-567) incorrectly use `undefined` as a fallback value when there
+  are no durations in the history. The `CronJob` interface defines these fields
+  as `number | null`, causing TypeScript `TS2322` type errors due to the mismatch.
+reproduction_summary: |
+  Run `bun run typecheck` from the project root. Two `TS2322` type errors will
+  be observed in `src/server/cronManager.ts` at lines 566-567, stating
+  "Type 'undefined' is not assignable to type 'number | null'".
+severity_assessment: |
+  Minor. This is a type-checking error (`TS2322`) that prevents successful
+  type-checking/compilation, indicating a type safety violation. It needs to be
+  fixed to align with the defined interface and ensure robustness, but likely
+  doesn't cause immediate runtime crashes if JavaScript handles `undefined`
+  gracefully in this context.
+suggested_investigation_areas:
+  - src/server/cronManager.ts: Lines 566-567, specifically the ternary expressions
+    assigning `avgDuration` and `lastRunDuration`.
+  - src/shared/types.ts: Review the `CronJob` interface definition for `avgDuration`
+    and `lastRunDuration` to confirm they are `number | null`.
+```

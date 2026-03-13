@@ -1,0 +1,86 @@
+verdict: pass
+
+reproduced: true
+
+reproduction_output: |
+  bun test v1.3.9 (cf6cdbbb)
+
+  src/server/__tests__/health-gaps-regression.test.ts:
+  36 |       const callsHealthEnrichment =
+  37 |         methodBody.includes('computeHealth') ||
+  38 |         methodBody.includes('enrichAllJobsWithHealth') ||
+  39 |         methodBody.includes('enrichJobsWithHealth')
+  40 |
+  41 |       expect(callsHealthEnrichment).toBe(true)
+                                         ^
+  error: expect(received).toBe(expected)
+
+  Expected: true
+  Received: false
+
+        at <anonymous> (/home/andrew-cooke/tools/agentboard/src/server/__tests__/health-gaps-regression.test.ts:41:37)
+  (fail) BUG-1: Health computation unwired > startPolling health enrichment > startPolling() should call enrichAllJobsWithHealth or computeHealth on discovered jobs [1.00ms]
+
+   5 pass
+   1 fail
+   12 expect() calls
+  Ran 6 tests across 1 file. [12.00ms]
+
+notes: |
+  ## Bug Confirmed - Test Fails Due to Regex Issue
+
+  The test `startPolling() should call enrichAllJobsWithHealth or computeHealth on discovered jobs`
+  consistently fails with "Expected: true, Received: false".
+
+  ### Root Cause Analysis
+
+  Investigation confirms the SECONDARY issue described in the bug spec - the regex on line 25
+  cannot handle the nested brace structure of the startPolling method:
+
+  **Regex:** `/startPolling\s*\([^)]*\)\s*:\s*void\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/s`
+
+  **Actual method structure** (lines 531-549 in cronManager.ts):
+  ```typescript
+  startPolling(intervalMs: number): void {        // level 0
+    if (this.pollingInterval) {                    // level 1
+      this.stopPolling()
+    }                                              // back to level 0
+    this.pollingInterval = setInterval(async () => {  // level 1
+      const newJobs = await this.discoverAllJobs()
+      const enrichedJobs = await this.enrichAllJobsWithHealth(newJobs)  // <-- line 537
+      ...
+    }, intervalMs)
+  }
+  ```
+
+  **What the regex actually captures:**
+  ```
+  startPolling(intervalMs: number): void {
+      if (this.pollingInterval) {
+        this.stopPolling()
+      }
+  ```
+  The regex terminates at the `}` on line 534 (closing the if-guard), never reaching
+  line 537 where `enrichAllJobsWithHealth` is called.
+
+  ### Important Finding
+
+  The PRIMARY issue (missing enrichAllJobsWithHealth call) appears to already be FIXED
+  in the current working tree - line 537 DOES contain:
+  ```typescript
+  const enrichedJobs = await this.enrichAllJobsWithHealth(newJobs)
+  ```
+
+  However, the test still reports failure because the regex can't reach that line.
+  This is a FALSE NEGATIVE - the code is correct, but the test regex is broken.
+
+  ### Test 2 Verification
+
+  Test 2 in the same file (`computeDiff should compare enriched jobs`) uses a different
+  approach (line 54) that searches between 'discoverAllJobs' and 'computeDiff' within
+  the startPolling region, and that test PASSES - confirming the enrichment call exists.
+
+  ### Conclusion
+
+  The bug (test failure) IS reproducible. The fix requires updating the test's regex
+  to properly extract the full method body, as suggested in the bug spec's fix_guidance.

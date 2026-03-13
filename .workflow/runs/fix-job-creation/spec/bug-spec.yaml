@@ -1,0 +1,77 @@
+title: "Cron job creation lacks duplicate detection and scheduled concurrent-run guard"
+
+description: |
+  Three issues were reported with cron job creation in the agentboard cron manager:
+
+  1. "Create Job button not wired" — Investigation shows this is a FALSE ALARM. The
+     full chain is wired: CronManager.tsx button → CronCreateModal → WS message
+     'cron-job-create' → wsRouter dispatch → cronHandlers.handleCronJobCreate →
+     cronManager.createCronJob/createSystemdTimer. All links are connected and functional.
+
+  2. "No duplicate detection" — CONFIRMED. The createCronJob() method in cronManager.ts
+     reads the existing crontab, unconditionally appends the new entry, and writes it back
+     with zero checking for an existing entry with the same schedule+command. Similarly,
+     createSystemdTimer() overwrites any existing unit file at the same path without
+     checking existence. The handler (handleCronJobCreate) performs no pre-check against
+     the in-memory jobCache either. Users can create unlimited identical cron entries.
+
+  3. "No concurrent-run guard for scheduled runs" — CONFIRMED (partial). Manual runs via
+     "Run Now" ARE guarded by an activeManualRuns Set in cronHandlers.ts (line 68). However,
+     scheduled runs executed by the OS cron daemon have NO guard — the crontab entry written
+     by createCronJob is bare (schedule + command) with no flock wrapper or other locking
+     mechanism. If a job takes longer than its interval, the cron daemon will happily start
+     a second concurrent instance.
+
+reproduction:
+  steps:
+    - "Open the Agentboard UI and navigate to the Cron Manager tab"
+    - "Click '+ Create' to open the job creation modal"
+    - "Enter a schedule (e.g. '* * * * *') and command (e.g. 'echo hello')"
+    - "Click 'Create' — the job is created successfully"
+    - "Repeat steps 2-4 with the identical schedule and command"
+    - "Observe: a duplicate cron entry is created with no warning or rejection"
+    - "For the concurrent-run bug: create a job with schedule '* * * * *' and a long-running command (e.g. 'sleep 120')"
+    - "Wait for two consecutive scheduled executions — observe both run simultaneously with no mutual exclusion"
+  environment: "Bun 1.x, Linux with cron daemon, agentboard dev server (port 4040)"
+
+expected: |
+  - Creating a cron job with the same schedule and command as an existing job should
+    be rejected with a clear error message (e.g. "A job with this schedule and command
+    already exists").
+  - For systemd timers, creating a timer with the same service name should be rejected
+    if the unit file already exists.
+  - Scheduled cron job executions should be wrapped with a concurrency guard (e.g.
+    flock -n) so that if a previous run is still active, the new invocation is skipped
+    rather than running concurrently.
+
+actual: |
+  - Duplicate cron entries are created without any detection or warning. The crontab
+    accumulates identical lines.
+  - systemd timer/service unit files are silently overwritten.
+  - Scheduled runs have no concurrency guard. The OS cron daemon starts a new process
+    at each interval regardless of whether the previous run has completed, risking
+    resource exhaustion, data corruption, or unpredictable side effects.
+
+affected_files:
+  - "src/server/cronManager.ts"
+  - "src/server/handlers/cronHandlers.ts"
+  - "src/server/wsRouter.ts"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass
+
+notes: |
+  Bug 1 ("Create Job button not wired") was investigated and found to be a false alarm —
+  the button is fully wired end-to-end. The remaining two bugs (duplicate detection and
+  concurrent-run guard) are confirmed and should be addressed.
+
+  Recommended fixes:
+  - Duplicate detection in createCronJob: scan existing crontab lines for matching
+    schedule+command before appending. In createSystemdTimer: check unit file existence
+    with Bun.file(timerPath).exists() before writing.
+  - Concurrent-run guard: wrap crontab commands with 'flock -n /tmp/agentboard-<jobId>.lock'
+    when writing the entry. For systemd timers, the existing Type=oneshot provides partial
+    protection but should be documented.

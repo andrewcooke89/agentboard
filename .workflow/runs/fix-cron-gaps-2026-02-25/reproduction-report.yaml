@@ -1,0 +1,53 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  All 4 gaps confirmed via static code analysis:
+
+  GAP-04 — No framer-motion animations in cron components:
+    - grep for 'framer-motion|AnimatePresence|motion.div' in src/client/components/cron/ → 0 matches
+    - Non-cron components DO use it: SessionList.tsx imports from 'motion/react' with
+      AnimatePresence + motion.div (line 2, 609, 611, 852). PendingReviewDashboard.tsx
+      also uses AnimatePresence + motion.div (line 2, 168, 175, 228).
+    - package.json confirms framer-motion (^12.34.3) and motion (^12.25.0) are installed
+    - Zero cron components import either library
+
+  GAP-05 — No server-side concurrent-run guard:
+    - handleCronJobRunNow (cronHandlers.ts:262-303) spawns unconditionally
+    - No check for 'already running', 'activeRun', 'runningJobs', or 'concurrent' anywhere in the function
+    - Line 262: immediately generates runId and proceeds
+    - Line 267: sends cron-run-started without checking prior runs
+    - Line 270: fire-and-forget async block spawns the job with no guard
+    - Client-side CronJobControls.tsx uses a runningJobs Set to disable the button,
+      but this is trivially bypassable via direct WebSocket message
+
+  GAP-06 — Cleanup methods exist but never scheduled:
+    - cronManager.ts:668 defines cleanOrphanedPrefs(currentJobIds)
+    - cronManager.ts:674 defines pruneRunHistory()
+    - db.ts:730 defines pruneRunHistory(db)
+    - grep for 'cleanOrphan|pruneRun' in src/server/ → only the definitions, zero call sites
+    - grep for 'setInterval.*cron|cron.*setInterval' in src/server/index.ts → 0 matches
+    - index.ts DOES have setInterval patterns for other cleanup:
+      line 179: workflowCleanupInterval, line 180: sessionCleanupInterval
+      But no equivalent cronCleanupInterval exists
+
+  GAP-08 — Session linking non-functional:
+    - CronSessionLink.tsx:58 hardcodes "No active sessions" in the dropdown
+    - grep for 'useSessionStore' in src/client/components/cron/ → 0 matches
+    - CronSessionLink.tsx imports only { useState } from 'react' — no store access
+    - Props are limited to { jobId, linkedSessionId } — no sessions list passed in
+    - Linked session chip (line 31-35) shows truncated ID with no onClick handler
+    - CronJobDetail.tsx:106-110 shows isManagedByAgentboard as a static display icon
+      (⚙ emoji) with no click handler and no toggle functionality
+    - No import of cron-job-set-managed WS message type in any cron component
+
+notes: |
+  Reproduction was performed via static code analysis (reading source files and
+  searching for patterns). All 4 gaps are structural — they are missing code paths,
+  missing imports, and hardcoded placeholders. They do not require runtime testing
+  to confirm; the absence of code is definitive.
+
+  The existing cleanup patterns in index.ts (workflowCleanupInterval at line 179,
+  sessionCleanupInterval at line 180) provide a clear template for GAP-06 fixes.
+
+  The existing framer-motion usage in SessionList.tsx and PendingReviewDashboard.tsx
+  provides a clear template for GAP-04 fixes.

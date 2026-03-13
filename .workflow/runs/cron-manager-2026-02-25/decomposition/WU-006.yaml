@@ -1,0 +1,43 @@
+id: WU-006
+title: "History & Log Services"
+description: |
+  Implement CronHistoryService: collect run history from systemd journal timestamps,
+  syslog pairs, and manual runs from DB. Merge manual + system runs. Support
+  pagination (limit + before cursor). Implement CronLogService: aggregate logs
+  from journalctl -u for systemd, syslog/mail spool for cron, and detected log
+  redirections. Support line count and offset.
+files:
+  - path: src/server/cronHistoryService.ts
+    action: modify
+    description: "Implement history collection, merge, pagination"
+  - path: src/server/cronLogService.ts
+    action: modify
+    description: "Implement log aggregation from journal/syslog/mail"
+dependencies:
+  - WU-001
+requirements:
+  - REQ-26
+  - REQ-30
+  - REQ-31
+  - REQ-88
+acceptance_criteria:
+  - type: unit_test
+    description: "Collects systemd run history from journal timestamps"
+  - type: unit_test
+    description: "Collects cron run history from syslog pairs"
+  - type: unit_test
+    description: "Merges manual runs from DB with system log runs"
+  - type: unit_test
+    description: "Pagination with limit and before cursor"
+  - type: unit_test
+    description: "Retrieves systemd logs via journalctl -u"
+  - type: unit_test
+    description: "Retrieves cron logs from syslog"
+  - type: unit_test
+    description: "Detects and reads log redirections from cron commands"
+interfaces:
+  exports:
+    - "getRunHistory(jobId, limit, before?): Promise<JobRunRecord[]>"
+    - "recordManualRun(jobId, record): Promise<void>"
+    - "getLogs(jobId, lines, offset?): Promise<string[]>"
+estimated_loc: 200

@@ -1,0 +1,135 @@
+verdict: PASS
+
+reviewer: spec-reviewer
+reviewed_at: "2026-02-24"
+spec_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24-r4/refined-spec.yaml
+
+constitution_checks:
+  security:
+    result: pass
+    notes: |
+      Credential handling is well-specified and secure:
+      - Uint8Array storage with explicit zeroing on expiry (REQ-83), not JS strings which
+        cannot be reliably wiped from memory.
+      - WSS-only enforcement in production; plain WS logs a warning (REQ-84).
+      - Field named 'sudoCredential' avoids accidental logging by secret-detection regex.
+      - Configurable grace period with auto-expiry via setTimeout.
+      - TEST-97 explicitly verifies buffer zeroing behavior.
+
+      Input sanitization is thorough:
+      - REQ-96 rejects newline (\n, \r) and null byte characters in cron job commands,
+        preventing crontab injection attacks.
+      - REQ-52 validates systemd unit names against /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/,
+        preventing path traversal via unit names like '../escape'.
+      - TEST-95 and TEST-96 cover both injection and validation scenarios.
+
+      Destructive operation safety:
+      - REQ-48 (invariant): backup-before-modify for all destructive/edit operations.
+      - REQ-46: confirmation dialog for delete.
+      - REQ-99: type-to-confirm for system-level unit deletion (high friction for high risk).
+      - REQ-56: bulk delete requires confirmation listing all job names.
+
+      No credential patterns detected in code blocks. All references use 'sudoCredential'
+      terminology consistently throughout the spec.
+
+  architecture:
+    result: pass
+    notes: |
+      Scope is well-defined with explicit file lists:
+      - 4 new backend files (cronManager, cronHistoryService, cronLogService, handlers)
+      - 19 new frontend components under src/client/components/cron/
+      - 1 new Zustand store (cronStore.ts)
+      - 6 modified files with clear justification for each modification
+      - 3 explicitly excluded files (SessionManager.ts, Terminal.tsx, sessionStore.ts)
+      No wildcard scope patterns.
+
+      Follows existing agentboard conventions:
+      - Hono backend with WebSocket message protocol (matching existing session pattern)
+      - React 18 frontend with Zustand state management
+      - SQLite database via existing agentboard.db and initDatabase()
+      - motion/react animations consistent with SessionList
+      - Tailwind CSS styling
+
+      CronManager singleton lifecycle is clear:
+      - Instantiated in index.ts, started on first WS client, stopped when no clients.
+      - Polling pauses when no clients are connected (resource-efficient).
+
+      Data model separation is clean:
+      - System state comes from discovery (never persisted to DB)
+      - User preferences stored in cron_job_prefs (never stores system state)
+      - Health is always derived from live data, never persisted (REQ-59)
+      - Run history DB only stores manual runs; scheduled history comes from system logs (REQ-88)
+
+      WebSocket protocol is well-documented with 12 server message types and 14 client
+      message types, all prefixed with 'cron-' to avoid collision with existing messages.
+
+  quality:
+    result: pass
+    notes: |
+      99 acceptance criteria (REQ-01 through REQ-99) with valid type annotations:
+      - behavioral: UI interactions, animations, navigation (REQ-01..03, 10, 14..20, etc.)
+      - contract: backend/protocol guarantees (REQ-04, 06..09, 11..12, 30..31, etc.)
+      - invariant: safety properties (REQ-05, 40, 48, 59, 70, 96)
+      - benchmark: performance requirements (REQ-80, 91..93)
+      - property: system-wide characteristics (REQ-83..84, 94..95)
+      All types are appropriately assigned to their respective requirements.
+
+      97 test specifications (TEST-01 through TEST-97) provide comprehensive coverage:
+      - Discovery: TEST-01..06, TEST-94 (including resilience and non-systemd)
+      - Project grouping: TEST-07..08
+      - Avatars: TEST-09..11
+      - Polling & diffs: TEST-12..14
+      - List pane: TEST-15..22
+      - Detail pane: TEST-23..27
+      - Run Now: TEST-28..31
+      - History: TEST-32..36
+      - Logs: TEST-37..40
+      - Job creation: TEST-41..44
+      - Bulk operations: TEST-45..48
+      - Health & failure: TEST-49..55
+      - Duration: TEST-56..58
+      - Tags: TEST-59..63
+      - Notifications: TEST-64..68
+      - Session integration: TEST-69..73
+      - Timeline: TEST-74..78
+      - Privilege escalation: TEST-79..82, TEST-97
+      - Settings: TEST-83..86
+      - WebSocket protocol: TEST-87..90
+      - Accessibility: TEST-91..93
+      - Security: TEST-95..96
+
+      4 risks (RISK-01 through RISK-04) all have concrete mitigations and corresponding
+      requirements/tests. No open questions remain.
+
+      Refinement summary clearly documents all changes from prior iterations, including
+      new requirements added, existing requirements amended, and new tests added.
+
+feedback: |
+  The refined spec passes all three constitution sections (security, architecture, quality).
+
+  **Strengths:**
+  - Credential handling is exemplary: Uint8Array storage, explicit zeroing, WSS enforcement,
+    consistent 'sudoCredential' naming to avoid secret-detection false positives.
+  - Input sanitization (REQ-96) and backup-before-modify (REQ-48) address key security risks.
+  - Type-to-confirm for system unit deletion (REQ-99) is appropriate friction for dangerous ops.
+  - Graceful degradation for non-systemd systems (REQ-97, RISK-04) prevents hard failures.
+  - Deterministic job IDs based on source+name+command (not schedule) ensures preference continuity.
+  - Orphaned preferences cleanup with 24-hour grace period (REQ-98) prevents data rot.
+  - Clean data model separation: system state from discovery, user state from DB, health always derived.
+  - WebSocket protocol is well-namespaced with 'cron-' prefix avoiding collision.
+  - Test coverage is comprehensive (97 tests across all functional areas).
+  - All 4 risks have concrete mitigations with corresponding requirements and tests.
+
+  **Minor observations (non-blocking):**
+  - The `cron-sudo-auth` message (line 375) transmits the credential as a JSON string over
+    WebSocket. The backend correctly stores it as Uint8Array (REQ-83), but the serialization
+    bridge (JSON string -> Uint8Array conversion at the handler boundary) could be documented
+    more explicitly to ensure implementors zero the intermediate string representation.
+  - Sections 4-12 reference "unchanged from original spec" without inlining. All acceptance
+    criteria are self-contained, but implementors should have access to the original spec
+    for architectural context on those sections.
+  - The DiceBear external API (REQ-11) loads SVGs from a third-party domain. No Content
+    Security Policy considerations are mentioned. Non-blocking since agentboard is a local
+    tool, not public-facing.
+
+  Overall: The spec is production-quality and ready for decomposition.

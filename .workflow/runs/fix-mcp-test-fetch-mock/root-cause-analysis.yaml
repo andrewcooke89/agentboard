@@ -1,0 +1,109 @@
+verdict: pass
+
+root_cause: |
+  Two distinct type incompatibilities in MCP test files:
+
+  1. Bun's mock() returns Mock<T> which lacks the 'preconnect' static property present on
+     typeof globalThis.fetch. TypeScript's TS2352 rejects direct casts between structurally
+     incompatible types. The tests use either `mock(...) as typeof fetch` or assign a bare
+     async arrow function cast `as typeof globalThis.fetch`, both of which fail because the
+     source type is missing 'preconnect'.
+
+  2. Test fixture data uses source: 'tmux' but the SessionSource union type only allows
+     'managed' | 'external'. The value 'tmux' was never valid — it was a test authoring mistake.
+
+location:
+  file: "src/server/mcp/__tests__/ (3 files)"
+  line_range: "see details below"
+  function: "mockFetchResponses (2 files), inline fetch assignment (1 file), test fixtures (1 file)"
+
+error_locations:
+  - file: "src/server/mcp/__tests__/cronMcpServer.test.ts"
+    line: 83
+    issue: "TS2352 — `mock(...) as typeof fetch` missing 'preconnect'"
+    function: "mockFetchResponses"
+
+  - file: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+    line: 103
+    issue: "TS2352 — `mock(...) as typeof fetch` missing 'preconnect'"
+    function: "mockFetchResponses"
+
+  - file: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+    line: 1259
+    issue: "TS2322 — source: 'tmux' not assignable to SessionSource"
+    function: "test fixture data"
+
+  - file: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+    line: 1269
+    issue: "TS2322 — source: 'tmux' not assignable to SessionSource"
+    function: "test fixture data"
+
+  - file: "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+    line: 352-359
+    issue: "TS2352 — async arrow function cast `as typeof globalThis.fetch` missing 'preconnect'"
+    function: "inline fetch mock in test"
+
+  - file: "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+    line: 1102-1109
+    issue: "TS2352 — async arrow function cast `as typeof globalThis.fetch` missing 'preconnect'"
+    function: "inline fetch mock in test"
+
+mechanism: |
+  Issue 1 (TS2352 — fetch mock casting):
+  Bun's fetch type signature includes a static 'preconnect' method:
+    fetch(input, init?): Promise<Response>  AND  fetch.preconnect(url): void
+  Bun's mock() returns Mock<T> which wraps the callable signature but does not include
+  static properties like 'preconnect'. TypeScript sees the Mock<T> or bare arrow function
+  as structurally incompatible with typeof fetch because of this missing property, and
+  rejects the direct cast with TS2352 ("may be a mistake").
+
+  Issue 2 (TS2322 — invalid SessionSource):
+  src/shared/types.ts:3 defines: export type SessionSource = 'managed' | 'external'
+  The test fixtures at lines 1259 and 1269 of wu006-healthAnalysisTools.test.ts use the
+  string literal 'tmux' which is not a member of this union. This was a test authoring
+  error — 'tmux' was likely confused with the tmux discovery mechanism, but sessions
+  discovered from tmux are typed as 'external'.
+
+fix_approach: |
+  1. Fetch mock casting (4 locations) — insert intermediate `unknown` cast:
+
+     cronMcpServer.test.ts line 83:
+       BEFORE: }) as typeof fetch
+       AFTER:  }) as unknown as typeof fetch
+
+     wu006-healthAnalysisTools.test.ts line 103:
+       BEFORE: }) as typeof fetch
+       AFTER:  }) as unknown as typeof fetch
+
+     wu007-writeNavigationTools.test.ts line 359:
+       BEFORE: }) as typeof globalThis.fetch
+       AFTER:  }) as unknown as typeof globalThis.fetch
+
+     wu007-writeNavigationTools.test.ts line 1109:
+       BEFORE: }) as typeof globalThis.fetch
+       AFTER:  }) as unknown as typeof globalThis.fetch
+
+  2. SessionSource value (2 locations) — use valid union member:
+
+     wu006-healthAnalysisTools.test.ts line 1259:
+       BEFORE: source: 'tmux'
+       AFTER:  source: 'external'
+
+     wu006-healthAnalysisTools.test.ts line 1269:
+       BEFORE: source: 'tmux'
+       AFTER:  source: 'external'
+
+risk_assessment: |
+  Very low risk. All changes are in test files only — no production code is modified.
+
+  1. The `unknown` intermediate cast is a standard TypeScript pattern for bridging
+     structurally incompatible types in test mocks. It does not change runtime behavior.
+     The mock still works identically — only the type assertion changes.
+
+  2. Changing 'tmux' to 'external' aligns test fixtures with the actual type definition.
+     Since 'tmux' was never a valid SessionSource value, any test logic branching on
+     source values was already not testing a real scenario. 'external' is the semantically
+     correct value for sessions discovered from tmux windows.
+
+  No risk of breaking existing tests — these changes only fix type errors that currently
+  prevent clean typecheck. Runtime test behavior is unchanged.

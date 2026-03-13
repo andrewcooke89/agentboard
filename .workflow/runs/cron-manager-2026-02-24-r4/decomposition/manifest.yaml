@@ -1,0 +1,231 @@
+schema_version: "decomposition_v1.0"
+spec_ref: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-24/refined-spec.yaml
+project_root: /home/andrew-cooke/tools/agentboard
+feature: "Cron & Systemd Timer Manager"
+
+summary:
+  total_work_units: 19
+  total_files_new: 25
+  total_files_modified: 6
+  total_files: 31
+  max_parallel_width: 4
+  critical_path: [WU-001, WU-002, WU-003, WU-004, WU-007]
+  critical_path_length: 5
+
+constraints_validated:
+  max_work_units: { limit: 20, actual: 19, pass: true }
+  max_files_per_wu: { limit: 5, actual_max: 3, pass: true }
+  max_direct_deps: { limit: 3, actual_max: 3, pass: true }
+  total_files: { limit: 50, actual: 31, pass: true }
+  dag_acyclic: true
+
+work_units:
+  - id: WU-001
+    title: "Shared Types & Data Model"
+    layer: 0
+    dependencies: []
+
+  - id: WU-002
+    title: "Database Schema & Settings Store"
+    layer: 1
+    dependencies: [WU-001]
+
+  - id: WU-003
+    title: "CronManager - Discovery & Parsing"
+    layer: 1
+    dependencies: [WU-001, WU-002]
+
+  - id: WU-004
+    title: "CronManager - Polling, Diff & Health"
+    layer: 2
+    dependencies: [WU-003]
+
+  - id: WU-005
+    title: "CronManager - Operations & Credential Cache"
+    layer: 2
+    dependencies: [WU-003]
+
+  - id: WU-006
+    title: "History & Log Services"
+    layer: 1
+    dependencies: [WU-001, WU-002]
+
+  - id: WU-007
+    title: "WebSocket Handlers & Server Wiring"
+    layer: 3
+    dependencies: [WU-004, WU-005, WU-006]
+
+  - id: WU-008
+    title: "Frontend Zustand Store"
+    layer: 1
+    dependencies: [WU-001]
+
+  - id: WU-009
+    title: "App Integration & CronManager Shell"
+    layer: 2
+    dependencies: [WU-008]
+
+  - id: WU-010
+    title: "List Pane Core"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-011
+    title: "Bulk Selection & Actions"
+    layer: 4
+    dependencies: [WU-010]
+
+  - id: WU-012
+    title: "Detail Pane & Overview Tab"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-013
+    title: "History & Logs Tabs"
+    layer: 4
+    dependencies: [WU-012]
+
+  - id: WU-014
+    title: "Script Tab & Job Controls"
+    layer: 4
+    dependencies: [WU-012]
+
+  - id: WU-015
+    title: "Job Creation Modal"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-016
+    title: "Privilege Escalation & Destructive Confirms"
+    layer: 5
+    dependencies: [WU-014]
+
+  - id: WU-017
+    title: "Tags & Avatars"
+    layer: 4
+    dependencies: [WU-010, WU-012]
+
+  - id: WU-018
+    title: "Schedule Timeline"
+    layer: 3
+    dependencies: [WU-009]
+
+  - id: WU-019
+    title: "Session Integration & Notifications"
+    layer: 4
+    dependencies: [WU-010, WU-012]
+
+dependency_graph:
+  # Layer 0 — Foundation (no deps)
+  # WU-001: Types
+  #
+  # Layer 1 — Backend & Frontend foundations (parallel)
+  # WU-002: DB schema (← WU-001)
+  # WU-003: Discovery (← WU-001, WU-002)
+  # WU-006: History/Log services (← WU-001, WU-002)
+  # WU-008: Frontend store (← WU-001)
+  #
+  # Layer 2 — Backend extensions + Frontend shell (parallel)
+  # WU-004: Polling/Diff/Health (← WU-003)
+  # WU-005: Operations/Creds (← WU-003)
+  # WU-009: App integration (← WU-008)
+  #
+  # Layer 3 — Backend wiring + Frontend panels (parallel)
+  # WU-007: WS handlers + server wiring (← WU-004, WU-005, WU-006)
+  # WU-010: List pane (← WU-009)
+  # WU-012: Detail pane (← WU-009)
+  # WU-015: Create modal (← WU-009)
+  # WU-018: Timeline (← WU-009)
+  #
+  # Layer 4 — Feature components (parallel)
+  # WU-011: Bulk actions (← WU-010)
+  # WU-013: History/Logs tabs (← WU-012)
+  # WU-014: Script tab & controls (← WU-012)
+  # WU-017: Tags & avatars (← WU-010, WU-012)
+  # WU-019: Session integration (← WU-010, WU-012)
+  #
+  # Layer 5 — Final
+  # WU-016: Sudo/Delete confirms (← WU-014)
+
+  adjacency:
+    WU-001: []
+    WU-002: [WU-001]
+    WU-003: [WU-001, WU-002]
+    WU-004: [WU-003]
+    WU-005: [WU-003]
+    WU-006: [WU-001, WU-002]
+    WU-007: [WU-004, WU-005, WU-006]
+    WU-008: [WU-001]
+    WU-009: [WU-008]
+    WU-010: [WU-009]
+    WU-011: [WU-010]
+    WU-012: [WU-009]
+    WU-013: [WU-012]
+    WU-014: [WU-012]
+    WU-015: [WU-009]
+    WU-016: [WU-014]
+    WU-017: [WU-010, WU-012]
+    WU-018: [WU-009]
+    WU-019: [WU-010, WU-012]
+
+parallel_groups:
+  - name: "Layer 0 — Foundation"
+    units: [WU-001]
+  - name: "Layer 1 — Backend & Frontend Foundations"
+    units: [WU-002, WU-003, WU-006, WU-008]
+    note: "WU-003 and WU-006 depend on WU-002; WU-008 can run in parallel with all"
+  - name: "Layer 2 — Backend Extensions + Frontend Shell"
+    units: [WU-004, WU-005, WU-009]
+  - name: "Layer 3 — Wiring + Frontend Panels"
+    units: [WU-007, WU-010, WU-012, WU-015, WU-018]
+  - name: "Layer 4 — Feature Components"
+    units: [WU-011, WU-013, WU-014, WU-017, WU-019]
+  - name: "Layer 5 — Final"
+    units: [WU-016]
+
+cross_wu_interfaces:
+  - name: "CronJob type family"
+    defined_in: WU-001
+    consumed_by: [WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008, WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+    contract: "CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, SystemdCreateConfig interfaces in src/shared/types.ts"
+
+  - name: "WebSocket message protocol"
+    defined_in: WU-001
+    consumed_by: [WU-007, WU-008, WU-009]
+    contract: "ServerMessage and ClientMessage discriminated unions extended with cron-* message types"
+
+  - name: "CronManager class API"
+    defined_in: WU-003
+    extended_by: [WU-004, WU-005]
+    consumed_by: [WU-007]
+    contract: "CronManager class with discovery, polling, operations, and health methods"
+
+  - name: "CronHistoryService API"
+    defined_in: WU-006
+    consumed_by: [WU-007]
+    contract: "getRunHistory(jobId, limit, before?) and recordManualRun(jobId, result) methods"
+
+  - name: "CronLogService API"
+    defined_in: WU-006
+    consumed_by: [WU-007]
+    contract: "getLogs(jobId, lines, offset?) and tailLogs(jobId) methods"
+
+  - name: "Database tables"
+    defined_in: WU-002
+    consumed_by: [WU-003, WU-004, WU-005, WU-006]
+    contract: "cron_job_prefs and cron_run_history tables with defined schemas"
+
+  - name: "cronStore Zustand API"
+    defined_in: WU-008
+    consumed_by: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-018, WU-019]
+    contract: "useCronStore hook with state, WS handlers, and actions"
+
+  - name: "CronManager shell component"
+    defined_in: WU-009
+    consumed_by: [WU-010, WU-012, WU-015, WU-018]
+    contract: "CronManager component renders list pane, detail pane, timeline, and create modal slots"
+
+  - name: "Settings store cron fields"
+    defined_in: WU-002
+    consumed_by: [WU-004, WU-005, WU-008, WU-009, WU-010, WU-017, WU-018, WU-019]
+    contract: "cronPollInterval, cronAvatarStyle, cronSudoGracePeriod, notification toggles, timeline defaults in settingsStore"

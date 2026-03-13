@@ -1,0 +1,57 @@
+id: WU-010
+title: "Job List & Row Components"
+description: |
+  Implement CronJobList: grouped list with collapsible group headers (name, count,
+  health dot), search bar with 150ms debounce, sort dropdown, filter buttons,
+  keyboard navigation (arrow keys, Enter to select). Implement CronJobRow: avatar
+  (28x28), name, human-readable schedule, health badge, status dot, tag pills,
+  circuit-board icon for managed jobs, checkbox (visible on hover or bulk mode).
+  Implement CronHealthBadge: colored icon with aria-label and healthReason tooltip.
+  Add motion/react animations for list additions/removals.
+files:
+  - path: src/client/components/cron/CronJobList.tsx
+    action: modify
+    description: "Implement grouped list with search, sort, filter, collapse"
+  - path: src/client/components/cron/CronJobRow.tsx
+    action: modify
+    description: "Implement job row with avatar, badges, tags"
+  - path: src/client/components/cron/CronHealthBadge.tsx
+    action: modify
+    description: "Implement health badge with aria-label"
+dependencies:
+  - WU-008
+requirements:
+  - REQ-10
+  - REQ-14
+  - REQ-15
+  - REQ-16
+  - REQ-17
+  - REQ-18
+  - REQ-92
+  - REQ-94
+  - REQ-95
+acceptance_criteria:
+  - type: unit_test
+    description: "Jobs grouped by projectGroup; System always last"
+  - type: unit_test
+    description: "Group headers collapsible; collapse state persists"
+  - type: unit_test
+    description: "Search filters by name/command/group/tag with 150ms debounce"
+  - type: unit_test
+    description: "Sort by name, next run, last run, status, health"
+  - type: unit_test
+    description: "Filter by all/active/paused/errors/unhealthy/managed/source/tag"
+  - type: unit_test
+    description: "Arrow key navigation in list; Enter to select"
+  - type: unit_test
+    description: "Health badges have aria-label; not sole status indicator"
+  - type: unit_test
+    description: "motion/react animations on list changes"
+  - type: performance
+    description: "List renders smoothly with 200 jobs; virtualized above 100"
+interfaces:
+  exports:
+    - "CronJobList component"
+    - "CronJobRow component"
+    - "CronHealthBadge component"
+estimated_loc: 250

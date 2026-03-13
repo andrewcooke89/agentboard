@@ -1,0 +1,48 @@
+title: "TypeScript errors in webSocketSendReturnBoolean and cronJobCreationRegression test files"
+
+description: |
+  Two test files fail `bun run typecheck` with a total of 19 TypeScript errors.
+
+  (1) src/client/__tests__/webSocketSendReturnBoolean.test.ts — 4 TS2769 errors.
+      Tests assert that WebSocketManager.send() returns a boolean, but the type
+      signature in the test's mock or usage context resolves to void. The actual
+      implementation in useWebSocket.ts already returns boolean, so the test
+      type annotations or mock setup need to align with the real signature.
+
+  (2) src/server/__tests__/cronJobCreationRegression.test.ts — 15 errors:
+      - "ping" is used as a ClientMessage type but does not exist in the
+        ClientMessage discriminated union (src/shared/types.ts). Must use a
+        valid type such as "session-refresh".
+      - Boolean-vs-void return type mismatch on send() mocks (same root cause
+        as file 1).
+      - Mock functions declared with 0 parameters but invoked with 1 or 3
+        arguments, causing TS2345 arity mismatches. Mock callbacks need
+        matching parameter signatures.
+
+reproduction:
+  steps:
+    - "Clone the repo and install dependencies with `bun install`"
+    - "Run `bun run typecheck` from the project root"
+    - "Observe TS2769 errors in src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+    - "Observe TS2769, TS2345, and TS2322 errors in src/server/__tests__/cronJobCreationRegression.test.ts"
+  environment: "Bun 1.x, TypeScript 5.x, Linux"
+
+expected: "`bun run typecheck` passes with zero errors in both test files"
+
+actual: |
+  `bun run typecheck` reports 19 TypeScript errors across the two files:
+    - 4 errors in webSocketSendReturnBoolean.test.ts (TS2769: send() return type)
+    - 15 errors in cronJobCreationRegression.test.ts (TS2769 return type,
+      TS2345 mock arity, invalid 'ping' message type)
+
+affected_files:
+  - "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+  - "src/server/__tests__/cronJobCreationRegression.test.ts"
+  - "src/client/hooks/useWebSocket.ts"
+  - "src/shared/types.ts"
+
+severity: minor
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

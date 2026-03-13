@@ -1,0 +1,73 @@
+title: "startPolling() does not call enrichAllJobsWithHealth on discovered jobs"
+
+description: |
+  Two related issues prevent health enrichment from working correctly in the
+  cron polling loop:
+
+  1. PRIMARY — In the committed source, startPolling() calls discoverAllJobs()
+     then passes raw (unenriched) jobs directly to computeDiff(). The
+     enrichAllJobsWithHealth() method is never invoked, so jobs never receive
+     health, avgDuration, lastRunDuration, or consecutiveFailures fields.
+
+  2. SECONDARY — The regression test that guards this behaviour
+     (health-gaps-regression.test.ts, line 25) uses a regex to extract the
+     startPolling method body. The regex
+       /startPolling\s*\([^)]*\)\s*:\s*void\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/s
+     can only handle one level of brace nesting. startPolling has 3+ levels
+     (method → setInterval callback → if → for), so the regex terminates
+     after capturing only the `if (this.pollingInterval)` guard block. Even
+     after the enrichment call is added to the source, the test still fails
+     because the regex never reaches line 537.
+
+  A working-tree fix already adds the enrichAllJobsWithHealth() call and the
+  new private method, but the test continues to fail due to the regex issue.
+
+reproduction:
+  steps:
+    - "Run: bun test src/server/__tests__/health-gaps-regression.test.ts"
+    - "Observe 1 failing test: 'startPolling() should call enrichAllJobsWithHealth or computeHealth on discovered jobs'"
+    - "The regex on line 25 extracts only the if-guard block, missing the enrichment call on line 537"
+  environment: "Bun 1.3.9, TypeScript 5.x, Linux"
+
+expected: |
+  startPolling() enriches discovered jobs with health data before passing
+  them to computeDiff(), and the regression test correctly verifies this
+  wiring by extracting the full method body.
+
+actual: |
+  Committed source: startPolling() passes raw jobs to computeDiff() with
+  no health enrichment. Working-tree fix adds the call, but the test regex
+  captures only the first 3 lines of the method body (the pollingInterval
+  guard), so the test still reports a false negative.
+
+affected_files:
+  - "src/server/cronManager.ts"
+  - "src/server/__tests__/health-gaps-regression.test.ts"
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+root_cause: |
+  Two compounding issues:
+  (a) The enrichAllJobsWithHealth() call was never wired into startPolling()
+      in the committed code — discoverAllJobs() feeds directly into computeDiff().
+  (b) The test regex uses [^}]+ which absorbs opening braces but cannot match
+      multi-level nesting. It terminates at the closing brace of the if-guard
+      (line 534), never reaching the setInterval callback body where the
+      enrichment call lives (line 537+).
+
+fix_guidance: |
+  1. In cronManager.ts startPolling(): ensure enrichAllJobsWithHealth(newJobs)
+     is called between discoverAllJobs() and computeDiff(). The working-tree
+     diff already shows the correct implementation.
+  2. In health-gaps-regression.test.ts: replace the regex-based method body
+     extraction with a simpler approach that can handle deep nesting, e.g.:
+     - Use a brace-counting loop to extract the full method body, OR
+     - Search for the enrichment call in the source region between
+       'startPolling' and the next method definition, OR
+     - Just check the slice between 'discoverAllJobs' and 'computeDiff'
+       within the startPolling region (test 2 already does this approach
+       on line 54 and passes).
+
+verdict: pass

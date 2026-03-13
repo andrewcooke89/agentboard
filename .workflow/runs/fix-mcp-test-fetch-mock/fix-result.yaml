@@ -1,0 +1,30 @@
+verdict: pass
+
+files_changed:
+  - path: "src/server/mcp/__tests__/cronMcpServer.test.ts"
+    description: "Line 83: Added intermediate `unknown` cast for fetch mock assignment (`}) as unknown as typeof fetch`) to fix TS2352 error about missing 'preconnect' property on Bun's Mock<T> type."
+  - path: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+    description: |
+      Three fixes:
+      1. Line 107: Added intermediate `unknown` cast for fetch mock (`}) as unknown as typeof fetch`)
+      2. Lines 1259, 1269: Changed invalid `source: 'tmux'` to `source: 'external'` in test fixtures (SessionSource type only allows 'managed' | 'external')
+  - path: "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+    description: "Lines 359 and 1109: Added intermediate `unknown` cast for fetch mock assignments (`}) as unknown as typeof globalThis.fetch`) in two async arrow function casts."
+
+description: |
+  Fixed 6 TypeScript compilation errors across 3 MCP server test files:
+
+  1. Fetch mock casting (TS2352) — 4 locations:
+     Bun's Mock<T> type lacks the static 'preconnect' property that exists on typeof fetch.
+     The fix inserts an intermediate `unknown` cast: `mock(...) as unknown as typeof fetch`.
+     This is a standard TypeScript pattern for bridging structurally incompatible types in tests.
+
+  2. Invalid SessionSource value (TS2322) — 2 locations:
+     Test fixtures used `source: 'tmux'` but the SessionSource union type only allows
+     'managed' | 'external'. Changed to 'external' which is semantically correct for
+     sessions discovered from tmux windows.
+
+  All changes are test-only — no production code was modified.
+  All 238 tests across the 3 files pass.
+
+tests_expected_to_pass: true

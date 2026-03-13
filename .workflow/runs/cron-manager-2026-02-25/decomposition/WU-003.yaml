@@ -1,0 +1,56 @@
+id: WU-003
+title: "CronManager Discovery & Parsing"
+description: |
+  Implement job discovery in CronManager: discoverAllJobs aggregating from
+  user crontab, system crontab, /etc/cron.d/*, user systemd timers, and system
+  systemd timers. Per-source failures must not block others. Implement stable
+  ID generation (source+name+command hash), script path resolution, project
+  group inference, avatar URL generation, cron expression parsing (cronstrue +
+  cron-parser), systemd calendar parsing, and next-run projection.
+files:
+  - path: src/server/cronManager.ts
+    action: modify
+    description: "Implement discovery, parsing, and ID generation methods"
+dependencies:
+  - WU-001
+requirements:
+  - REQ-04
+  - REQ-05
+  - REQ-06
+  - REQ-07
+  - REQ-11
+  - REQ-85
+  - REQ-86
+  - REQ-91
+  - REQ-97
+acceptance_criteria:
+  - type: unit_test
+    description: "Discovers jobs from user crontab parsing"
+  - type: unit_test
+    description: "Discovers jobs from /etc/crontab and /etc/cron.d/*"
+  - type: unit_test
+    description: "Discovers user and system systemd timers"
+  - type: unit_test
+    description: "Per-source failure does not block other sources"
+  - type: unit_test
+    description: "Generates deterministic stable ID from source+name+command"
+  - type: unit_test
+    description: "Resolves scriptPath; null for pipelines/inline"
+  - type: unit_test
+    description: "Infers projectGroup from script parent directory"
+  - type: unit_test
+    description: "Parses cron expressions to human-readable via cronstrue"
+  - type: unit_test
+    description: "Projects next runs via cron-parser"
+  - type: unit_test
+    description: "Detects systemd availability; skips sources if unavailable"
+  - type: performance
+    description: "Discovery completes within 2s for <200 jobs"
+interfaces:
+  exports:
+    - "discoverAllJobs(): Promise<CronJob[]>"
+    - "generateJobId(source, name, command): string"
+    - "parseCronSchedule(expr): { human: string, nextRuns: Date[] }"
+    - "parseSystemdCalendar(spec): { human: string, nextRuns: Date[] }"
+    - "detectSystemd(): Promise<boolean>"
+estimated_loc: 350

@@ -1,0 +1,95 @@
+id: WU-005
+title: "MCP Server Core & Read Tools"
+description: |
+  Create the cron MCP server — a standalone process using the MCP TypeScript SDK with
+  stdio transport. Implements the HTTP client for communicating with agentboard's
+  /api/cron-ai/* endpoints. Registers 7 read tools for job listing, search, detail,
+  history, and logs. Includes structured error handling for server unavailability.
+
+layer: 1
+dependencies:
+  - WU-001
+
+files:
+  new:
+    - path: src/server/mcp/cronMcpServer.ts
+      description: |
+        MCP server entry point (runs as standalone process via `bun run`).
+        Uses @modelcontextprotocol/sdk for stdio transport.
+
+        **Bootstrap:**
+        - Read AGENTBOARD_URL, AGENTBOARD_WS, AGENTBOARD_AUTH_TOKEN from env vars
+        - Create HTTP client with base URL and auth header
+        - Create MCP Server instance with stdio transport
+        - Register all tools and resources
+        - Start serving
+
+        **HTTP Client Helper:**
+        - fetchFromAgentboard(path, options?): GET/POST with auth header, 3 retries, structured error on failure
+        - Returns typed JSON response or { error: 'agentboard server unavailable' }
+
+        **Read Tools (7):**
+        - list_jobs(): GET /api/cron-ai/jobs → CronJob[]
+        - list_jobs_by_group(group: string): GET /api/cron-ai/jobs?group=:group → CronJob[]
+        - search_jobs(query: string): GET /api/cron-ai/jobs/search?q=:query → CronJob[]
+        - get_job_detail(jobId: string): GET /api/cron-ai/jobs/:id → CronJobDetail
+        - get_run_history(jobId: string, limit?: number): GET /api/cron-ai/jobs/:id/history?limit=:n → JobRunRecord[]
+        - get_job_logs(jobId: string, lines?: number): GET /api/cron-ai/jobs/:id/logs?lines=:n → string[]
+        - get_log_snippet(jobId: string, runTimestamp: string): GET /api/cron-ai/jobs/:id/logs?run=:ts → string[]
+
+cross_wu_interfaces:
+  exports:
+    - "MCP Server instance — extended by WU-006 (health/analysis tools), WU-007 (write/nav tools), WU-008 (resources/WS)"
+    - "fetchFromAgentboard() HTTP helper — used by WU-006, WU-007"
+  imports:
+    - "Types from WU-001 — CronJob, CronJobDetail, JobRunRecord"
+    - "HTTP API from WU-004 — /api/cron-ai/* endpoints (runtime dependency)"
+
+acceptance_criteria:
+  - id: AC-005-1
+    type: contract
+    description: "MCP server starts on stdio transport and responds to MCP protocol handshake."
+  - id: AC-005-2
+    type: contract
+    description: "7 read tools are registered with correct JSON schemas (parameter names, types, required fields)."
+  - id: AC-005-3
+    type: contract
+    description: "Each tool calls the correct /api/cron-ai/* HTTP endpoint with correct query parameters."
+  - id: AC-005-4
+    type: contract
+    description: "HTTP client includes Authorization: Bearer header when AGENTBOARD_AUTH_TOKEN is set."
+  - id: AC-005-5
+    type: behavioral
+    description: "When agentboard is unavailable, tools return structured error { error: 'agentboard server unavailable' } — not a crash."
+  - id: AC-005-6
+    type: contract
+    description: "HTTP client retries failed requests up to 3 times before returning error."
+
+requirements_covered:
+  - REQ-10   # MCP server with stdio transport
+  - REQ-11   # read tools (partial — 7 of 14)
+  - REQ-58   # HTTP communication with env vars
+  - REQ-60   # graceful degradation (HTTP retries)
+  - REQ-63   # unit tests per tool
+
+tests:
+  - TEST-ID: mcp-server-startup
+    description: "MCP server initializes and completes stdio handshake."
+  - TEST-ID: list-jobs-tool
+    description: "list_jobs calls GET /api/cron-ai/jobs and returns CronJob[]."
+    spec_tests: [TEST-10]
+  - TEST-ID: search-jobs-tool
+    description: "search_jobs('backup') calls GET /api/cron-ai/jobs/search?q=backup."
+    spec_tests: [TEST-11]
+  - TEST-ID: get-job-detail-tool
+    description: "get_job_detail(id) calls GET /api/cron-ai/jobs/:id and returns CronJobDetail."
+    spec_tests: [TEST-12]
+  - TEST-ID: get-run-history-tool
+    description: "get_run_history(id, 10) returns exit codes and durations."
+    spec_tests: [TEST-41]
+  - TEST-ID: get-job-logs-tool
+    description: "get_job_logs(id, 100) returns log lines."
+    spec_tests: [TEST-41]
+  - TEST-ID: server-unavailable
+    description: "When HTTP fails, returns structured error, does not crash."
+    spec_tests: [TEST-56]

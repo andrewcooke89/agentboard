@@ -1,0 +1,128 @@
+verdict: pass
+
+root_cause: |
+  Two distinct coding errors in CronAi test helper functions cause 5 TypeScript
+  compilation failures:
+
+  1. The `findTextContent` (and `findAllTextContent`) helpers use a type predicate
+     `(c): c is string | number` when filtering `ReactTestInstance.children`. The
+     `children` property is typed as `Array<ReactTestInstance | string>` — it never
+     contains `number`. TypeScript's TS2677 rule requires a type predicate's type
+     to be assignable to the parameter type, and `number` is not assignable to
+     `ReactTestInstance | string`. The `typeof c === 'number'` branch is dead code.
+
+  2. The `createWsStubs` helper in CronAiTerminal.test.tsx defines `subscribe` as
+     a two-argument function `(type: string, handler: ...)` that dispatches by
+     message type. The canonical `SubscribeServerMessage` type is a single-argument
+     function `(listener: (message: ServerMessage) => void) => () => void`. The
+     mock was written for a per-type dispatch pattern that doesn't match the actual
+     interface.
+
+errors:
+  - code: TS2677
+    count: 4
+    files:
+      - src/client/components/cron/__tests__/CronAiDrawer.test.tsx:134
+      - src/client/components/cron/__tests__/CronAiProposalCard.test.tsx:117
+      - src/client/components/cron/__tests__/CronAiProposalCard.test.tsx:130
+      - src/client/components/cron/__tests__/CronAiStatusBar.test.tsx:59
+  - code: TS2322
+    count: 1
+    files:
+      - src/client/components/cron/__tests__/CronAiTerminal.test.tsx:156
+
+location:
+  - file: "src/client/components/cron/__tests__/CronAiDrawer.test.tsx"
+    line_range: "133-135"
+    function: "findTextContent"
+  - file: "src/client/components/cron/__tests__/CronAiProposalCard.test.tsx"
+    line_range: "116-118"
+    function: "findTextContent"
+  - file: "src/client/components/cron/__tests__/CronAiProposalCard.test.tsx"
+    line_range: "129-131"
+    function: "findAllTextContent"
+  - file: "src/client/components/cron/__tests__/CronAiStatusBar.test.tsx"
+    line_range: "58-60"
+    function: "findTextContent"
+  - file: "src/client/components/cron/__tests__/CronAiTerminal.test.tsx"
+    line_range: "148-167"
+    function: "createWsStubs"
+
+mechanism: |
+  Error 1 (TS2677 — type predicate mismatch):
+  `ReactTestInstance.children` is `Array<ReactTestInstance | string>`. The filter
+  callback uses `(c): c is string | number => ...` as a type predicate. TypeScript
+  requires the predicate type (`string | number`) to be assignable to the callback
+  parameter type (inferred as `ReactTestInstance | string`). Since `number` is not
+  assignable to `ReactTestInstance | string`, TS2677 fires. This is purely a type
+  error — at runtime the filter works fine because children are never numbers, so
+  the `typeof c === 'number'` check is harmless dead code.
+
+  Error 2 (TS2322 — wrong function signature):
+  `SubscribeServerMessage` is defined in `src/shared/types.ts:250` as:
+    `(listener: (message: ServerMessage) => void) => () => void`
+  The mock stub in `createWsStubs` is:
+    `(type: string, handler: (msg: Record<string, unknown>) => void) => () => void`
+  This has 2 params instead of 1, and the types don't match. The mock implements
+  a per-message-type dispatch pattern (storing listeners in a `Map<string, Set>`)
+  that doesn't exist in the real interface. The real interface passes the full
+  `ServerMessage` to a single listener, and the listener is responsible for
+  checking the message type.
+
+  Verified: Two other test files already implement the correct single-listener
+  pattern — CronAiDrawer.test.tsx:110 (no-op stub) and CronManager.WU012.test.tsx:88
+  (full working implementation with listener storage).
+
+fix_approach: |
+  Fix 1 — Type predicate (4 occurrences across 3 files):
+  Change `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')`
+  to `.filter((c): c is string => typeof c === 'string')`.
+  Remove the dead `typeof c === 'number'` check entirely.
+
+  Fix 2 — Subscribe mock (1 occurrence in CronAiTerminal.test.tsx):
+  Rewrite `createWsStubs` to match the `SubscribeServerMessage` signature:
+    - Change `subscribe` to accept a single `listener` callback
+    - Store listeners in a `Set<(msg: ServerMessage) => void>` instead of a per-type Map
+    - Change `emit` to call all registered listeners with the full ServerMessage object
+    - Callers (tests) that rely on per-type emit must pass a complete ServerMessage
+      with a `type` field; the component's own listener handles type dispatch
+
+  Concrete rewrite for createWsStubs:
+  ```typescript
+  function createWsStubs() {
+    const sent: Array<{ type: string; [k: string]: unknown }> = []
+    const listeners = new Set<(msg: ServerMessage) => void>()
+
+    const sendMessage: SendClientMessage = (msg: Record<string, unknown>) => {
+      sent.push(msg as { type: string })
+    }
+
+    const subscribe: SubscribeServerMessage = (listener: (msg: ServerMessage) => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    }
+
+    const emit = (msg: ServerMessage) => {
+      listeners.forEach(fn => fn(msg))
+    }
+
+    return { sent, sendMessage, subscribe, emit }
+  }
+  ```
+  Note: Test call sites using `emit('someType', payload)` must be updated to
+  `emit({ type: 'someType', ...payload } as ServerMessage)`.
+
+  Reference: CronManager.WU012.test.tsx:88-92 already uses this correct pattern.
+
+risk_assessment: |
+  Low risk. Both fixes are confined to test files and do not touch production code.
+
+  Fix 1 risk: Negligible. Removing `| number` from the predicate and the dead
+  `typeof c === 'number'` check has zero runtime impact — React test renderer
+  children are never numbers.
+
+  Fix 2 risk: Low. Changing the mock signature requires updating all test call
+  sites that use `emit(type, payload)` to `emit(fullMessage)`. If any emit call
+  is missed, it will cause a test-time type error (caught at typecheck) or a
+  test failure (caught at test run), both easily detectable. No production code
+  paths are affected.

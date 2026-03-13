@@ -1,0 +1,123 @@
+# Fix Specification: Health computation unwired, poll interval hardcoded,
+#                    orphan cleanup and history pruning not scheduled
+# Generated: 2026-02-27
+
+verdict: pass
+
+title: "Fix: Health computation unwired, poll interval hardcoded, orphan cleanup and history pruning not scheduled"
+
+description: |
+  Fixes four related wiring gaps in the Cron Manager subsystem:
+  (1) Wire health enrichment into the polling loop so all cached jobs carry health data
+      and diff comparisons are stable (enriched-vs-enriched instead of enriched-vs-raw).
+  (2) Make cronAiService health/analysis endpoints read from the enriched jobCache instead
+      of calling discoverAllJobs() directly.
+  (3) Add CRON_POLL_INTERVAL_MS to config.ts and use it in cronHandlers.ts, consistent
+      with TASK_POLL_INTERVAL_MS and WORKFLOW_POLL_INTERVAL_MS patterns.
+  (4) Call cronManager.setDb(db.db) at server startup (immediately after instantiation)
+      so cleanup and prune timers have a valid DB reference when they fire.
+
+changes:
+  # ─── Change 1: Enrich jobs with health in the polling loop ─────────────────
+  - file: "src/server/cronManager.ts"
+    description: |
+      In startPolling() (line 531-548), after discoverAllJobs() returns at line 536 and
+      before computeDiff() is called at line 537, enrich ALL discovered jobs with health
+      data. For each job, call computeHealth(job, history) using run history from db, and
+      merge the health fields (health, avgDuration, lastRunDuration, consecutiveFailures)
+      onto the job object. This ensures:
+      (a) The cache always contains enriched data.
+      (b) computeDiff() at line 583 compares enriched-vs-enriched, eliminating spurious
+          diffs caused by the enrichment field mismatch.
+      (c) Unchanged jobs still get health recomputed when their run history changes.
+
+      Specifically, add an enrichment step between lines 536-537:
+        const enrichedJobs = await this.enrichAllJobsWithHealth(newJobs);
+        const diff = this.computeDiff(enrichedJobs);
+
+      Add a new private method `enrichAllJobsWithHealth(jobs: CronJob[]): Promise<CronJob[]>`
+      that iterates all jobs, fetches run history from this.db (if available), calls
+      computeHealth() for each, and returns the enriched array. If this.db is null, return
+      jobs unchanged (graceful degradation before db is set).
+    change_type: modify
+
+  # ─── Change 2: cronAiService reads from jobCache ──────────────────────────
+  - file: "src/server/cronAiService.ts"
+    description: |
+      In handleGetHealth() (line 349-359), replace the call to cm.discoverAllJobs() at
+      line 351 with a read from cm.jobCache. Convert the Map values to an array:
+        const jobs = cm.jobCache.size > 0
+          ? Array.from(cm.jobCache.values())
+          : await cm.discoverAllJobs();
+      This ensures the health endpoint returns enriched health data from the cache, falling
+      back to raw discovery only if the cache is empty (server just started, no poll yet).
+
+      Apply the same pattern to these handlers that also bypass the cache:
+      - handleGetFailingJobs() (line 361-365): read from jobCache instead of discoverAllJobs()
+      - handleGetScheduleConflicts() (line 367-390): read from jobCache instead of discoverAllJobs()
+      - handleGetScheduleLoad() (line 392-435): read from jobCache instead of discoverAllJobs()
+
+      If jobCache is not currently exposed publicly, add a public getter method to
+      CronManager (e.g. `getCachedJobs(): CronJob[]`) that returns Array.from(this.jobCache.values()).
+    change_type: modify
+
+  # ─── Change 3: Add CRON_POLL_INTERVAL_MS to config ────────────────────────
+  - file: "src/server/config.ts"
+    description: |
+      Add a CRON_POLL_INTERVAL_MS config entry following the exact same pattern as
+      TASK_POLL_INTERVAL_MS (line 101-104) and WORKFLOW_POLL_INTERVAL_MS (line 156-159).
+
+      Add near the other poll interval definitions:
+        cronPollIntervalMs: Number(process.env.CRON_POLL_INTERVAL_MS) || 5000,
+
+      Default of 5000ms preserves current behavior.
+    change_type: modify
+
+  # ─── Change 4: Use config for poll interval in cronHandlers ────────────────
+  - file: "src/server/handlers/cronHandlers.ts"
+    description: |
+      At line 138, replace the hardcoded literal:
+        cronManager.startPolling(5000)
+      with:
+        cronManager.startPolling(config.cronPollIntervalMs)
+
+      Import config at the top of the file if not already imported.
+    change_type: modify
+
+  # ─── Change 5: Call setDb() at server startup ─────────────────────────────
+  - file: "src/server/index.ts"
+    description: |
+      Immediately after CronManager instantiation at line 116:
+        const cronManager = new CronManager()
+      Add on the next line:
+        cronManager.setDb(db.db)
+
+      The db instance (from initDatabase() at line 58) is already initialized and available
+      at this point — it's used for cronHistoryService and cronLogService on the same block.
+      This ensures the db reference is set before the 30s cleanup timer (line 316-323) and
+      24h interval (line 326-333) fire.
+
+      The existing setDb() call in cronHandlers.ts:126 (startPollingLifecycle) becomes a
+      harmless reassignment of the same reference. It can optionally be removed for clarity,
+      but leaving it is safe and preserves the explicit wiring intent.
+    change_type: modify
+
+acceptance_criteria:
+  - "Health enrichment runs for ALL discovered jobs on every poll tick, not just diffed jobs"
+  - "computeDiff() compares enriched jobs against enriched cache (no spurious diffs from field mismatch)"
+  - "GET /api/cron/health returns accurate health counters (healthy/warning/critical) from enriched cache"
+  - "handleGetFailingJobs, handleGetScheduleConflicts, handleGetScheduleLoad all read from enriched jobCache"
+  - "CRON_POLL_INTERVAL_MS env var exists in config.ts with default 5000ms"
+  - "cronHandlers.ts uses config.cronPollIntervalMs instead of hardcoded 5000"
+  - "Setting CRON_POLL_INTERVAL_MS=10000 changes the actual server poll interval to 10s"
+  - "cronManager.db is non-null when the 30s cleanup timer fires (even with no WS clients connected)"
+  - "cleanOrphanedPrefs() executes its SQL query on the 30s timer without requiring a client connection"
+  - "pruneRunHistory() executes its SQL query on the 30s timer without requiring a client connection"
+  - "All existing tests pass (bun run test)"
+  - "bun run lint && bun run typecheck pass with no new errors"
+
+regression_risks:
+  - "Risk 1: Health enrichment adds per-tick DB reads (one getRunHistory per job). For systems with many cron jobs (100+), this could increase DB load. Mitigate by monitoring query time and adding short-lived caching if needed."
+  - "Risk 2: Reading from jobCache in cronAiService means the health endpoint returns stale data between poll ticks (up to 5s delay). This is acceptable since health data is inherently near-real-time, not real-time."
+  - "Risk 3: Calling setDb() at server startup means cleanup/prune timers will execute even in headless deployments with no UI clients. This is desired behavior but could surprise deployments that relied on the (broken) lazy behavior. The jobCache.size > 0 guard at index.ts:318 still prevents cleanup from running before any jobs are discovered."
+  - "Risk 4: If computeDiff() relied on the enriched-vs-raw mismatch to trigger updates (i.e., the spurious diffs served some purpose), fixing the comparison could suppress legitimate update broadcasts. Verify that real job changes (schedule, command, user edits) still trigger diffs correctly."

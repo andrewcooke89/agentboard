@@ -1,0 +1,76 @@
+id: WU-006
+title: "MCP Server Health & Analysis Tools"
+description: |
+  Add 7 more read tools to the MCP server for health monitoring, schedule analysis,
+  UI context, and session discovery. These tools enable the agent's proactive behaviors
+  (failure diagnosis, schedule optimization, health monitoring).
+
+layer: 2
+dependencies:
+  - WU-005
+
+files:
+  modified:
+    - path: src/server/mcp/cronMcpServer.ts
+      changes:
+        - "Add get_health_summary() tool: GET /api/cron-ai/health → {healthy, warning, critical}"
+        - "Add get_failing_jobs() tool: GET /api/cron-ai/health/failing → CronJob[]"
+        - "Add get_schedule_conflicts() tool: GET /api/cron-ai/schedule/conflicts → ScheduleConflict[]"
+        - "Add get_duration_trends(jobId) tool: GET /api/cron-ai/jobs/:id/duration-trends → DurationTrendData"
+        - "Add analyze_schedule_load() tool: GET /api/cron-ai/schedule/load → ScheduleLoadAnalysis"
+        - "Add get_ui_context() tool: GET /api/cron-ai/context → UiContext"
+        - "Add get_available_sessions() tool: GET /api/cron-ai/sessions → Session[]"
+
+cross_wu_interfaces:
+  exports:
+    - "7 additional MCP tools — available to Claude Code agent"
+  imports:
+    - "fetchFromAgentboard() from WU-005 — HTTP client helper"
+    - "Types from WU-001 — UiContext, ScheduleConflict, ScheduleLoadAnalysis, DurationTrendData"
+
+acceptance_criteria:
+  - id: AC-006-1
+    type: contract
+    description: "get_health_summary() returns {healthy: number, warning: number, critical: number}."
+  - id: AC-006-2
+    type: contract
+    description: "get_failing_jobs() returns only jobs with health 'warning' or 'critical', including healthReason."
+  - id: AC-006-3
+    type: contract
+    description: "get_schedule_conflicts() detects jobs with overlapping schedules and returns conflict descriptions."
+  - id: AC-006-4
+    type: contract
+    description: "analyze_schedule_load() returns per-hour job density for the next 24 hours."
+  - id: AC-006-5
+    type: contract
+    description: "get_ui_context() returns the current UiContext snapshot including selectedJobId, activeTab, filters."
+  - id: AC-006-6
+    type: contract
+    description: "All 7 tools have correct JSON schemas with parameter names, types, and descriptions."
+
+requirements_covered:
+  - REQ-11   # read tools (remaining 7 of 14)
+  - REQ-14   # get_ui_context (partial — tool, not resource)
+  - REQ-38   # diagnostic tools (get_job_detail + history + logs in WU-005)
+  - REQ-39   # run history with exit codes
+  - REQ-40   # schedule optimization tools
+  - REQ-63   # unit tests per tool
+
+tests:
+  - TEST-ID: health-summary-tool
+    description: "get_health_summary returns correct counts from mocked data."
+    spec_tests: [TEST-13]
+  - TEST-ID: failing-jobs-tool
+    description: "get_failing_jobs returns only warning+critical jobs."
+    spec_tests: [TEST-14]
+  - TEST-ID: schedule-conflicts-tool
+    description: "get_schedule_conflicts detects two jobs at same time."
+    spec_tests: [TEST-15]
+  - TEST-ID: schedule-load-tool
+    description: "analyze_schedule_load returns per-hour density."
+    spec_tests: [TEST-16, TEST-42]
+  - TEST-ID: ui-context-tool
+    description: "get_ui_context reflects current selection and tab."
+    spec_tests: [TEST-17]
+  - TEST-ID: duration-trends-tool
+    description: "get_duration_trends returns stats for a job."

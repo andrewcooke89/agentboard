@@ -1,0 +1,40 @@
+verdict: pass
+
+files_changed:
+  - path: "src/client/components/TaskQueue.tsx"
+    description: |
+      Added import for AnimatePresence and useReducedMotion from motion/react.
+      Added useReducedMotion() hook call at component top level.
+      Wrapped all three task list sections (Running, Queued, Recent) with
+      AnimatePresence initial={false} to enable enter/exit animations.
+  - path: "src/client/components/TaskItem.tsx"
+    description: |
+      Added import for motion and useReducedMotion from motion/react.
+      Added useReducedMotion() hook call at component top level.
+      Converted root <div> to <motion.div> with animation props:
+      - initial: { opacity: 0, height: 0 } (or false if reduced motion preferred)
+      - animate: { opacity: 1, height: 'auto' }
+      - exit: { opacity: 0, height: 0 } (or just opacity 0 if reduced motion)
+      - transition: { duration: 0.2 }
+      - style: { overflow: 'hidden' } to prevent content flash
+
+description: |
+  Implemented framer-motion (motion/react) animations for the TaskQueue and TaskItem
+  components following the established pattern from SessionList, CronJobList, and
+  PendingReviewDashboard.
+
+  Changes:
+  1. TaskQueue.tsx: Wrapped all three task list sections (Running, Queued, Recent)
+     with AnimatePresence initial={false} to enable enter/exit animations for
+     TaskItem components.
+
+  2. TaskItem.tsx: Converted the root div element to a motion.div with opacity
+     and height transitions (0→1 opacity, 0→auto height on enter; reverse on exit).
+     Added useReducedMotion support for accessibility - users with reduced motion
+     preferences will only see fade transitions, not height animations.
+     Added overflow:hidden to prevent content flash during height animation.
+
+  The build passes successfully. Pre-existing lint/typecheck errors in unrelated
+  test files were not affected by these changes.
+
+tests_expected_to_pass: true

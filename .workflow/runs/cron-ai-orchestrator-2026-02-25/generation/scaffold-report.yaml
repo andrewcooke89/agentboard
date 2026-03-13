@@ -1,0 +1,208 @@
+feature: "Cron AI Orchestrator"
+manifest_path: /home/andrew-cooke/tools/agentboard/.workflow/runs/cron-ai-orchestrator-2026-02-25/decomposition/manifest.yaml
+project_path: /home/andrew-cooke/tools/agentboard
+generated_by: "scaffold-generator"
+date: "2026-02-25"
+
+summary: |
+  Generated code scaffolds for 9 new files across 13 work units (4 layers).
+  All scaffolds contain correct imports, type signatures, exported symbols, and
+  'throw new Error("Not implemented")' stubs for each function/method. Test file
+  uses bun:test with it.todo() for all planned test cases.
+
+  6 existing files require modifications (documented in modification_points below)
+  but are NOT scaffolded — they will be edited in-place during implementation.
+
+scaffold_files:
+  - path: src/client/stores/cronAiStore.ts
+    work_units: [WU-002]
+    status: created
+    description: "Zustand store with persist middleware. State: drawerOpen, drawerWidth, sessionStatus, sessionWindowId, mcpConnected, proposals, pendingProposalCount. All actions stubbed with 'Not implemented' errors. Persists drawerWidth only."
+    exports:
+      - useCronAiStore
+      - CronAiSessionStatus (type)
+      - DRAWER_MIN_WIDTH
+      - DRAWER_MAX_WIDTH
+      - DRAWER_DEFAULT_WIDTH
+    stub_count: 12
+
+  - path: src/server/cronAiService.ts
+    work_units: [WU-003, WU-013]
+    status: created
+    description: "CronAiService class with full method signatures. Proposal queue (createProposal, resolveProposal, getProposal, getPendingProposals), UI context (updateContext, getContext), MCP WS (registerMcpClient, unregisterMcpClient, forwardToMcp, handleMcpNavigate), 14 HTTP handlers, auth middleware, config generation (MCP config + skill file), and session lifecycle (create/kill/status). Only isAiSession() is fully implemented."
+    exports:
+      - CronAiService (class)
+      - CronAiServiceConfig (interface)
+      - CronAiServiceDeps (interface)
+    stub_count: 27
+
+  - path: src/server/__tests__/cronAiService.test.ts
+    work_units: [WU-003]
+    status: created
+    description: "Test file with mocked dependencies and it.todo() entries for all acceptance criteria: proposal create/resolve (3), proposal timeout (2), proposal validation (5), auth validation (4), config generation (3), skill file content (3), health endpoint (1), context tracking (3), MCP client (3), session lifecycle (2). Total: 29 test stubs."
+    exports: []
+    stub_count: 29
+
+  - path: src/server/mcp/cronMcpServer.ts
+    work_units: [WU-005, WU-006, WU-007, WU-008]
+    status: created
+    description: "Standalone MCP server entry point. HTTP client helper (fetchFromAgentboard with 3-retry). 7 read tools (WU-005): listJobs, listJobsByGroup, searchJobs, getJobDetail, getRunHistory, getJobLogs, getLogSnippet. 7 health/analysis tools (WU-006): getHealthSummary, getFailingJobs, getScheduleConflicts, getDurationTrends, analyzeScheduleLoad, getUiContext, getAvailableSessions. 5 write/nav tools (WU-007): proposeChange, selectJob, navigateToTab, showTimeline, filterJobs. 2 resources + WS client (WU-008): getContextResource, getSkillGuidelinesResource, connectWebSocket, sendWsMessage. Main entry point for standalone execution."
+    exports:
+      - fetchFromAgentboard
+      - createMcpServer
+      - listJobs
+      - listJobsByGroup
+      - searchJobs
+      - getJobDetail
+      - getRunHistory
+      - getJobLogs
+      - getLogSnippet
+      - getHealthSummary
+      - getFailingJobs
+      - getScheduleConflicts
+      - getDurationTrends
+      - analyzeScheduleLoad
+      - getUiContext
+      - getAvailableSessions
+      - proposeChange
+      - selectJob
+      - navigateToTab
+      - showTimeline
+      - filterJobs
+      - getContextResource
+      - getSkillGuidelinesResource
+      - connectWebSocket
+      - sendWsMessage
+      - main
+    stub_count: 24
+
+  - path: src/client/components/cron/CronAiDrawer.tsx
+    work_units: [WU-009, WU-013]
+    status: created
+    description: "Slide-in overlay drawer with AnimatePresence animation. Renders CronAiHeader (top), children slot for terminal (middle), CronAiStatusBar (bottom). Escape-to-close, left-edge resize handle, WU-013 session lifecycle hooks (drawer-open/new-conversation WS messages). Resize handler and new-conversation handler are stubs."
+    exports:
+      - CronAiDrawer (default)
+    stub_count: 2
+
+  - path: src/client/components/cron/CronAiHeader.tsx
+    work_units: [WU-009]
+    status: created
+    description: "Header bar with 'AI Assistant' title, session status indicator (colored dot + label for offline/starting/working/waiting), New Conversation button, and close button. Fully implemented (presentational component, no stubs)."
+    exports:
+      - CronAiHeader (default)
+    stub_count: 0
+
+  - path: src/client/components/cron/CronAiStatusBar.tsx
+    work_units: [WU-009]
+    status: created
+    description: "Bottom status bar showing MCP connection status (green/red dot), selected job name context, and pending proposal count badge. Fully implemented (presentational component, no stubs)."
+    exports:
+      - CronAiStatusBar (default)
+    stub_count: 0
+
+  - path: src/client/components/cron/CronAiTerminal.tsx
+    work_units: [WU-010]
+    status: created
+    description: "xterm.js terminal wrapper for AI drawer. Container div with ref for xterm attachment. Lifecycle effect for attach/detach (TODO comments, not stubbed — implementation requires xterm.js integration). Shows 'Waiting for AI session to start...' when no sessionId."
+    exports:
+      - CronAiTerminal (default)
+    stub_count: 0
+
+  - path: src/client/components/cron/CronAiProposalCard.tsx
+    work_units: [WU-011]
+    status: created
+    description: "Proposal card with 4 visual states (pending/accepted/rejected/expired). Operation badge with per-type colors, job name, diff preview, description, Accept/Reject buttons. Reject flow expands feedback input. ARIA role='article' and aria-labels. formatDiff and relativeTime are stubs."
+    exports:
+      - CronAiProposalCard (default)
+      - OPERATION_COLORS
+      - STATE_STYLES
+    stub_count: 2
+
+modification_points:
+  - path: src/shared/types.ts
+    work_units: [WU-001]
+    description: "Add to existing file"
+    changes:
+      - location: "After BulkProgress interface (line ~827)"
+        action: "Add CronAiProposalOperation type, CronAiProposal interface, UiContext interface, ProposalResult interface, ScheduleConflict interface, ScheduleLoadAnalysis interface, DurationTrendData interface"
+      - location: "ServerMessage union (line ~130, after cron-notification)"
+        action: "Add 7 cron-ai-* server message variants"
+      - location: "ClientMessage union (line ~185, after cron-job-history)"
+        action: "Add 5 cron-ai-* client message variants"
+
+  - path: src/client/stores/settingsStore.ts
+    work_units: [WU-002]
+    description: "Extend existing store"
+    changes:
+      - location: "State interface"
+        action: "Add cronAiEnabled (boolean, default true), cronAiDrawerWidth (number, default 480), cronAiAutoGreet (boolean, default true), cronAiProposalTimeout (number, default 300000)"
+      - location: "Actions"
+        action: "Add setCronAiEnabled, setCronAiDrawerWidth, setCronAiAutoGreet, setCronAiProposalTimeout setters"
+
+  - path: src/server/index.ts
+    work_units: [WU-004]
+    description: "Wire CronAiService into server"
+    changes:
+      - location: "Imports section"
+        action: "Import CronAiService"
+      - location: "After cron manager initialization (~line 117)"
+        action: "Instantiate CronAiService with deps and config"
+      - location: "HTTP routes section (~line 320)"
+        action: "Register /api/cron-ai/* routes with auth middleware"
+      - location: "WS handler map (~line 358)"
+        action: "Add cron-ai-* WS handlers delegating to cronAiService"
+      - location: "Startup (~line 328)"
+        action: "Call generateMcpConfig() and generateSkillFile()"
+      - location: "Cleanup function (~line 493)"
+        action: "Call killAiSession() on shutdown"
+
+  - path: src/server/wsRouter.ts
+    work_units: [WU-004]
+    description: "Add WS message types"
+    changes:
+      - location: "WsHandlers interface"
+        action: "Add 7 optional cron-ai-* handler entries"
+      - location: "handleMessage switch statement"
+        action: "Add 7 case branches for cron-ai-* message types"
+
+  - path: src/client/components/cron/CronManager.tsx
+    work_units: [WU-012]
+    description: "Integrate AI drawer"
+    changes:
+      - location: "Header bar (after Timeline/Create buttons)"
+        action: "Add AI toggle button (brain/sparkle icon), hidden when !cronAiEnabled"
+      - location: "Component body"
+        action: "Render CronAiDrawer as child of CronManager"
+      - location: "useEffect hooks"
+        action: "Add context sync effect: watch selectedJobId, activeTab, filters → send cron-ai-context-update WS messages"
+
+  - path: src/client/App.tsx
+    work_units: [WU-012]
+    description: "Add WS handlers and keyboard shortcut"
+    changes:
+      - location: "Keyboard shortcuts handler (~line 600)"
+        action: "Add Cmd+Shift+A / Ctrl+Shift+A to toggle cronAiStore.toggleDrawer()"
+      - location: "WS subscribe useEffect (~line 200)"
+        action: "Add handlers for cron-ai-proposal, cron-ai-navigate, cron-ai-session-status, cron-ai-mcp-status"
+      - location: "cron-ai-navigate handler"
+        action: "Dispatch to cronStore: select_job → setSelectedJobId+scrollIntoView, switch_tab → setActiveTab, show_timeline → setTimelineVisible, filter → setFilterMode/Source/Tags"
+
+directories_created:
+  - src/server/mcp/
+
+stats:
+  new_files_created: 9
+  existing_files_to_modify: 6
+  total_stub_count: 96
+  total_test_stubs: 29
+  fully_implemented_components: 2  # CronAiHeader, CronAiStatusBar (presentational)
+  layers_covered: [0, 1, 2, 3]
+  work_units_covered: [WU-001, WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008, WU-009, WU-010, WU-011, WU-012, WU-013]
+
+validation:
+  all_new_files_created: true
+  all_work_units_covered: true
+  exports_match_cross_wu_interfaces: true
+  test_stubs_match_acceptance_criteria: true
+  no_circular_dependencies: true
+  directory_structure_valid: true

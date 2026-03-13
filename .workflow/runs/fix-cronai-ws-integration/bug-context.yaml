@@ -1,0 +1,37 @@
+```yaml
+affected_areas:
+  - src/client/App.tsx
+  - src/client/stores/cronAiStore.ts
+  - src/client/stores/cronStore.ts
+  - src/client/stores/settingsStore.ts
+  - src/shared/types.ts
+  - src/client/__tests__/app.WU012.test.tsx
+bug_summary: |
+  App.tsx is missing WebSocket message handlers for four `cron-ai-*` message types
+  (`cron-ai-proposal`, `cron-ai-navigate`, `cron-ai-session-status`, `cron-ai-mcp-status`).
+  It also lacks the import for `useCronAiStore` and the Cmd+Shift+A (Ctrl+Shift+A)
+  keyboard shortcut to toggle the CronAI drawer, which should be gated by the
+  `cronAiEnabled` setting. This leads to silent dropping of AI-related messages
+  and an inoperable shortcut, causing 24 tests to fail.
+reproduction_summary: |
+  1. Run `bun test src/client/__tests__/app.WU012.test.tsx` to observe 24 failing tests.
+  2. Alternatively, in the running application, connect a cron-ai session and send a
+     `cron-ai-proposal` WebSocket message; it will be silently dropped.
+  3. Press Cmd+Shift+A (or Ctrl+Shift+A) to find that the CronAI drawer does not toggle.
+severity_assessment: |
+  Major. The core cron-ai feature's UI integration is broken; WebSocket messages
+  are silently dropped, and the essential keyboard shortcut for the AI drawer is
+  non-functional. This directly impacts user interaction and core functionality,
+  failing 24 related tests.
+suggested_investigation_areas: |
+  Focus primarily on `src/client/App.tsx`.
+  1. Verify the absence of the `useCronAiStore` import.
+  2. Examine the existing WebSocket message handler's switch/case block for missing
+     branches corresponding to `cron-ai-proposal`, `cron-ai-navigate`,
+     `cron-ai-session-status`, and `cron-ai-mcp-status`.
+  3. Check for the absence of a keyboard shortcut handler for Cmd+Shift+A
+     (Ctrl+Shift+A).
+  The bug specification confirms that `cronAiStore`, `cronStore`, and `settingsStore`
+  already expose the necessary actions and `types.ts` includes the message
+  discriminants, so the fix is isolated to wiring in `App.tsx`.
+```

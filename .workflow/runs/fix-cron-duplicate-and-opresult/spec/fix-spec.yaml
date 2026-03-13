@@ -1,0 +1,197 @@
+verdict: pass
+
+title: "Fix: Cron job creation missing duplicate detection, flock wrapping, and client-side create operation handling"
+
+description: |
+  Three fixes in the cron job creation flow:
+
+  1. Add duplicate detection to createCronJob() in cronManager.ts — scan existing crontab
+     lines for matching schedule+command pairs (including paused entries) and throw an error
+     before writing when a duplicate is found.
+
+  2. Wrap crontab commands with flock -n for concurrent-run protection — compute the jobId
+     before building the crontab line so it can be used in the lock file path, then wrap the
+     command as `flock -n /tmp/agentboard-cron-<jobId>.lock <command>`.
+
+  3. Add 'create' operation handling to handleCronOperationResult() in the client cronStore —
+     push a success notification matching /created/i on success, and push an error notification
+     with the error message on failure (instead of only logging to console.warn).
+
+changes:
+  - file: "src/server/cronManager.ts"
+    description: |
+      Modify createCronJob() (lines 1029-1040) with the following changes:
+
+      A) DUPLICATE DETECTION (after line 1032, before building newLine):
+         - Split the crontab into lines.
+         - For each non-blank line:
+           - If it starts with '#AGENTBOARD_PAUSED:', strip that prefix to get the real entry.
+           - If it starts with '#' (regular comment), skip it.
+           - Determine if the line uses @-keyword syntax (token[0] starts with '@') or
+             standard 5-field syntax.
+           - For @-keyword: schedule = token[0], command = tokens[1..].join(' ').
+           - For 5-field: schedule = tokens[0..5].join(' '), command = tokens[5..].join(' ').
+           - Strip trailing comments from the command (text after unescaped ' #').
+           - Compare the extracted schedule and command against config.schedule and
+             config.command (trimmed).
+           - If both match, throw new Error(`Duplicate cron job: ${config.schedule} ${config.command} already exists`).
+
+      B) FLOCK WRAPPING + JOBID REORDERING:
+         - Move the jobId computation (deriveJobName + generateJobId) BEFORE building newLine.
+           The jobId MUST be computed from the original config.command (NOT the flock-wrapped version).
+         - Construct lock file path: `/tmp/agentboard-cron-${jobId}.lock`
+         - Wrap the command: `flock -n ${lockPath} ${config.command}`
+         - Build newLine using the WRAPPED command: `${config.schedule} flock -n ${lockPath} ${config.command}${comment}`
+
+      The result is that createCronJob() becomes approximately:
+        ```
+        async createCronJob(config: CronCreateConfig): Promise<string> {
+          this.validateCronCommand(config.command)
+          const crontab = await this.readCrontab()
+
+          // Duplicate detection
+          for (const rawLine of crontab.split('\n')) {
+            let line = rawLine.trim()
+            if (!line) continue
+            if (line.startsWith('#AGENTBOARD_PAUSED:')) {
+              line = line.slice('#AGENTBOARD_PAUSED:'.length).trim()
+            } else if (line.startsWith('#')) {
+              continue
+            }
+            const tokens = line.split(/\s+/)
+            let existingSchedule: string
+            let existingCommand: string
+            if (tokens[0].startsWith('@')) {
+              existingSchedule = tokens[0]
+              existingCommand = tokens.slice(1).join(' ')
+            } else {
+              existingSchedule = tokens.slice(0, 5).join(' ')
+              existingCommand = tokens.slice(5).join(' ')
+            }
+            // Strip trailing comment
+            const commentIdx = existingCommand.indexOf(' #')
+            if (commentIdx !== -1) {
+              existingCommand = existingCommand.slice(0, commentIdx).trim()
+            }
+            // Strip flock wrapper if present (for paused entries that were already wrapped)
+            const flockMatch = existingCommand.match(/^flock\s+-n\s+\S+\s+(.+)$/)
+            if (flockMatch) {
+              existingCommand = flockMatch[1].trim()
+            }
+            if (existingSchedule === config.schedule && existingCommand === config.command) {
+              throw new Error(`Duplicate cron job: ${config.schedule} ${config.command} already exists`)
+            }
+          }
+
+          // Compute jobId from ORIGINAL command (before flock wrapping)
+          const name = this.deriveJobName(config.command)
+          const jobId = this.generateJobId('user-crontab', name, config.command)
+
+          // Build crontab line with flock wrapping
+          const lockPath = `/tmp/agentboard-cron-${jobId}.lock`
+          const wrappedCommand = `flock -n ${lockPath} ${config.command}`
+          const comment = config.comment ? ` # ${config.comment}` : ''
+          const newLine = `${config.schedule} ${wrappedCommand}${comment}`
+          const updated = crontab.endsWith('\n') ? crontab + newLine + '\n' : crontab + '\n' + newLine + '\n'
+          await this.writeCrontab(updated)
+
+          return jobId
+        }
+        ```
+    change_type: modify
+
+  - file: "src/client/stores/cronStore.ts"
+    description: |
+      Modify handleCronOperationResult() (lines 196-213) with two changes:
+
+      A) ERROR PATH — add notification for 'create' errors (modify lines 197-199):
+         Currently only does console.warn. Add: if operation === 'create' and there is an
+         error, push a notification to the store's notifications array with the error message.
+         Use the same notification shape as handleCronNotification() at line 236:
+         ```
+         if (error) {
+           console.warn(`cron-operation-result: ${operation} on ${jobId} failed — ${error}`)
+           if (operation === 'create') {
+             const prev = get().notifications
+             const entry = {
+               id: Date.now().toString(36),
+               jobId,
+               event: 'create-failed',
+               message: error,
+               severity: 'error' as const,
+               timestamp: Date.now(),
+             }
+             set({ notifications: [entry, ...prev].slice(0, 50) })
+           }
+         }
+         ```
+
+      B) SUCCESS PATH — add 'create' branch (after line 210, before the closing brace):
+         Add an `else if (operation === 'create')` block that pushes a success notification:
+         ```
+         else if (operation === 'create') {
+           const prev = get().notifications
+           const entry = {
+             id: Date.now().toString(36),
+             jobId,
+             event: 'created',
+             message: `Cron job ${jobId} created successfully`,
+             severity: 'info' as const,
+             timestamp: Date.now(),
+           }
+           set({ notifications: [entry, ...prev].slice(0, 50) })
+         }
+         ```
+    change_type: modify
+
+  - file: "src/server/__tests__/cronJobCreationRegression.test.ts"
+    description: |
+      Update the test file so assertions run against the ACTUAL CronManager and cronStore
+      implementations instead of inline "buggy" reimplementations. Currently all three test
+      describe blocks duplicate the buggy logic inline and assert against that copy — meaning
+      even after fixing the source, the tests still fail because they test the old inline code.
+
+      The tests need to either:
+      (a) Import and test the real createCronJob() method from CronManager (mocking only
+          readCrontab/writeCrontab I/O), OR
+      (b) Update the inline reimplementations to match the fixed logic.
+
+      Option (a) is preferred for regression coverage. The key changes:
+
+      - Bug 2 describe block (lines 83-217): Replace buggyCreateCronJob with a helper that
+        calls the real CronManager.createCronJob() with mocked I/O (readCrontab/writeCrontab).
+
+      - Bug 3 describe block (lines 219-348): Same approach — use the real createCronJob()
+        and assert the written crontab contains flock wrapping.
+
+      - CronStore describe block (lines 350-421): Replace buggyHandleCronOperationResult
+        with the real handleCronOperationResult from the cronStore, using a minimal Zustand
+        store setup or by importing and calling the store action directly.
+
+      NOTE: If importing the real implementations requires too much test infrastructure,
+      the alternative is to update the inline copies to mirror the fixed code. But this
+      loses the regression value — the tests would pass with any implementation. Prefer
+      option (a).
+    change_type: modify
+
+acceptance_criteria:
+  - "createCronJob() throws an Error matching /duplicate/i when called with a schedule+command pair that already exists in the crontab"
+  - "createCronJob() allows jobs with the same command but different schedule (no error thrown)"
+  - "createCronJob() allows jobs with the same schedule but different command (no error thrown)"
+  - "createCronJob() detects duplicates in paused entries (lines prefixed with #AGENTBOARD_PAUSED:)"
+  - "createCronJob() strips trailing comments from existing crontab lines before comparing commands"
+  - "createCronJob() wraps commands with flock -n /tmp/agentboard-cron-<jobId>.lock for concurrent-run protection"
+  - "flock uses -n flag (non-blocking / fail-fast mode)"
+  - "jobId is computed from the original unwrapped command, not the flock-wrapped version"
+  - "handleCronOperationResult() pushes a notification with message matching /created/i when operation='create' and success=true"
+  - "handleCronOperationResult() pushes a notification with the error message when operation='create' and success=false"
+  - "All tests in cronJobCreationRegression.test.ts pass"
+  - "bun run lint && bun run typecheck && bun run test all pass"
+
+regression_risks:
+  - "Risk 1: Duplicate detection false positives — if the schedule/command parsing is too aggressive (e.g., not properly handling whitespace normalization or @-keyword schedules), legitimate non-duplicate entries could be rejected. Mitigated by matching the exact parsing logic already used in parseCrontabLines()."
+  - "Risk 2: flock wrapping breaks commands with special characters — if the command contains shell metacharacters, wrapping with flock could change behavior. Mitigated by not adding extra quoting; the command is inserted verbatim after the flock prefix, preserving existing shell interpretation."
+  - "Risk 3: flock not available on all systems — flock is standard on Linux but may be absent on some BSD/macOS systems. Since agentboard targets Linux (per CLAUDE.md), this is acceptable. If portability is later needed, flock can be replaced with a shell-based lock."
+  - "Risk 4: Notification spam from create operations — if many jobs are created in rapid succession, the notification list could fill up. Mitigated by the existing .slice(0, 50) cap on the notifications array."
+  - "Risk 5: Existing pause/resume test expectations could break if the handleCronOperationResult function signature or error-path behavior changes. The fix is additive (new branches only) and does not modify existing pause/resume logic."
+  - "Risk 6: Test file changes — updating the regression tests to import real implementations may require new mocking infrastructure. If the test setup becomes too complex, the simpler approach of updating inline copies is acceptable as a fallback."

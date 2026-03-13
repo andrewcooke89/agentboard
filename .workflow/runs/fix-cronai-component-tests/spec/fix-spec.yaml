@@ -1,0 +1,126 @@
+verdict: pass
+
+title: "Fix: TypeScript errors in CronAi component test files — type predicate and mock signature mismatches"
+
+description: |
+  Fix 5 TypeScript compilation errors across 4 CronAi test files that prevent
+  `bun run typecheck` from passing. Two distinct fixes:
+
+  1. Remove `| number` from type predicates in `findTextContent`/`findAllTextContent`
+     helpers (4 errors across 3 files). `ReactTestInstance.children` is
+     `Array<ReactTestInstance | string>` — never contains `number`, so the predicate
+     `c is string | number` violates TS2677. Change to `c is string` and drop the
+     dead `typeof c === 'number'` check.
+
+  2. Rewrite the `subscribe` mock in `createWsStubs` (CronAiTerminal.test.tsx) to
+     match the canonical `SubscribeServerMessage` signature — single `listener`
+     argument instead of `(type, handler)` pair. Update internal `listeners` storage
+     from a per-type `Map<string, Set>` to a flat `Set`, and update `emit` to
+     broadcast the full `ServerMessage` to all listeners.
+
+changes:
+  - file: "src/client/components/cron/__tests__/CronAiDrawer.test.tsx"
+    description: |
+      In the `findTextContent` helper (~line 134), change the filter callback from:
+        `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')`
+      to:
+        `.filter((c): c is string => typeof c === 'string')`
+    change_type: modify
+
+  - file: "src/client/components/cron/__tests__/CronAiProposalCard.test.tsx"
+    description: |
+      Two fixes in this file:
+      1. In `findTextContent` (~line 117), change the filter callback from:
+           `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')`
+         to:
+           `.filter((c): c is string => typeof c === 'string')`
+      2. In `findAllTextContent` (~line 130), apply the same change:
+           `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')`
+         to:
+           `.filter((c): c is string => typeof c === 'string')`
+    change_type: modify
+
+  - file: "src/client/components/cron/__tests__/CronAiStatusBar.test.tsx"
+    description: |
+      In the `findTextContent` helper (~line 59), change the filter callback from:
+        `.filter((c): c is string | number => typeof c === 'string' || typeof c === 'number')`
+      to:
+        `.filter((c): c is string => typeof c === 'string')`
+    change_type: modify
+
+  - file: "src/client/components/cron/__tests__/CronAiTerminal.test.tsx"
+    description: |
+      Rewrite the `createWsStubs` function (~lines 148-167) to match the canonical
+      `SubscribeServerMessage` type from `src/shared/types.ts:250`.
+
+      Current (broken):
+      ```typescript
+      function createWsStubs() {
+        const sent: Array<{ type: string; [k: string]: unknown }> = []
+        const listeners = new Map<string, Set<(msg: Record<string, unknown>) => void>>()
+
+        const sendMessage: SendClientMessage = (msg: Record<string, unknown>) => {
+          sent.push(msg as { type: string })
+        }
+
+        const subscribe: SubscribeServerMessage = (type: string, handler: (msg: Record<string, unknown>) => void) => {
+          if (!listeners.has(type)) listeners.set(type, new Set())
+          listeners.get(type)!.add(handler)
+          return () => { listeners.get(type)?.delete(handler) }
+        }
+
+        const emit = (type: string, msg: Record<string, unknown>) => {
+          listeners.get(type)?.forEach(fn => fn(msg))
+        }
+
+        return { sent, sendMessage, subscribe, emit }
+      }
+      ```
+
+      Fixed:
+      ```typescript
+      function createWsStubs() {
+        const sent: Array<{ type: string; [k: string]: unknown }> = []
+        const listeners = new Set<(msg: ServerMessage) => void>()
+
+        const sendMessage: SendClientMessage = (msg: Record<string, unknown>) => {
+          sent.push(msg as { type: string })
+        }
+
+        const subscribe: SubscribeServerMessage = (listener: (msg: ServerMessage) => void) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }
+
+        const emit = (msg: ServerMessage) => {
+          listeners.forEach(fn => fn(msg))
+        }
+
+        return { sent, sendMessage, subscribe, emit }
+      }
+      ```
+
+      Key changes:
+        - `listeners` changes from `Map<string, Set<...>>` to `Set<(msg: ServerMessage) => void>`
+        - `subscribe` changes from `(type, handler) => ...` to `(listener) => ...`
+        - `emit` changes from `(type, msg) => ...` to `(msg: ServerMessage) => ...`
+
+      Additionally, if any test call sites use `emit('someType', payload)`, they must
+      be updated to `emit({ type: 'someType', ...payload } as ServerMessage)`.
+      (Investigation shows `emit` is returned from `createWsStubs` but not called
+      in any tests currently, so no call-site updates are expected to be needed.)
+
+      Ensure `ServerMessage` is imported at the top of the file if not already.
+    change_type: modify
+
+acceptance_criteria:
+  - "`bun run typecheck` passes with zero errors in all four CronAi test files"
+  - "The TS2677 errors in CronAiDrawer, CronAiProposalCard, and CronAiStatusBar test files are resolved"
+  - "The TS2322 error in CronAiTerminal.test.tsx is resolved"
+  - "`bun run test` passes — all existing CronAi component tests still pass after the changes"
+  - "No production (non-test) files are modified"
+
+regression_risks:
+  - "Risk 1 (negligible): Removing `| number` from the type predicate could theoretically miss a child that is a number, but React test renderer children are typed as `ReactTestInstance | string` and never produce numbers at runtime. Zero behavioral impact."
+  - "Risk 2 (low): Rewriting the subscribe mock changes how tests emit messages. If any test relied on per-type dispatch via `emit('type', payload)`, it would break. Investigation shows `emit` is not called in any current tests, so this risk is mitigated. Any missed call sites would surface as type errors or test failures immediately."
+  - "Risk 3 (low): If `ServerMessage` is not already imported in CronAiTerminal.test.tsx, the new `listeners` Set type annotation and `emit` parameter type will cause a missing-import error. The implementor must verify the import exists."

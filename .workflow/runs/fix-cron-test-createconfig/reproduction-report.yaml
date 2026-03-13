@@ -1,0 +1,34 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  TypeScript errors in src/server/__tests__/cronDuplicateDetection.test.ts:
+  - TS2341: Property 'readCrontab' is private and only accessible within class 'CronManager' (lines 32, 35, 73)
+  - TS2341: Property 'writeCrontab' is private and only accessible within class 'CronManager' (lines 33, 36, 74)
+  - TS2345: Property 'tags' is missing in type '{ schedule: string; command: string; comment: string; }' but required in type 'CronCreateConfig' (lines 41, 46, 78)
+
+  TypeScript errors in src/server/__tests__/cronFlockWrapping.test.ts:
+  - TS2415: Class 'TestableCronManager' incorrectly extends base class 'CronManager'. Property 'readCrontab' is private in type 'CronManager' but not in type 'TestableCronManager' (line 25)
+  - TS2741: Property 'tags' is missing in type '{ schedule: string; command: string; comment: string; }' but required in type 'CronCreateConfig' (lines 62, 81, 98, 114, 148, 153)
+  - TS2739: Type '{ schedule: string; command: string; }' is missing the following properties from type 'CronCreateConfig': comment, tags (line 132)
+
+  Total errors in affected files: 16 (7 in cronDuplicateDetection.test.ts, 9 in cronFlockWrapping.test.ts)
+
+notes: |
+  Bug is consistently reproducible. All error types mentioned in the bug spec were confirmed:
+
+  1. Missing 'tags' field (TS2741/TS2345/TS2739): CronCreateConfig objects in both test files
+     are missing the required 'tags: string[]' property.
+
+  2. Private member access (TS2341): cronDuplicateDetection.test.ts attempts to access
+     private methods 'readCrontab' and 'writeCrontab' on CronManager instance.
+
+  3. Incorrect class extension (TS2415): cronFlockWrapping.test.ts's TestableCronManager
+     incorrectly tries to widen a private member to protected when extending CronManager.
+
+  Additional observation: There are other unrelated TypeScript errors in additional test files
+  (app.WU012.test.tsx, webSocketSendReturnBoolean.test.ts, cronJobCreationRegression.test.ts,
+  cronStoreCreateOperation.test.ts, and cronManager.ts) that are outside the scope of this bug.
+  These should be addressed separately.
+
+  Command used: `bun run typecheck`
+  Exit code: 2 (indicates type errors found)

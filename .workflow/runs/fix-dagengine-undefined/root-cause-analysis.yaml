@@ -1,0 +1,51 @@
+verdict: pass
+
+root_cause: |
+  Array.find() returns T | undefined, but the code accesses the result (.prompt property)
+  without a TypeScript-level null guard. The expect(task).toBeTruthy() assertion narrows
+  the type at runtime (the test would fail if task were undefined), but TypeScript's type
+  system does not recognize Jest/Bun expect().toBeTruthy() as a type narrowing construct.
+  This leaves `task` typed as `T | undefined` on all subsequent property accesses.
+
+location:
+  file: "src/server/__tests__/dagEngine.test.ts"
+  line_range: "760-803"
+  function: "Two test cases in 'typed input injection' describe block"
+
+mechanism: |
+  Type-system gap (not a runtime bug). The pattern is:
+
+    const task = tasks.find(t => t.projectPath === '/tmp/test')  // type: Task | undefined
+    expect(task).toBeTruthy()                                     // runtime guard, no TS narrowing
+    expect(task.prompt).toContain(...)                             // TS18048: 'task' is possibly undefined
+
+  This occurs in two test cases:
+    1. Lines 760-765: "spawn_session injects typed inputs into prompt" (3 accesses: lines 764, 765)
+    2. Lines 797-803: "spawn_session keeps reference inputs as paths only" (3 accesses: lines 801, 802, 803)
+
+  TypeScript strict null checks (enabled in this project) correctly flag that .find() can
+  return undefined. The expect().toBeTruthy() call is opaque to the type checker — it does
+  not produce a type predicate that narrows the variable.
+
+fix_approach: |
+  Add a non-null assertion operator (!) after the toBeTruthy() guard on each access.
+  Since these are test files where the preceding toBeTruthy() already ensures the value
+  exists at runtime, the non-null assertion is safe and idiomatic for test code:
+
+  Change (in both test cases):
+    expect(task.prompt).toContain(...)
+  To:
+    expect(task!.prompt).toContain(...)
+
+  This applies to all 5 occurrences at lines 764, 765, 801, 802, 803.
+
+  Alternative: Use an explicit type guard that TypeScript recognizes:
+    if (!task) throw new Error('task not found')
+  This is more verbose but avoids the ! operator. Either approach is acceptable for test code.
+
+risk_assessment: |
+  Extremely low risk. The fix is purely a type-level change — it adds non-null assertions
+  to test code where the runtime value is already verified by a preceding toBeTruthy() check.
+  No runtime behavior changes. No production code is affected. The worst case is a test
+  crash if the find() truly returned undefined, which would be caught by the test framework
+  as a failure (same behavior as today, just a different error message).

@@ -1,0 +1,18 @@
+verdict: fail
+reproduced: false
+reproduction_output: ""
+notes: |
+  Bug specification file not found at expected location:
+  /home/andrew-cooke/tools/agentboard/.workflow/runs/fix-session-integration/spec/bug-spec.yaml
+
+  The fix-session-integration directory exists but only contains an empty
+  signals/ directory. The 'write-bug-spec' pipeline step appears to not have
+  completed or its output was not persisted.
+
+  Without a bug specification containing reproduction steps, I cannot verify
+  whether the bug is reproducible.
+
+  Possible causes:
+  1. Pipeline step 'write-bug-spec' failed silently
+  2. Output directory path mismatch between pipeline steps
+  3. Pipeline was interrupted before first step completed

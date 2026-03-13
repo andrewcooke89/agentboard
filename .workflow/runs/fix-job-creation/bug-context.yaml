@@ -1,0 +1,40 @@
+```yaml
+affected_areas:
+  - "src/server/cronManager.ts" (for duplicate detection and concurrent-run guard logic)
+  - "src/server/handlers/cronHandlers.ts" (for potential pre-checks or caching issues)
+  - "src/server/wsRouter.ts" (as part of the call chain, less likely direct changes but good to be aware of)
+  - CronManager.tsx (UI component for creating jobs, for displaying error messages)
+  - CronCreateModal (UI component for creating jobs, for displaying error messages)
+  - OS cron daemon (runtime environment for scheduled jobs)
+  - Systemd timers (alternative scheduling mechanism)
+
+bug_summary: |
+  The cron job creation mechanism in Agentboard suffers from two main issues:
+  1.  **No Duplicate Detection**: Users can create multiple identical cron entries (same schedule and command) without warning or rejection. Existing crontab entries are not checked, and systemd timer unit files are silently overwritten.
+  2.  **No Concurrent-Run Guard for Scheduled Runs**: Scheduled cron jobs executed by the OS cron daemon lack a concurrency guard. If a job runs longer than its scheduled interval, new instances will be started concurrently, potentially leading to resource exhaustion, data corruption, or unpredictable behavior. Manual runs via "Run Now" are correctly guarded, but scheduled runs are not.
+
+reproduction_summary: |
+  1.  Navigate to the Cron Manager tab in Agentboard.
+  2.  Use the '+ Create' modal to create a cron job (e.g., '* * * * *' and 'echo hello').
+  3.  Repeat step 2 with identical schedule and command; observe a duplicate entry is created.
+  4.  To reproduce the concurrent-run bug: Create a job with schedule '* * * * *' and a long-running command (e.g., 'sleep 120').
+  5.  Wait for two consecutive scheduled executions; observe both running simultaneously.
+
+severity_assessment: |
+  **Severity: Major**
+  The bugs can lead to significant operational problems:
+  -   **Duplicate Detection**: Clutters the crontab, makes management difficult, and can lead to unintended multiple executions if the underlying command is not idempotent.
+  -   **Concurrent-Run Guard**: Poses a risk of resource exhaustion, data corruption, and unpredictable side effects for long-running jobs, especially in production environments where system stability is critical.
+
+suggested_investigation_areas:
+  -   **src/server/cronManager.ts**:
+      -   `createCronJob()`: Implement logic to read and parse the existing crontab, comparing new job's schedule+command against existing entries before appending. If a match is found, reject the creation with an error.
+      -   `createSystemdTimer()`: Before writing the unit file, check for its existence using `Bun.file(timerPath).exists()`. If it exists, reject with an error.
+      -   When writing crontab entries, modify the `command` string to include a `flock -n` wrapper (e.g., `flock -n /tmp/agentboard-<jobId>.lock <original_command>`). This requires generating a unique job ID for the lock file.
+  -   **src/server/handlers/cronHandlers.ts**:
+      -   Review `handleCronJobCreate` to ensure any in-memory job cache is also checked for duplicates, and to integrate error handling for the new duplicate detection logic from `cronManager.ts`.
+  -   **UI Components (CronCreateModal, CronManager.tsx)**:
+      -   Ensure that error messages from the backend regarding duplicate jobs are properly displayed to the user.
+  -   **Systemd Timer Concurrency**:
+      -   Investigate if `Type=oneshot` in systemd service files provides sufficient concurrency protection for systemd timers. Document its behavior or consider adding an explicit lock if needed, similar to `flock` for crontab entries.
+```

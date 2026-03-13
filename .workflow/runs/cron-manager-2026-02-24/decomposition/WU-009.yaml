@@ -1,0 +1,70 @@
+id: WU-009
+title: "App Integration & CronManager Shell"
+description: |
+  Wire the cron manager view into App.tsx (activeView union, keyboard shortcut, WS message
+  subscription, view rendering) and create the CronManager shell component with the
+  master-detail split pane layout and the dashboard empty state. This establishes the
+  navigable view and the component slots for list, detail, timeline, and create modal.
+
+dependencies: [WU-008]
+
+files:
+  modified:
+    - path: src/client/App.tsx
+      changes: |
+        - Add 'cron-manager' to activeView union type
+        - Add Cmd+Shift+C / Ctrl+Shift+C keyboard shortcut to toggle cron-manager view
+        - Add WS message handlers in subscribe effect for all cron-* message types,
+          delegating to cronStore handlers
+        - Add {activeView === 'cron-manager' && <CronManager />} render block
+        - Add cron view toggle button to Header props
+  created:
+    - path: src/client/components/cron/CronManager.tsx
+      changes: |
+        - CronManager component: master-detail horizontal split pane
+        - Left pane: slot for CronJobList (default width from cronListWidth setting, resizable 180-500px)
+        - Right pane: slot for CronJobDetail (or CronEmptyState when no job selected)
+        - Resize handle following App.tsx sidebar resize pattern (mousedown/mousemove/mouseup)
+        - Top area: slot for CronTimeline (collapsible)
+        - Header bar with: view title, search input, sort dropdown, filter dropdowns,
+          "Create Job" button, "Timeline" toggle button
+        - Persist list width via settingsStore.setCronListWidth
+    - path: src/client/components/cron/CronEmptyState.tsx
+      changes: |
+        - Dashboard empty state for when no job is selected
+        - Total job count, active/paused/error counts
+        - Mini schedule timeline for next 24 hours (simplified version)
+        - "Create Job" shortcut button
+
+acceptance_criteria:
+  - req: REQ-01
+    type: behavioral
+    check: "Cron Manager view accessible via Cmd+Shift+C / Ctrl+Shift+C; renders as full main content replacement"
+  - req: REQ-02
+    type: behavioral
+    check: "Horizontal master-detail split pane; left pane default 320px, resizable 180-500px; drag-to-resize handle"
+  - req: REQ-03
+    type: behavioral
+    check: "Empty state shows total/active/paused/error counts, mini timeline, Create Job button"
+
+test_specs: []
+  # UI layout tested via browser automation
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager shell component"
+      consumers: [WU-010, WU-012, WU-015, WU-018]
+      contract: |
+        <CronManager> renders:
+          - Header bar (search, sort, filter, create button, timeline toggle)
+          - Optional <CronTimeline> slot (collapsible)
+          - Left pane: <CronJobList> slot
+          - Right pane: <CronJobDetail> or <CronEmptyState>
+
+implementation_notes: |
+  Follow the existing view pattern: wrap in <div className="flex-1 overflow-y-auto p-6 bg-[var(--bg-primary)]">
+  with an ErrorBoundary. The keyboard shortcut follows the existing toggle pattern
+  (setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')).
+  The resize handle uses the same pure DOM approach as the sidebar: isResizing ref,
+  mousemove on document, clamped between min/max. WS message subscription in App.tsx
+  should use the cronStore's handle* methods directly.

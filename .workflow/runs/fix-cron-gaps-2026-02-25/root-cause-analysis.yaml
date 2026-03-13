@@ -1,0 +1,190 @@
+verdict: pass
+
+summary: |
+  Four independent implementation gaps in the Cron Manager feature. All are
+  structural omissions — missing imports, missing wiring, hardcoded stubs —
+  rather than logic bugs. The server-side functionality is largely complete;
+  the gaps are in client-side integration and server-side scheduling/guarding.
+
+gaps:
+  - id: GAP-04
+    root_cause: >
+      Zero cron components import framer-motion or motion/react. All 20 files
+      under src/client/components/cron/ use plain mount/unmount and basic CSS
+      transitions. The animation libraries (framer-motion v12.34.3, motion
+      v12.25.0) are installed and used successfully in non-cron components
+      (SessionList.tsx, PendingReviewDashboard.tsx, SessionDrawer.tsx) but
+      were never added to any cron component during the initial pipeline run.
+    location:
+      files:
+        - src/client/components/cron/CronJobList.tsx
+        - src/client/components/cron/CronManager.tsx
+        - src/client/components/cron/CronJobDetail.tsx
+        - src/client/components/cron/CronRunNowOutput.tsx
+        - src/client/components/cron/CronTimeline.tsx
+        - src/client/components/cron/CronEmptyState.tsx
+      line_range: "entire files — no animation code exists"
+      function: "N/A — missing imports and wrappers throughout"
+    mechanism: >
+      Omission. The pipeline generated all cron components with plain
+      React mount/unmount. No developer added AnimatePresence or motion.div
+      wrappers. The result is abrupt UI transitions (rows appear/disappear
+      instantly, tabs swap without crossfade, timeline bars lack orchestration).
+    fix_approach: |
+      Follow the SessionList.tsx pattern (lines 1-2, 609-637):
+      1. Import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
+      2. Wrap list containers with <AnimatePresence initial={false}>
+      3. Replace list item divs with <motion.div> using opacity+height enter/exit
+      4. Gate animations on useReducedMotion() for accessibility
+      5. Key components: CronJobList (job rows), CronJobDetail (tab content),
+         CronTimeline (timeline entries), CronRunNowOutput (output panel),
+         CronEmptyState (empty state appearance)
+    risk_assessment: >
+      Low risk. Additive change — wrapping existing elements in motion.div.
+      No logic changes. Only risk is animation timing conflicts or layout
+      shift if height:'auto' doesn't work well with existing CSS. Test with
+      useReducedMotion to ensure accessibility fallback works.
+
+  - id: GAP-05
+    root_cause: >
+      handleCronJobRunNow (cronHandlers.ts:262-303) has no server-side guard
+      against concurrent runs of the same job. It immediately generates a
+      runId, sends cron-run-started, and spawns a process in a fire-and-forget
+      async block. The createCronHandlers closure (line 65-66) tracks only
+      clientCount and pollingStarted — no Set or Map of active runs exists.
+      The client-side CronJobControls.tsx disables the Run Now button using a
+      local runningJobs Set in cronStore, but this is trivially bypassable via
+      direct WebSocket messages.
+    location:
+      file: src/server/handlers/cronHandlers.ts
+      line_range: "262-303"
+      function: handleCronJobRunNow
+    mechanism: >
+      Missing guard. Every call to handleCronJobRunNow spawns a new process
+      unconditionally. With no server-side tracking of in-flight runs, a
+      client can trigger duplicate runs by sending rapid cron-run-now WS
+      messages (bypassing the disabled button) or by having multiple browser
+      tabs open.
+    fix_approach: |
+      Follow the workflowWsHandlers.ts countActiveRuns pattern (lines 85-90):
+      1. Add `const activeManualRuns = new Set<string>()` in the
+         createCronHandlers closure scope (alongside clientCount at line 65)
+      2. At the top of handleCronJobRunNow, check:
+         if (activeManualRuns.has(jobId)) {
+           ctx.send(ws, { type: 'error', message: 'Job is already running' })
+           return
+         }
+      3. Add jobId to activeManualRuns before spawning
+      4. Delete jobId from activeManualRuns in the finally block of the
+         async execution (around line 297-300 where cron-run-completed is sent)
+      5. Also delete on error/failure path
+    risk_assessment: >
+      Low risk. Simple Set add/delete. Main risk is forgetting to clear the
+      Set on error paths, which would permanently block re-runs until server
+      restart. Use a try/finally pattern to ensure cleanup. Also consider
+      whether scheduled (crontab) runs should be tracked separately from
+      manual runs — the spec says REQ-40 applies only to manual run-now.
+
+  - id: GAP-06
+    root_cause: >
+      cleanOrphanedPrefs() (cronManager.ts:668-672) and pruneRunHistory()
+      (cronManager.ts:674-677) are fully implemented methods that call
+      working database functions (deleteOrphanedPrefs, pruneDbRunHistory in
+      db.ts:730). However, neither method is called from any code path in
+      the entire codebase. No setInterval, no post-poll hook, no startup
+      call invokes them. The existing cleanup pattern in index.ts (lines
+      199-226: workflowCleanupInterval, sessionCleanupInterval) was not
+      replicated for cron cleanup.
+    location:
+      file: src/server/cronManager.ts
+      line_range: "668-677"
+      function: "cleanOrphanedPrefs, pruneRunHistory"
+    mechanism: >
+      Wiring omission. The implementation methods exist and are correct.
+      The database layer functions exist and are correct. But the scheduling
+      glue — a setInterval in index.ts that calls these methods periodically —
+      was never added. This means the SQLite database grows unbounded as
+      orphaned preferences and old run history accumulate.
+    fix_approach: |
+      Follow the existing cleanup interval pattern in index.ts (lines 199-226):
+      1. Add a cronCleanupInterval variable alongside workflowCleanupInterval
+      2. After cronManager initialization (around line 296), add:
+         - Immediate startup call: cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+         - Immediate startup call: cronManager.pruneRunHistory()
+         - setInterval with both calls, using the same cleanupIntervalMs (24h)
+      3. Clear the interval in cleanupAllTerminals() (around line 472)
+         alongside the existing interval cleanup
+      4. Optionally also call cleanOrphanedPrefs after each poll cycle
+         completes (in the polling callback) for more timely cleanup
+    risk_assessment: >
+      Very low risk. The methods are already implemented and tested at the
+      DB layer. The only risk is calling cleanOrphanedPrefs with an empty
+      or stale jobCache keys array during startup before the first poll
+      completes — this could delete valid prefs. Mitigation: schedule the
+      first cleanup call after the first successful poll, or guard with
+      an if (cronManager.jobCache.size > 0) check.
+
+  - id: GAP-08
+    root_cause: >
+      CronSessionLink.tsx is a stub component. Its dropdown (line 58) is
+      hardcoded to "No active sessions" — it never imports useSessionStore,
+      never reads available sessions, and never sends a cron-job-link-session
+      WS message with a real sessionId. The linked session chip (lines 31-35)
+      renders a truncated ID with no onClick/navigation handler. Separately,
+      CronJobDetail.tsx shows isManagedByAgentboard as a static icon (lines
+      106-110) with no click handler and no toggle functionality, despite the
+      server handler (handleCronJobSetManaged) and WS message type
+      (cron-job-set-managed) both being fully implemented and wired.
+    location:
+      file: src/client/components/cron/CronSessionLink.tsx
+      line_range: "1-70"
+      function: "CronSessionLink component (entire file)"
+    mechanism: >
+      Stub/placeholder code. The component was generated as a UI skeleton
+      with hardcoded content. The server side is complete: handleCronJobLinkSession
+      (cronHandlers.ts:464-472) writes to DB, updates cache, and broadcasts
+      cron-job-update. handleCronJobSetManaged (cronHandlers.ts:452-462) does
+      the same for the managed flag. wsRouter.ts (lines 216-220) routes both
+      message types correctly. The gap is entirely client-side: the dropdown
+      doesn't read real data, the chip doesn't navigate, and the managed
+      toggle doesn't exist as an interactive element.
+    fix_approach: |
+      Three sub-fixes:
+      1. Session dropdown: Import useSessionStore (or equivalent session
+         registry). In the dropdown, map over active sessions showing
+         id + project name. On click, call sendWs({ type: 'cron-job-link-session',
+         jobId, sessionId: session.id }).
+      2. Session chip navigation: Add an onClick handler to the linked session
+         chip that navigates to that session (e.g., scrolls to it in the
+         session list or opens it in the terminal view).
+      3. Managed toggle: In CronJobDetail.tsx header, replace the static ⚙
+         icon with an interactive toggle/checkbox that calls sendWs({
+         type: 'cron-job-set-managed', jobId, managed: !job.isManagedByAgentboard }).
+    risk_assessment: >
+      Medium risk. The session store integration introduces a cross-component
+      dependency. Risk areas: (1) session store shape may not expose what's
+      needed (active sessions with project names), (2) navigation to a session
+      may require coordination with the terminal view component, (3) the
+      managed toggle needs optimistic UI update in cronStore to feel responsive.
+      Test the WS round-trip carefully — the server handlers work but the
+      client needs to handle the broadcast cron-job-update response correctly
+      to update local state.
+
+overall_mechanism: >
+  All four gaps share the same root cause pattern: the initial pipeline run
+  generated the core CRUD/display functionality but left integration points
+  as stubs or omitted cross-cutting concerns (animations, guards, scheduling,
+  store wiring). The server-side implementation is largely complete and correct.
+  The gaps are in: (1) client polish (animations), (2) server safety (concurrent
+  guard), (3) operational wiring (cleanup scheduling), and (4) client integration
+  (session store access and navigation).
+
+fix_priority:
+  - id: GAP-05
+    reason: "Security/correctness — concurrent runs can cause data corruption or resource exhaustion"
+  - id: GAP-06
+    reason: "Operational — unbounded DB growth is a ticking time bomb"
+  - id: GAP-08
+    reason: "Functionality — core feature (session linking) is non-functional"
+  - id: GAP-04
+    reason: "Polish — UI quality but no functional impact"

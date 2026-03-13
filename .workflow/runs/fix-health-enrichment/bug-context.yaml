@@ -1,0 +1,27 @@
+```yaml
+affected_areas:
+  - "src/server/cronManager.ts (cron polling loop logic)"
+  - "src/server/__tests__/health-gaps-regression.test.ts (regression test)"
+
+bug_summary: |
+  The `startPolling()` method in `cronManager.ts` fails to enrich discovered jobs with health data (e.g., health status, avgDuration) before processing them, leading to a lack of crucial health information. This primary issue is compounded by a regression test (`health-gaps-regression.test.ts`) that incorrectly extracts the `startPolling()` method body due to a flawed regex, causing the test to report a false negative even when the enrichment call is added to the source code.
+
+reproduction_summary: |
+  1. Run the specific test file: `bun test src/server/__tests__/health-gaps-regression.test.ts`
+  2. Observe one failing test: "'startPolling() should call enrichAllJobsWithHealth or computeHealth on discovered jobs'"
+  3. The failure is due to a regex on line 25 of the test file that only captures a partial method body, missing the relevant enrichment call.
+
+severity_assessment: |
+  **Major**: This bug directly impacts the core functionality of health enrichment for cron jobs, meaning critical health metrics are missing. This can lead to operators being unaware of job health, average durations, or consecutive failures, hindering monitoring and incident response. The broken regression test also means that future regressions in this area might go unnoticed.
+
+suggested_investigation_areas:
+  - **`src/server/cronManager.ts`**:
+    - Verify that `enrichAllJobsWithHealth(newJobs)` is correctly invoked between `discoverAllJobs()` and `computeDiff()` within the `startPolling()` method.
+    - Refer to the existing working-tree fix for the correct implementation.
+  - **`src/server/__tests__/health-gaps-regression.test.ts`**:
+    - Focus on line 25, which contains the problematic regex for extracting the `startPolling()` method body.
+    - Replace the current regex with a more robust method to extract the full method body, such as:
+      - A brace-counting algorithm.
+      - Searching within the source region between 'startPolling' and the next method definition.
+      - A targeted check of the code slice between 'discoverAllJobs' and 'computeDiff' within the known `startPolling` region, similar to test 2 on line 54.
+```

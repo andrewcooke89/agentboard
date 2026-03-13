@@ -1,0 +1,82 @@
+id: WU-009
+title: "App Integration & CronManager Shell"
+description: |
+  Wire the cron manager into the main application: add the 'cron-manager' view to App.tsx,
+  register the keyboard shortcut, route WebSocket cron messages to the cronStore, and create
+  the CronManager shell component that provides the split-pane layout with slots for
+  list pane, detail pane, timeline, and create modal.
+
+dependencies: [WU-008]
+
+files:
+  created:
+    - path: src/client/components/cron/CronManager.tsx
+      purpose: |
+        CronManager shell component:
+        - Horizontal split pane layout (list left, detail right)
+        - Left pane: renders CronJobList (WU-010)
+        - Right pane: renders CronJobDetail or CronEmptyState (WU-012)
+        - Above split pane: collapsible CronTimeline slot (WU-018)
+        - Floating: CronCreateModal slot (WU-015), CronBulkActions slot (WU-011)
+        - Resizable divider between list and detail (drag-to-resize, 180-500px)
+        - Width persisted via settingsStore.cronListWidth
+    - path: src/client/components/cron/CronEmptyState.tsx
+      purpose: |
+        Dashboard empty state (when no job selected):
+        - Total job count
+        - Active/paused/error counts
+        - Mini schedule timeline for next 24 hours
+        - "Create Job" shortcut button
+  modified:
+    - path: src/client/App.tsx
+      changes: |
+        - Add 'cron-manager' to activeView type union
+        - Add Cmd+Shift+C / Ctrl+Shift+C keyboard shortcut handler
+        - Render <CronManager> when activeView === 'cron-manager'
+        - Wire WS cron-* message types to cronStore handlers:
+          cron-jobs -> handleCronJobs
+          cron-job-update -> handleCronJobUpdate
+          cron-job-removed -> handleCronJobRemoved
+          cron-job-detail -> handleCronJobDetail
+          cron-operation-result -> handleCronOperationResult
+          cron-sudo-required -> (trigger sudo prompt state)
+          cron-run-started/output/completed -> handleCronRun*
+          cron-bulk-operation-progress -> handleBulkProgress
+          cron-notification -> handleCronNotification
+
+acceptance_criteria:
+  - req: REQ-01
+    type: behavioral
+    check: "Cron Manager view accessible via Cmd+Shift+C / Ctrl+Shift+C; renders as full content area replacement"
+  - req: REQ-02
+    type: behavioral
+    check: "Horizontal master-detail split pane; left list default 320px, resizable 180-500px"
+  - req: REQ-03
+    type: behavioral
+    check: "Empty state shows job counts, mini timeline, and Create Job button when no job selected"
+
+test_specs:
+  - id: TEST-23
+    description: "Detail pane populates with tabs on job selection"
+    note: "Full tab content in downstream WUs; this verifies shell renders correctly"
+  - id: TEST-24
+    description: "Active tab persists across job selection changes"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager shell component (layout with slots)"
+      consumers: [WU-010, WU-012, WU-015, WU-018]
+    - name: "CronEmptyState component"
+      consumers: []
+  imports:
+    - from: WU-008
+      name: "useCronStore hook"
+    - from: WU-001
+      name: "ServerMessage cron variants (for WS routing in App.tsx)"
+
+implementation_notes: |
+  Follow the existing activeView pattern in App.tsx. The keyboard shortcut should be added
+  to the existing keydown handler. The split pane resize should use the same drag pattern as
+  the existing sidebar -- mousedown on divider, track mousemove, update width. The empty state
+  derives counts from cronStore.jobs. The mini timeline is a simplified version of the full
+  CronTimeline (WU-018) -- can be a basic bar chart or placeholder until WU-018 is done.

@@ -1,0 +1,64 @@
+id: WU-010
+title: "CronAi Terminal"
+description: |
+  Create the xterm.js terminal component for the AI drawer. Uses the same useTerminal
+  hook as Terminal.tsx but connects to the agentboard-cron-ai tmux window. Attaches
+  when the drawer opens, detaches when it closes to reduce rendering overhead.
+
+layer: 3
+dependencies:
+  - WU-009
+
+files:
+  new:
+    - path: src/client/components/cron/CronAiTerminal.tsx
+      description: |
+        xterm.js terminal component. Uses useTerminal hook with:
+        - sessionId: AI session ID from cronAiStore.sessionWindowId
+        - tmuxTarget: 'agentboard:N' (the AI session tmux window)
+        - Same xterm.js options/addons as Terminal.tsx (fit, search, webgl, unicode11)
+        - Renders <div ref={containerRef}> that xterm attaches to
+        - On mount (drawer open): attaches to tmux window via WS terminal-attach
+        - On unmount (drawer close): detaches (sends terminal-detach WS message)
+        - Receives sendMessage and subscribe props for WS communication
+        Props: sessionId, tmuxTarget, sendMessage, subscribe.
+
+cross_wu_interfaces:
+  exports:
+    - "CronAiTerminal — rendered inside CronAiDrawer (WU-009)"
+  imports:
+    - "useTerminal hook from src/client/hooks/useTerminal.ts (existing)"
+    - "cronAiStore from WU-002 — sessionWindowId"
+    - "CronAiDrawer children slot from WU-009"
+
+acceptance_criteria:
+  - id: AC-010-1
+    type: behavioral
+    description: "Terminal renders in the drawer and connects to the agentboard-cron-ai tmux window."
+  - id: AC-010-2
+    type: behavioral
+    description: "Terminal shows Claude Code session output (startup message, conversation)."
+  - id: AC-010-3
+    type: behavioral
+    description: "When drawer closes, terminal detaches (stops rendering to reduce overhead)."
+  - id: AC-010-4
+    type: behavioral
+    description: "When drawer reopens, terminal reattaches to the same session (conversation preserved in scrollback)."
+  - id: AC-010-5
+    type: behavioral
+    description: "Terminal is scrollable and supports the same search functionality as the main terminal."
+
+requirements_covered:
+  - REQ-05   # persistent Claude Code session in tmux
+  - REQ-06   # terminal connects to tmux window, reattaches on reopen
+  - REQ-54   # proposal card rendering does not block terminal output
+
+tests:
+  - TEST-ID: terminal-attach
+    description: "Terminal attaches to tmux window on drawer open."
+    spec_tests: [TEST-05]
+  - TEST-ID: terminal-reattach
+    description: "Close and reopen drawer — terminal reattaches, scrollback preserved."
+    spec_tests: [TEST-06]
+  - TEST-ID: terminal-detach
+    description: "Terminal detaches on drawer close (no rendering overhead)."

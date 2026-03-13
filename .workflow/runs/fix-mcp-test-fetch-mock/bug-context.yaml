@@ -1,0 +1,18 @@
+```yaml
+affected_areas:
+  - "src/server/mcp/__tests__/cronMcpServer.test.ts"
+  - "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+  - "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+  - "src/shared/types.ts" # For SessionSource definition, though the change is in test data.
+bug_summary: "TypeScript errors in MCP server test files due to incorrect fetch mock casting (missing 'preconnect' property) and invalid `SessionSource` values ('tmux' instead of 'managed' | 'external'). `bun run typecheck` reports 6 errors across 3 files."
+reproduction_summary:
+  - "Clone repository and install dependencies (`bun install`)."
+  - "Run `bun run typecheck` (or `npx tsc --noEmit`)."
+  - "Observe 6 TypeScript errors in `src/server/mcp/__tests__` files."
+severity_assessment: "minor"
+suggested_investigation_areas:
+  - "src/server/mcp/__tests__/cronMcpServer.test.ts: Line 79 (fetch mock casting)"
+  - "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts: Lines 103 (fetch mock casting), 1259, 1269 (SessionSource value)"
+  - "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts: Lines 352, 1102 (fetch mock casting)"
+  - "src/shared/types.ts: Line 3 (SessionSource type definition)"
+```

@@ -1,0 +1,64 @@
+title: "Stale type fixtures in WU012 test files cause TypeScript errors"
+
+description: |
+  Three test files have object literals that no longer match the current type
+  definitions in src/shared/types.ts. The mismatches are:
+
+  1. CronAiProposal fixtures use a `type` field (e.g. 'create_job') but the
+     interface now uses `operation` (type CronAiProposalOperation).
+  2. CronAiProposal fixtures include a `title` field that does not exist on the
+     interface.
+  3. CronAiProposal fixtures include a `payload` object that does not exist on
+     the interface; the current interface uses `diff` (string), `jobId`,
+     `jobName`, `jobAvatarUrl`, `feedback`, and `resolvedAt` instead.
+  4. CronJob fixtures use `source: 'cron'` but JobSource is a union of
+     'user-crontab' | 'system-crontab' | 'user-systemd' | 'systemd-system'.
+  5. cronStoreCreateOperation.test.ts passes `null` where `string | undefined`
+     is expected.
+
+  All errors are confined to test fixture data — no production code is affected.
+
+reproduction:
+  steps:
+    - "Run: cd /home/andrew-cooke/tools/agentboard && bun run typecheck"
+    - "Observe TypeScript errors in the three listed test files"
+  environment: "Bun 1.x, TypeScript 5.x"
+
+expected: "`bun run typecheck` passes with zero errors in these files"
+
+actual: |
+  TypeScript reports multiple errors:
+  - 'cron' is not assignable to type 'JobSource'
+  - 'type' does not exist on type 'CronAiProposal' (should be 'operation')
+  - 'title' does not exist on type 'CronAiProposal'
+  - 'payload' does not exist on type 'CronAiProposal'
+  - 'null' is not assignable to type 'string | undefined'
+
+affected_files:
+  - src/client/__tests__/app.WU012.test.tsx
+  - src/client/components/cron/__tests__/CronManager.WU012.test.tsx
+  - src/client/stores/__tests__/cronStoreCreateOperation.test.ts
+  - src/shared/types.ts
+
+root_cause: |
+  Test fixtures were written against an earlier version of the CronAiProposal
+  interface and JobSource type. The types were subsequently refactored
+  (type -> operation, title/payload removed, JobSource values changed) but the
+  test files were not updated to match.
+
+fix_strategy: |
+  1. Read current CronAiProposal and JobSource types from src/shared/types.ts.
+  2. Update all CronAiProposal fixtures in the three test files:
+     - Rename `type` to `operation` with valid CronAiProposalOperation values.
+     - Remove `title` field.
+     - Replace `payload` with the required fields: `jobId`, `jobName`,
+       `jobAvatarUrl`, `diff`, `feedback`, `resolvedAt`.
+  3. Replace `source: 'cron'` with a valid JobSource value (e.g. 'user-crontab').
+  4. Replace `null` with `undefined` where the type is `string | undefined`.
+  5. Run `bun run typecheck` to verify zero errors remain.
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

@@ -1,0 +1,97 @@
+verdict: pass
+
+files_changed:
+  - path: "src/server/handlers/cronHandlers.ts"
+    description: |
+      GAP-05: Added activeManualRuns Set<string> in createCronHandlers closure scope.
+      Added guard at top of handleCronJobRunNow that checks if jobId is already running,
+      returns error WS message if so. Added jobId to set before spawning, delete in
+      finally block and catch handler to ensure cleanup on all paths.
+
+  - path: "src/server/index.ts"
+    description: |
+      GAP-06: Added cronCleanupInterval variable alongside existing cleanup intervals.
+      Added deferred initial cleanup (30s timeout, guarded by jobCache.size > 0) that
+      calls cleanOrphanedPrefs and pruneRunHistory after first poll populates cache.
+      Added 24h setInterval for periodic cleanup. Added clearInterval in cleanupAllTerminals.
+
+  - path: "src/client/components/cron/CronJobList.tsx"
+    description: |
+      GAP-04: Added motion/react imports (motion, AnimatePresence, useReducedMotion).
+      Wrapped job rows in AnimatePresence with motion.div using opacity+height enter/exit
+      animations, gated on useReducedMotion for accessibility.
+
+  - path: "src/client/components/cron/CronManager.tsx"
+    description: |
+      GAP-04: Added motion/react imports (motion, AnimatePresence). Wrapped the content
+      area switching between CronJobDetail and CronEmptyState with AnimatePresence mode="wait"
+      and motion.div crossfade (opacity 0→1→0) transitions.
+
+  - path: "src/client/components/cron/CronJobDetail.tsx"
+    description: |
+      GAP-04: Added motion/react imports (motion, AnimatePresence). Wrapped tab content
+      with AnimatePresence mode="wait" and motion.div with opacity+y enter/exit variants.
+      Wrapped CronRunNowOutput with AnimatePresence for fade in/out.
+      GAP-08: Replaced static managed icon with interactive toggle button that sends
+      cron-job-set-managed WS message with optimistic UI update via setJobManaged action.
+
+  - path: "src/client/components/cron/CronRunNowOutput.tsx"
+    description: |
+      GAP-04: Added motion import. Replaced outer div with motion.div using opacity+height
+      enter/exit animation for smooth panel appearance/dismissal.
+
+  - path: "src/client/components/cron/CronTimeline.tsx"
+    description: |
+      GAP-04: Added motion/react imports (motion, AnimatePresence). Replaced bar chart
+      container and bucket elements with motion.div using staggered enter animation
+      (staggerChildren: 0.02) with opacity+y variants.
+
+  - path: "src/client/components/cron/CronEmptyState.tsx"
+    description: |
+      GAP-04: Added motion import. Wrapped both empty state views (no jobs / dashboard)
+      with motion.div using opacity+scale enter animation.
+
+  - path: "src/client/components/cron/CronSessionLink.tsx"
+    description: |
+      GAP-08: Replaced stub component with full session store integration. Imports
+      useSessionStore to populate dropdown with real active sessions (name + project).
+      On session click, sends cron-job-link-session WS message. Linked session chip
+      is now a clickable button that navigates to the session via setSelectedSessionId.
+      Added outside-click handler to close dropdown.
+
+  - path: "src/client/stores/cronStore.ts"
+    description: |
+      GAP-08: Added setJobManaged and setJobLinkedSession optimistic update actions
+      to CronActions interface and implementation. These update local state immediately
+      before the WS round-trip completes, reconciled by handleCronJobUpdate on broadcast.
+
+description: |
+  Implemented all four cron manager gaps:
+
+  GAP-05 (Concurrent-run guard): Added server-side activeManualRuns Set in cronHandlers.ts
+  that prevents duplicate manual runs of the same job. Uses try/finally pattern to ensure
+  cleanup on all paths (success, error, background crash).
+
+  GAP-06 (Cleanup scheduling): Wired cleanOrphanedPrefs() and pruneRunHistory() to periodic
+  setInterval (24h) in index.ts, following the existing workflow/session cleanup pattern.
+  Deferred initial cleanup runs 30s after startup, guarded by jobCache.size > 0 to prevent
+  premature deletion. Interval cleared in cleanupAllTerminals shutdown handler.
+
+  GAP-04 (Animations): Added framer-motion (motion/react) animations to all 6 cron
+  components: CronJobList (row enter/exit with opacity+height), CronManager (crossfade
+  between detail/empty), CronJobDetail (tab content opacity+y transitions, run output
+  AnimatePresence), CronRunNowOutput (panel fade in/out), CronTimeline (staggered bar
+  entrance), CronEmptyState (opacity+scale appearance). useReducedMotion gate in
+  CronJobList for accessibility.
+
+  GAP-08 (Session linking): Replaced CronSessionLink stub with real useSessionStore
+  integration — dropdown shows active sessions with name and project, clicking links the
+  session via WS message. Linked session chip navigates to session on click. Added managed
+  toggle button in CronJobDetail that sends cron-job-set-managed WS with optimistic local
+  update. Added setJobManaged/setJobLinkedSession actions to cronStore.
+
+  Verification: typecheck passes, lint passes (0 new errors), all 11 cron-specific tests
+  pass. 10 pre-existing test failures in unrelated files (orchestratorTemplates, dagEngine,
+  geminiClient, UI components) — none caused by these changes.
+
+tests_expected_to_pass: true

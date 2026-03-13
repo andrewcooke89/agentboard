@@ -1,0 +1,40 @@
+id: WU-019
+title: "Settings UI & Session Integration"
+description: |
+  Add "Cron Manager" section to SettingsModal with all 14 settings: poll interval
+  slider (2-30s), avatar style dropdown, sudo grace period slider, show system/user
+  job toggles, default timeline visibility and range, notification category toggles.
+  Modify SessionList: add clock icon for sessions with linked cron jobs, click handler
+  navigates to cron-manager view filtered to that session's jobs. Avatar fallback:
+  colored circle + first letter if DiceBear unreachable (>3s timeout), deterministic
+  color from name hash.
+files:
+  - path: src/client/components/SettingsModal.tsx
+    action: modify
+    description: "Add Cron Manager settings section"
+  - path: src/client/components/SessionList.tsx
+    action: modify
+    description: "Add clock icon for linked cron jobs, navigate on click"
+dependencies:
+  - WU-002
+  - WU-008
+requirements:
+  - REQ-13
+  - REQ-74
+  - REQ-75
+  - REQ-90
+acceptance_criteria:
+  - type: unit_test
+    description: "Settings modal shows Cron Manager section with all 14 controls"
+  - type: unit_test
+    description: "Poll interval slider bounded 2-30s"
+  - type: unit_test
+    description: "Sessions with linked cron jobs show clock icon"
+  - type: unit_test
+    description: "Clicking clock icon navigates to cron-manager"
+  - type: unit_test
+    description: "Avatar fallback to colored circle when DiceBear unavailable"
+interfaces:
+  exports:
+    - "CronSettingsSection in SettingsModal"
+estimated_loc: 120

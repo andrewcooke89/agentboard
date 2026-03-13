@@ -1,0 +1,102 @@
+id: WU-005
+title: "CronManager - Operations & Credential Cache"
+description: |
+  Extend the CronManager class with all job management operations (run now, pause, resume,
+  edit frequency, delete, create cron, create systemd), bulk operations, backup creation,
+  input sanitization, and the sudo credential cache with secure Uint8Array handling.
+
+dependencies: [WU-003]
+
+files:
+  modified:
+    - path: src/server/cronManager.ts
+      changes: |
+        - runJobNow(jobId, sudoCredential?): AsyncGenerator<string> — execute job, stream output
+        - pauseJob(jobId, sudoCredential?): cron = comment out with #AGENTBOARD_PAUSED:; systemd = stop+disable
+        - resumeJob(jobId, sudoCredential?): cron = uncomment; systemd = enable+start
+        - editFrequency(jobId, newSchedule, sudoCredential?): cron = replace schedule columns; systemd = update OnCalendar + daemon-reload
+        - deleteJob(jobId, sudoCredential?): cron = remove line; systemd = stop+disable+remove unit files
+        - createCronJob(config: CronCreateConfig): append to user crontab, return new job ID
+        - createSystemdTimer(config: SystemdCreateConfig, sudoCredential?): generate .timer+.service, write, daemon-reload, enable, start
+        - bulkPause(jobIds, sudoCredential?): AsyncGenerator<BulkProgress>
+        - bulkResume(jobIds, sudoCredential?): AsyncGenerator<BulkProgress>
+        - bulkDelete(jobIds, sudoCredential?): AsyncGenerator<BulkProgress>
+        - private createBackup(job): crontab snapshot or unit file copy to ~/.agentboard/backups/
+        - private validateCronCommand(command): reject newlines and null bytes
+        - private validateSystemdServiceName(name): match /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
+        - private sudoCredentialCache: Uint8Array | null
+        - private sudoCredentialExpiry: number
+        - cacheSudoCredential(credential: Uint8Array, gracePeriodMs: number): cache with auto-clear timeout
+        - clearSudoCredential(): fill buffer with zeros, set to null
+
+acceptance_criteria:
+  - req: REQ-37
+    type: contract
+    check: "Run Now executes cron jobs via sh -c and systemd via systemctl start"
+  - req: REQ-39
+    type: contract
+    check: "Manual runs recorded in cron_run_history with trigger: 'manual'"
+  - req: REQ-40
+    type: invariant
+    check: "Only one manual run per job allowed at a time"
+  - req: REQ-41
+    type: contract
+    check: "Pause: cron = #AGENTBOARD_PAUSED: prefix; systemd = stop+disable. Resume: inverse"
+  - req: REQ-45
+    type: contract
+    check: "Edit frequency: cron = replace schedule columns; systemd = OnCalendar + daemon-reload"
+  - req: REQ-47
+    type: contract
+    check: "Delete: cron = remove crontab line; systemd = stop+disable+remove unit files"
+  - req: REQ-48
+    type: invariant
+    check: "Backup created before any destructive/edit operation"
+  - req: REQ-51
+    type: contract
+    check: "Quick mode: append to user crontab"
+  - req: REQ-52
+    type: contract
+    check: "Advanced mode: generate .timer+.service, write, daemon-reload, enable, start"
+  - req: REQ-55
+    type: contract
+    check: "Bulk operations iterate sequentially; single sudo prompt covers all"
+  - req: REQ-83
+    type: property
+    check: "Credentials cached as Uint8Array, auto-cleared after grace period, buffer zeroed on clear"
+  - req: REQ-84
+    type: property
+    check: "Warning logged if credentials received over plain WS (not WSS)"
+  - req: REQ-96
+    type: invariant
+    check: "Commands with newlines/null bytes rejected; systemd names validated against regex"
+
+test_specs:
+  - id: TEST-95
+    description: "Crontab injection prevention — newline and null byte rejection"
+  - id: TEST-96
+    description: "Systemd unit name validation — spaces rejected, valid names accepted, path traversal rejected"
+  - id: TEST-97
+    description: "Credential buffer zeroing — Uint8Array filled with zeros on expiry, reference nulled"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager operations API"
+      consumers: [WU-007]
+      contract: |
+        runJobNow(jobId, sudoCredential?): AsyncGenerator<string>
+        pauseJob(jobId, sudoCredential?): Promise<void>
+        resumeJob(jobId, sudoCredential?): Promise<void>
+        editFrequency(jobId, newSchedule, sudoCredential?): Promise<void>
+        deleteJob(jobId, sudoCredential?): Promise<void>
+        createCronJob(config): Promise<string>
+        createSystemdTimer(config, sudoCredential?): Promise<string>
+        bulkPause/Resume/Delete(jobIds, sudoCredential?): AsyncGenerator<BulkProgress>
+        cacheSudoCredential(credential, gracePeriodMs): void
+        clearSudoCredential(): void
+
+implementation_notes: |
+  Use Bun.spawn for all command execution. The runJobNow generator should yield stdout/stderr
+  chunks as they arrive. Backup directory: ~/.agentboard/backups/. For crontab editing, use
+  `crontab -l` to read, modify in memory, then `crontab -` to write back. For systemd unit
+  file generation, use template strings with proper escaping. Credential cache uses setTimeout
+  for auto-clear; the clear function MUST call credential.fill(0) before nulling.

@@ -1,0 +1,56 @@
+title: "Gemini graceful degradation fails when no API key is set"
+
+description: |
+  When no Gemini API key is configured (GEMINI_API_KEY unset, no override),
+  two components fail to degrade gracefully:
+
+  1. geminiClient.ts callGemini() — returns undefined instead of a structured
+     skip indicator ({ skipped: true, reason: 'no_api_key' }).
+  2. dagEngine.ts executeGeminiOffload() — does not check the skip indicator
+     from callGemini, causing gemini_offload steps to end with status 'failed'
+     instead of 'skipped'.
+
+  The fix is to check for a missing API key early in callGemini and return
+  { skipped: true, reason: 'no_api_key' }, then check response.skipped in
+  executeGeminiOffload and set stepState.status = 'skipped' with a reason.
+
+reproduction:
+  steps:
+    - "Ensure GEMINI_API_KEY environment variable is unset"
+    - "Clear any API key override (setApiKeyOverride(undefined))"
+    - "Call callGemini({ model: 'gemini-1.5-flash', prompt: 'test' })"
+    - "Observe callGemini returns undefined instead of { skipped: true, reason: 'no_api_key' }"
+    - "Run a DAG workflow containing a gemini_offload step"
+    - "Observe the step ends with status 'failed' instead of 'skipped'"
+  environment: |
+    Bun 1.x, TypeScript 5.x, Hono backend.
+    No GEMINI_API_KEY set. No API key override active.
+
+expected: |
+  1. callGemini() returns { skipped: true, reason: 'no_api_key' } when no
+     API key is available — no network request is made.
+  2. executeGeminiOffload() detects response.skipped === true and sets
+     stepState.status = 'skipped', stepState.skippedReason containing
+     'no_api_key'. The step does not fail.
+  3. Downstream steps that depend on the skipped step handle the skip
+     gracefully (no crash, no unresolved promise).
+
+actual: |
+  1. callGemini() returns undefined when no API key is set.
+  2. executeGeminiOffload() does not check for the skip indicator and
+     the step ends with status 'failed'.
+  3. Failing tests:
+     - src/server/__tests__/geminiClient.test.ts (skipped:true assertion fails)
+     - src/server/__tests__/dagEngine.test.ts (status === 'skipped' assertion fails)
+
+affected_files:
+  - src/server/geminiClient.ts
+  - src/server/dagEngine.ts
+  - src/server/__tests__/geminiClient.test.ts
+  - src/server/__tests__/dagEngine.test.ts
+
+severity: major
+
+affected_spec: "{{ affected_spec_path }}"
+
+verdict: pass

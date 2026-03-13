@@ -1,0 +1,40 @@
+verdict: pass
+reproduced: true
+reproduction_output: |
+  Bug 1 - StepNode skipped status color:
+    Test: "applies bg-yellow-500 for skipped status"
+    Expected: "bg-yellow-500"
+    Actual: "bg-gray-500 text-gray-300 border-gray-400"
+    Status: CONFIRMED
+
+  Bug 2a - ParallelGroupNode dependency info spacing:
+    Test: "REQ-05: shows dependency info for pending child steps"
+    Expected: "depends_on: independent"
+    Actual: "(depends_on:independent)"
+    Status: CONFIRMED
+
+  Bug 2b - ParallelGroupNode empty childSteps array:
+    Test: "handles empty childSteps array"
+    Expected: "0/0 complete"
+    Actual: "No steps"
+    Status: CONFIRMED
+
+  Bug 2c - ParallelGroupNode undefined childSteps:
+    Test: "handles undefined childSteps"
+    Expected: "0/0 complete"
+    Actual: "No steps"
+    Status: CONFIRMED
+
+  Test execution summary:
+    pipelineDiagram.test.tsx: 29 pass, 4 skip, 1 fail
+    ParallelGroupNode.test.tsx: 13 pass, 3 fail
+notes: |
+  All 4 bugs described in the bug specification are consistently reproducible.
+  The bugs are in the src/client/components/StepNode.tsx and
+  src/client/components/ParallelGroupNode.tsx files as specified.
+
+  Bug 1: STATUS_CLASSES map at StepNode.tsx line 10 has incorrect color for 'skipped'.
+  Bug 2a: JSX at lines 228-229 in ParallelGroupNode.tsx lacks whitespace between spans.
+  Bug 2b/c: Ternary at line 187 in ParallelGroupNode.tsx returns "No steps" when total === 0.
+
+  All bugs are minor UI rendering issues but should be fixed for visual consistency.

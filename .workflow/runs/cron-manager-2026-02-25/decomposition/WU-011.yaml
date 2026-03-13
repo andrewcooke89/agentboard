@@ -1,0 +1,49 @@
+id: WU-011
+title: "Detail Pane Shell"
+description: |
+  Implement CronJobDetail: persistent header with large avatar (48x48), name,
+  source badge, status badge, health badge with tooltip, tag pills (add/remove),
+  managed toggle, linked session indicator. Tab bar: Overview, History, Logs,
+  Script. Implement CronTagInput: tag pill display with colored pills (deterministic
+  color from name hash), removable tags, autocomplete dropdown from all existing tags,
+  free-text for new tags. Implement CronSessionLink: session link chip in header,
+  "Link to Session" dropdown of active sessions.
+files:
+  - path: src/client/components/cron/CronJobDetail.tsx
+    action: modify
+    description: "Implement detail pane with header and tab shell"
+  - path: src/client/components/cron/CronTagInput.tsx
+    action: modify
+    description: "Implement tag input with autocomplete"
+  - path: src/client/components/cron/CronSessionLink.tsx
+    action: modify
+    description: "Implement session link indicator and dropdown"
+dependencies:
+  - WU-008
+requirements:
+  - REQ-21
+  - REQ-64
+  - REQ-65
+  - REQ-66
+  - REQ-72
+  - REQ-73
+  - REQ-76
+acceptance_criteria:
+  - type: unit_test
+    description: "Detail header shows avatar, name, badges, tags"
+  - type: unit_test
+    description: "Tab bar switches between Overview, History, Logs, Script"
+  - type: unit_test
+    description: "Tag pills with deterministic color from name hash"
+  - type: unit_test
+    description: "Tag autocomplete suggests existing tags"
+  - type: unit_test
+    description: "Session link dropdown lists active sessions"
+  - type: unit_test
+    description: "Managed toggle sends cron-job-set-managed WS message"
+interfaces:
+  exports:
+    - "CronJobDetail component"
+    - "CronTagInput component"
+    - "CronSessionLink component"
+estimated_loc: 200

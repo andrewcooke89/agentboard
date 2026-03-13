@@ -1,0 +1,127 @@
+verdict: pass
+
+root_cause: |
+  Type definitions in src/shared/types.ts were updated during the cron manager feature
+  (JobSource, CronAiProposal, CronCreateConfig, SubscribeServerMessage, SessionSource)
+  but 12+ test files were never updated to match. Additionally, two production code bugs
+  exist in cronManager.ts (undefined vs null, private vs protected). The result is 60+
+  TypeScript compilation errors and test failures across the codebase.
+
+location:
+  file: "src/shared/types.ts"
+  line_range: "1-870"
+  function: "(type definitions: JobSource, CronAiProposal, CronCreateConfig, SubscribeServerMessage)"
+
+mechanism: |
+  Type-test drift: production types evolved but test fixtures were left referencing old
+  field names and shapes. TypeScript strict mode catches the mismatches as compilation
+  errors, preventing the entire test suite from running.
+
+  12 distinct error groups were identified:
+
+  1. 'cron' not in JobSource union (tests use 'cron', type requires 'user-crontab' etc.)
+     Files: app.WU012.test.tsx, CronManager.WU012.test.tsx
+
+  2. 'type'/'title'/'payload' don't exist on CronAiProposal (old API used these, new API
+     uses 'operation', 'jobId', 'diff' etc.)
+     Files: app.WU012.test.tsx, CronManager.WU012.test.tsx
+
+  3. WebSocketManager.send() returns void, tests expect boolean (intentional TDD tests)
+     Files: webSocketSendReturnBoolean.test.ts, cronJobCreationRegression.test.ts
+
+  4. 'tags' field missing from CronCreateConfig fixtures (tags is now required)
+     Files: cronDuplicateDetection.test.ts, cronFlockWrapping.test.ts
+
+  5. readCrontab/writeCrontab are private, tests try to override as protected
+     File: cronManager.ts:752 (production code needs change)
+
+  6. 'ping' not a valid ClientMessage type
+     File: cronJobCreationRegression.test.ts
+
+  7. generateJobId mock signatures don't match call sites
+     File: cronJobCreationRegression.test.ts
+
+  8. undefined not assignable to number|null in enrichAllJobsWithHealth
+     File: cronManager.ts:567,582 (production code bug)
+
+  9. SubscribeServerMessage test uses old 2-arg API, type is single-arg
+     File: CronAiTerminal.test.tsx
+
+  10. 'tmux' not in SessionSource union
+      File: wu006-healthAnalysisTools.test.ts
+
+  11. fetch mock missing 'preconnect' property (newer TS lib types)
+      Files: cronMcpServer.test.ts, wu006-healthAnalysisTools.test.ts, wu007-writeNavigationTools.test.ts
+
+  12. localStorage mock issues causing zustand middleware failures at runtime
+      File: app.WU012.test.tsx
+
+fix_approach: |
+  Two-part fix:
+
+  PRODUCTION CODE (2 files):
+  A) src/server/cronManager.ts:567 - Change `undefined` to `null` for lastRunDuration
+     and avgDuration defaults (fixes undefined-vs-null type mismatch)
+  B) src/server/cronManager.ts:752 - Change `private` to `protected` on readCrontab()
+     and writeCrontab() methods (enables test subclassing pattern)
+
+  TEST FILES (12+ files):
+  1. app.WU012.test.tsx - Fix CronJob fixtures (source: 'user-crontab', add missing
+     required fields), fix CronAiProposal fixtures (operation instead of type, remove
+     title/payload, add jobId/diff/feedback/resolvedAt), add localStorage mock
+  2. CronManager.WU012.test.tsx - Same CronJob and CronAiProposal fixture fixes
+  3. webSocketSendReturnBoolean.test.ts - Update send() return type in useWebSocket.ts
+     OR mark tests as expected-to-fail pending implementation
+  4. cronDuplicateDetection.test.ts - Add tags:[] to all CronCreateConfig fixtures
+  5. cronFlockWrapping.test.ts - Add tags:[] and missing comment to CronCreateConfig fixtures
+  6. cronJobCreationRegression.test.ts - Replace 'ping' with 'session-refresh', fix
+     generateJobId mock signatures
+  7. CronAiTerminal.test.tsx - Fix subscribe mock to match single-arg SubscribeServerMessage
+  8. wu006-healthAnalysisTools.test.ts - Change source:'tmux' to source:'managed',
+     double-cast fetch mock
+  9. wu007-writeNavigationTools.test.ts - Double-cast fetch mock
+  10. cronMcpServer.test.ts - Double-cast fetch mock
+
+risk_assessment: |
+  LOW RISK for production code changes:
+  - cronManager.ts undefined→null: Pure type alignment, no behavioral change
+  - cronManager.ts private→protected: Widens visibility slightly but methods are
+    internal I/O helpers, no external API impact
+
+  LOW RISK for test fixes:
+  - All test fixture updates are alignment with existing type definitions
+  - No production logic changes beyond the two cronManager.ts fixes
+  - The send()-returns-boolean tests are intentional TDD; either implement the
+    feature or defer with skip annotations
+
+  WATCH FOR:
+  - CronJob fixture updates must include ALL required fields or new errors appear
+  - localStorage mock must be set up before zustand store imports
+  - The fetch preconnect issue may recur with future TS version bumps
+
+affected_files:
+  production:
+    - path: "src/server/cronManager.ts"
+      lines: "567,582,752"
+      changes: "undefined→null for duration defaults, private→protected for readCrontab/writeCrontab"
+  tests:
+    - path: "src/client/__tests__/app.WU012.test.tsx"
+      changes: "Fix CronJob/CronAiProposal fixtures, add localStorage mock"
+    - path: "src/client/components/cron/__tests__/CronManager.WU012.test.tsx"
+      changes: "Fix CronJob/CronAiProposal fixtures"
+    - path: "src/client/__tests__/webSocketSendReturnBoolean.test.ts"
+      changes: "Defer or implement send() boolean return"
+    - path: "src/server/__tests__/cronDuplicateDetection.test.ts"
+      changes: "Add tags:[] to CronCreateConfig fixtures"
+    - path: "src/server/__tests__/cronFlockWrapping.test.ts"
+      changes: "Add tags:[] and comment to CronCreateConfig fixtures"
+    - path: "src/server/__tests__/cronJobCreationRegression.test.ts"
+      changes: "Fix ClientMessage type, generateJobId mock signatures"
+    - path: "src/client/components/cron/__tests__/CronAiTerminal.test.tsx"
+      changes: "Fix subscribe mock to single-arg signature"
+    - path: "src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts"
+      changes: "Fix SessionSource, double-cast fetch mock"
+    - path: "src/server/mcp/__tests__/wu007-writeNavigationTools.test.ts"
+      changes: "Double-cast fetch mock"
+    - path: "src/server/__tests__/cronMcpServer.test.ts"
+      changes: "Double-cast fetch mock"

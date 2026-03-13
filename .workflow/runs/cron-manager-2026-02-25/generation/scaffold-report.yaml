@@ -1,0 +1,735 @@
+schema_version: "scaffold_v1.0"
+
+feature: "Cron & Systemd Timer Manager"
+manifest_path: "/home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-25/decomposition/manifest.yaml"
+project_path: "/home/andrew-cooke/tools/agentboard"
+generated_at: "2026-02-25"
+
+# ─────────────────────────────────────────────────────────
+#  SCAFFOLD AUDIT SUMMARY
+# ─────────────────────────────────────────────────────────
+#
+#  All 30 target files already exist in the codebase.
+#  No new files need to be created.
+#
+#  Shared types (src/shared/types.ts) are fully defined
+#  and do NOT require modification by any work unit.
+#
+#  The scaffold consists of typed stubs that throw
+#  "not implemented" — ready for implementation.
+# ─────────────────────────────────────────────────────────
+
+summary:
+  total_files_in_manifest: 30
+  files_already_exist: 30
+  files_need_creation: 0
+  files_fully_complete: 6
+  files_partially_complete: 10
+  files_stub_only: 10
+  files_need_wiring: 4
+  shared_types_complete: true
+  new_packages_required:
+    - name: cronstrue
+      purpose: "Human-readable cron expression descriptions"
+      consumers: [WU-010, WU-012]
+    - name: cron-parser
+      purpose: "Cron expression parsing, validation, next-run projection"
+      consumers: [WU-003, WU-004, WU-012, WU-017]
+    - name: motion/react
+      purpose: "Animation library for list transitions"
+      consumers: [WU-010]
+    - name: highlight.js
+      purpose: "Syntax highlighting for script viewer"
+      consumers: [WU-012]
+
+# ─────────────────────────────────────────────────────────
+#  FILE-LEVEL SCAFFOLD STATUS
+# ─────────────────────────────────────────────────────────
+
+files:
+  # ── Server Files ──────────────────────────────────────
+
+  - path: src/server/db.ts
+    exists: true
+    lines: 593
+    work_units: [WU-001]
+    scaffold_status: needs_extension
+    detail: >
+      File exists with agent_sessions + pool tables. No cron tables present.
+      WU-001 must ADD cron_job_prefs and cron_run_history tables plus 5 accessor
+      functions (upsertJobPrefs, getJobPrefs, insertRunHistory, getRunHistory,
+      pruneRunHistory). Existing code must not be modified.
+    stub_methods: []
+    missing_elements:
+      - "CREATE TABLE cron_job_prefs (job_id TEXT PRIMARY KEY, tags TEXT, managed INTEGER, linked_session TEXT, notes TEXT, last_seen INTEGER)"
+      - "CREATE TABLE cron_run_history (id INTEGER PRIMARY KEY, job_id TEXT, started_at INTEGER, ended_at INTEGER, exit_code INTEGER, trigger TEXT)"
+      - "upsertJobPrefs()"
+      - "getJobPrefs()"
+      - "insertRunHistory()"
+      - "getRunHistory()"
+      - "pruneRunHistory()"
+
+  - path: src/server/cronManager.ts
+    exists: true
+    lines: 261
+    work_units: [WU-003, WU-004, WU-005]
+    scaffold_status: full_stub
+    detail: >
+      Class skeleton with all method signatures typed. Every method body throws
+      "not implemented" except stopPolling() and clearSudoCredential() which have
+      trivial real implementations. State fields declared with correct types.
+      WU-003 implements discovery (10 methods), WU-004 implements polling/health
+      (6 methods), WU-005 implements operations (14 methods). Must execute
+      sequentially per DAG due to shared file.
+    stub_methods:
+      - detectSystemd
+      - discoverAllJobs
+      - discoverUserCrontab
+      - discoverSystemCrontab
+      - discoverUserTimers
+      - discoverSystemTimers
+      - generateJobId
+      - parseCronSchedule
+      - parseSystemdCalendar
+      - resolveScriptPath
+      - inferProjectGroup
+      - generateAvatarUrl
+      - projectNextRuns
+      - startPolling
+      - onJobsChanged
+      - computeDiff
+      - computeHealth
+      - detectMissedRun
+      - cleanOrphanedPrefs
+      - pruneRunHistory
+      - runJobNow
+      - pauseJob
+      - resumeJob
+      - editFrequency
+      - deleteJob
+      - createCronJob
+      - createSystemdTimer
+      - bulkPause
+      - bulkResume
+      - bulkDelete
+      - createBackup
+      - validateCronCommand
+      - validateSystemdServiceName
+      - cacheSudoCredential
+    real_methods:
+      - stopPolling
+      - clearSudoCredential
+    missing_elements: []
+
+  - path: src/server/cronHistoryService.ts
+    exists: true
+    lines: 45
+    work_units: [WU-006]
+    scaffold_status: full_stub
+    detail: >
+      Class skeleton with constructor taking db reference. All 3 methods throw
+      "not implemented".
+    stub_methods:
+      - getRunHistory
+      - recordManualRun
+      - getRecentDurations
+    missing_elements: []
+
+  - path: src/server/cronLogService.ts
+    exists: true
+    lines: 28
+    work_units: [WU-006]
+    scaffold_status: full_stub
+    detail: >
+      Class skeleton. Both methods throw "not implemented". tailLogs is an
+      AsyncGenerator.
+    stub_methods:
+      - getLogs
+      - tailLogs
+    missing_elements: []
+
+  - path: src/server/handlers/cronHandlers.ts
+    exists: true
+    lines: 47
+    work_units: [WU-007]
+    scaffold_status: full_stub
+    detail: >
+      CronHandlers interface fully typed with 16 handler methods + onClientConnect
+      + onClientDisconnect. Factory function createCronHandlers() throws
+      "not implemented". Imports CronManager, CronHistoryService, CronLogService.
+    stub_methods:
+      - createCronHandlers
+    missing_elements: []
+
+  - path: src/server/index.ts
+    exists: true
+    lines: 460
+    work_units: [WU-002]
+    scaffold_status: needs_wiring
+    detail: >
+      No cron imports or wiring present. Must add: import CronManager,
+      CronHistoryService, CronLogService, createCronHandlers; instantiate all
+      three; wire cron message types into wsHandlers switch; call
+      onClientConnect/onClientDisconnect. Follow existing workflow engine wiring
+      pattern (lines 167-284).
+    stub_methods: []
+    missing_elements:
+      - "import { CronManager } from './cronManager'"
+      - "import { CronHistoryService } from './cronHistoryService'"
+      - "import { CronLogService } from './cronLogService'"
+      - "import { createCronHandlers } from './handlers/cronHandlers'"
+      - "Instantiate CronManager, CronHistoryService, CronLogService"
+      - "Wire 16 cron message types in wsHandlers"
+      - "Call onClientConnect in ws open handler"
+      - "Call onClientDisconnect in ws close handler"
+
+  # ── Client Store ──────────────────────────────────────
+
+  - path: src/client/stores/cronStore.ts
+    exists: true
+    lines: 153
+    work_units: [WU-008, WU-018]
+    scaffold_status: full_stub
+    detail: >
+      Zustand store with persist middleware. All state fields declared with
+      correct initial values. ALL action methods (14), WS handler methods (10),
+      and derived selectors (4) throw "not implemented". Persist config present
+      but Set serialization noted as TODO. WU-008 implements core store, WU-018
+      adds notification logic. Must execute sequentially per DAG.
+    stub_methods:
+      - handleJobsSnapshot
+      - handleJobDetail
+      - handleJobUpdate
+      - handleJobRunOutput
+      - handleJobDeleted
+      - handleBulkProgress
+      - handleBulkComplete
+      - handleHealthUpdate
+      - handleSystemdStatus
+      - handleError
+      - selectJob
+      - setSearchQuery
+      - setSortMode
+      - setFilterMode
+      - setFilterSource
+      - toggleFilterTag
+      - toggleGroup
+      - setActiveTab
+      - toggleTimeline
+      - setTimelineRange
+      - toggleBulkSelect
+      - toggleJobSelection
+      - selectAllVisible
+      - clearSelection
+      - filteredJobs
+      - groupedJobs
+      - selectedJobCount
+      - hasActiveFilters
+    missing_elements:
+      - "Set serialization for persist middleware"
+
+  - path: src/client/stores/settingsStore.ts
+    exists: true
+    lines: 387
+    work_units: [WU-002]
+    scaffold_status: needs_wiring
+    detail: >
+      Settings store exists with full implementation for existing features.
+      No cron-specific settings present. WU-002 must add 14 cron settings
+      (cronListWidth, pollInterval, avatarStyle, etc.) following existing patterns.
+    stub_methods: []
+    missing_elements:
+      - "cronListWidth (default 320)"
+      - "cronPollInterval"
+      - "cronAvatarStyle"
+      - "11 additional cron settings per spec"
+
+  # ── Client App Integration ────────────────────────────
+
+  - path: src/client/App.tsx
+    exists: true
+    lines: 970
+    work_units: [WU-009]
+    scaffold_status: needs_wiring
+    detail: >
+      Main app component. No cron integration present. Must add 'cron' to
+      activeView type, import CronManager component, add cron ServerMessage
+      handlers (11 types) in subscribe() callback, add keyboard shortcut, add
+      nav button. Follow workflow view pattern (lines 886-925).
+    stub_methods: []
+    missing_elements:
+      - "'cron' activeView variant"
+      - "CronManager component import and render"
+      - "11 cron ServerMessage handlers in subscribe()"
+      - "Keyboard shortcut for cron view"
+      - "Nav toggle button"
+
+  # ── Client Components ─────────────────────────────────
+
+  - path: src/client/components/cron/CronManager.tsx
+    exists: true
+    lines: 46
+    work_units: [WU-009, WU-017]
+    scaffold_status: shell
+    detail: >
+      Layout skeleton with commented-out child components and placeholder divs.
+      WU-009 connects store and wires children, WU-017 adds timeline integration.
+    stub_methods: []
+    missing_elements:
+      - "Store connection (useCronStore)"
+      - "Resizable split pane"
+      - "Child component rendering"
+      - "Timeline toggle"
+
+  - path: src/client/components/cron/CronEmptyState.tsx
+    exists: true
+    lines: 46
+    work_units: [WU-009]
+    scaffold_status: partial
+    detail: >
+      Visually mostly complete with hardcoded zero counts. Needs store wiring
+      for real systemd status and refresh action.
+    stub_methods: []
+    missing_elements:
+      - "Store wiring for systemdAvailable"
+      - "Refresh/scan action"
+
+  - path: src/client/components/cron/CronJobList.tsx
+    exists: true
+    lines: 36
+    work_units: [WU-010, WU-016]
+    scaffold_status: shell
+    detail: >
+      Empty list placeholder. WU-010 adds store connection, grouped rendering,
+      keyboard navigation, search/filter. WU-016 adds bulk selection checkboxes.
+    stub_methods: []
+    missing_elements:
+      - "Store connection"
+      - "Grouped job rendering"
+      - "Keyboard navigation"
+      - "Search/filter bar"
+      - "Bulk selection (WU-016)"
+
+  - path: src/client/components/cron/CronJobRow.tsx
+    exists: true
+    lines: 46
+    work_units: [WU-010]
+    scaffold_status: partial
+    detail: >
+      Renders job.name and job.scheduleHuman. Health badge commented out.
+      Missing avatar, bulk selection checkbox, status indicators, click handler.
+    stub_methods: []
+    missing_elements:
+      - "Avatar rendering"
+      - "Health badge integration"
+      - "Bulk selection checkbox"
+      - "Status indicators"
+      - "Click/select handler"
+
+  - path: src/client/components/cron/CronHealthBadge.tsx
+    exists: true
+    lines: 36
+    work_units: [WU-010]
+    scaffold_status: complete
+    detail: "Fully functional display component. No stubs, no missing logic."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/cron/CronBulkActions.tsx
+    exists: true
+    lines: 45
+    work_units: [WU-016]
+    scaffold_status: complete
+    detail: "Fully functional display component with callbacks wired."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/cron/CronJobDetail.tsx
+    exists: true
+    lines: 63
+    work_units: [WU-011]
+    scaffold_status: shell
+    detail: >
+      Tab navigation hardcoded. No active tab from store, controls commented out.
+      Needs store wiring for selected job, tab state, and all child tab rendering.
+    stub_methods: []
+    missing_elements:
+      - "Store connection for selectedJobDetail"
+      - "Active tab from store"
+      - "Tab content rendering"
+      - "Controls integration"
+      - "Tag input integration"
+      - "Session link integration"
+
+  - path: src/client/components/cron/CronOverviewTab.tsx
+    exists: true
+    lines: 50
+    work_units: [WU-012]
+    scaffold_status: partial
+    detail: >
+      Renders real data fields from props. Missing countdown timer (setInterval),
+      no highlight.js integration.
+    stub_methods: []
+    missing_elements:
+      - "setInterval countdown ticker for next run"
+      - "Health detail display"
+
+  - path: src/client/components/cron/CronScriptTab.tsx
+    exists: true
+    lines: 47
+    work_units: [WU-012]
+    scaffold_status: partial
+    detail: >
+      Renders code block with pre/code tags. No syntax highlighting.
+    stub_methods: []
+    missing_elements:
+      - "highlight.js syntax highlighting"
+      - "Language detection"
+      - "Copy button"
+
+  - path: src/client/components/cron/CronScheduleEditor.tsx
+    exists: true
+    lines: 45
+    work_units: [WU-012]
+    scaffold_status: stub
+    detail: >
+      isValid=false and preview='' hardcoded. Validation and preview not implemented.
+    stub_methods: []
+    missing_elements:
+      - "cron-parser validation"
+      - "cronstrue human-readable preview"
+      - "Debounced input handling"
+
+  - path: src/client/components/cron/CronHistoryTab.tsx
+    exists: true
+    lines: 68
+    work_units: [WU-013]
+    scaffold_status: partial
+    detail: >
+      Renders records list with basic formatting. No sparkline, no store wiring
+      for data fetching.
+    stub_methods: []
+    missing_elements:
+      - "Store wiring for run history data"
+      - "Duration sparkline SVG"
+      - "Pagination/infinite scroll"
+
+  - path: src/client/components/cron/CronLogsTab.tsx
+    exists: true
+    lines: 52
+    work_units: [WU-013]
+    scaffold_status: partial
+    detail: >
+      Renders log lines with basic formatting. Toolbar buttons non-functional.
+    stub_methods: []
+    missing_elements:
+      - "Live tail polling"
+      - "Copy to clipboard"
+      - "Search/filter"
+      - "Auto-scroll"
+
+  - path: src/client/components/cron/CronJobControls.tsx
+    exists: true
+    lines: 82
+    work_units: [WU-014]
+    scaffold_status: partial
+    detail: >
+      Buttons render correctly with proper labels/icons. No store dispatch wired.
+    stub_methods: []
+    missing_elements:
+      - "Store action dispatch (pause/resume/delete/run)"
+      - "Confirmation flow integration"
+      - "Loading states"
+
+  - path: src/client/components/cron/CronRunNowOutput.tsx
+    exists: true
+    lines: 52
+    work_units: [WU-014]
+    scaffold_status: partial
+    detail: >
+      Renders output chunks joined. Missing auto-scroll ref and streaming indicator.
+    stub_methods: []
+    missing_elements:
+      - "useRef + scrollIntoView for auto-scroll"
+      - "Streaming/complete indicator"
+
+  - path: src/client/components/cron/CronCreateModal.tsx
+    exists: true
+    lines: 104
+    work_units: [WU-015]
+    scaffold_status: partial
+    detail: >
+      Quick (cron) mode partially works with form fields. Systemd mode throws
+      "not implemented". Needs store action wiring.
+    stub_methods:
+      - "systemd creation path"
+    missing_elements:
+      - "Systemd timer creation form"
+      - "Store action dispatch"
+      - "Validation feedback"
+
+  - path: src/client/components/cron/CronDeleteConfirm.tsx
+    exists: true
+    lines: 75
+    work_units: [WU-015]
+    scaffold_status: complete
+    detail: "Fully functional type-to-confirm dialog."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/cron/CronSudoPrompt.tsx
+    exists: true
+    lines: 78
+    work_units: [WU-015]
+    scaffold_status: complete
+    detail: "Fully functional sudo password prompt."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/cron/CronTagInput.tsx
+    exists: true
+    lines: 101
+    work_units: [WU-011]
+    scaffold_status: complete
+    detail: "Tag add/remove/color logic complete."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/cron/CronTimeline.tsx
+    exists: true
+    lines: 60
+    work_units: [WU-017]
+    scaffold_status: shell
+    detail: >
+      Static placeholder bars. Needs cron-parser next-run projection and
+      real data rendering.
+    stub_methods: []
+    missing_elements:
+      - "cron-parser next-run projection"
+      - "Dynamic bar rendering from job data"
+      - "Time axis with labels"
+      - "Click-to-select interaction"
+
+  - path: src/client/components/cron/CronSessionLink.tsx
+    exists: true
+    lines: 68
+    work_units: [WU-011]
+    scaffold_status: complete
+    detail: "Linked/unlinked states render correctly."
+    stub_methods: []
+    missing_elements: []
+
+  - path: src/client/components/SettingsModal.tsx
+    exists: true
+    lines: 979
+    work_units: [WU-019]
+    scaffold_status: needs_wiring
+    detail: >
+      Full settings modal with existing feature sections. No cron settings section.
+      WU-019 adds a Cron settings panel following existing section patterns.
+    stub_methods: []
+    missing_elements:
+      - "Cron settings section/panel"
+
+  - path: src/client/components/SessionList.tsx
+    exists: true
+    lines: 900
+    work_units: [WU-019]
+    scaffold_status: needs_wiring
+    detail: >
+      Agent session list. No cron job linkage UI. WU-019 adds session-to-cron-job
+      linking capability.
+    stub_methods: []
+    missing_elements:
+      - "Cron job link indicator"
+      - "Link/unlink action"
+
+# ─────────────────────────────────────────────────────────
+#  WORK UNIT → SCAFFOLD READINESS
+# ─────────────────────────────────────────────────────────
+
+work_unit_readiness:
+  - id: WU-001
+    title: "Database Schema & Accessors"
+    scaffold_ready: true
+    action: extend
+    notes: "Add 2 tables + 5 functions to existing db.ts. No new file needed."
+
+  - id: WU-002
+    title: "Server Wiring & Settings Store"
+    scaffold_ready: true
+    action: extend
+    notes: "Wire cron into existing index.ts + add cron settings to settingsStore.ts."
+
+  - id: WU-003
+    title: "CronManager Discovery & Parsing"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throws in 10 discovery/parsing methods."
+
+  - id: WU-004
+    title: "Polling, Diff & Health Computation"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throws in 6 polling/health methods."
+
+  - id: WU-005
+    title: "Operations & Credential Cache"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throws in 14 operation methods."
+
+  - id: WU-006
+    title: "History & Log Services"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throws in cronHistoryService (3) + cronLogService (2)."
+
+  - id: WU-007
+    title: "WebSocket Handlers"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throw in createCronHandlers factory."
+
+  - id: WU-008
+    title: "Zustand Store"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Replace 'not implemented' throws in all 28 methods. Add Set serialization."
+
+  - id: WU-009
+    title: "App Integration & Empty State"
+    scaffold_ready: true
+    action: extend
+    notes: "Wire CronManager into App.tsx, flesh out CronManager.tsx shell, wire CronEmptyState."
+
+  - id: WU-010
+    title: "Job List & Row Components"
+    scaffold_ready: true
+    action: extend
+    notes: "Flesh out CronJobList shell, extend CronJobRow partial, CronHealthBadge already complete."
+
+  - id: WU-011
+    title: "Detail Pane Shell"
+    scaffold_ready: true
+    action: extend
+    notes: "Flesh out CronJobDetail shell. CronTagInput and CronSessionLink already complete."
+
+  - id: WU-012
+    title: "Overview & Script Tabs"
+    scaffold_ready: true
+    action: extend
+    notes: "Extend CronOverviewTab and CronScriptTab partials, implement CronScheduleEditor stub."
+
+  - id: WU-013
+    title: "History & Logs Tabs"
+    scaffold_ready: true
+    action: extend
+    notes: "Extend CronHistoryTab and CronLogsTab partials with store wiring and missing features."
+
+  - id: WU-014
+    title: "Job Controls & Run Now"
+    scaffold_ready: true
+    action: extend
+    notes: "Wire CronJobControls to store, add auto-scroll to CronRunNowOutput."
+
+  - id: WU-015
+    title: "Create, Delete & Sudo Modals"
+    scaffold_ready: true
+    action: extend
+    notes: "Complete CronCreateModal systemd path. CronDeleteConfirm and CronSudoPrompt already complete."
+
+  - id: WU-016
+    title: "Bulk Operations"
+    scaffold_ready: true
+    action: extend
+    notes: "Add bulk selection to CronJobList. CronBulkActions already complete."
+
+  - id: WU-017
+    title: "Schedule Timeline"
+    scaffold_ready: true
+    action: extend
+    notes: "Implement CronTimeline with cron-parser projection, wire into CronManager."
+
+  - id: WU-018
+    title: "Notifications"
+    scaffold_ready: true
+    action: implement_stubs
+    notes: "Add notification logic to cronStore.ts WS handlers."
+
+  - id: WU-019
+    title: "Settings UI & Session Integration"
+    scaffold_ready: true
+    action: extend
+    notes: "Add cron section to SettingsModal, add link UI to SessionList."
+
+# ─────────────────────────────────────────────────────────
+#  CROSS-WU INTERFACES
+# ─────────────────────────────────────────────────────────
+
+cross_wu_interfaces:
+  - interface: "CronJob type family"
+    file: src/shared/types.ts
+    status: complete
+    consumers: [WU-001, WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008]
+    contract: "CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, SystemdCreateConfig, BulkProgress"
+
+  - interface: "WebSocket message protocol"
+    file: src/shared/types.ts
+    status: complete
+    consumers: [WU-007, WU-008, WU-009]
+    contract: "ServerMessage (11 cron variants) and ClientMessage (16 cron variants)"
+
+  - interface: "CronManager class API"
+    file: src/server/cronManager.ts
+    status: stubbed
+    defined_in: WU-003
+    extended_by: [WU-004, WU-005]
+    consumed_by: [WU-007]
+
+  - interface: "CronHistoryService API"
+    file: src/server/cronHistoryService.ts
+    status: stubbed
+    defined_in: WU-006
+    consumed_by: [WU-007]
+
+  - interface: "Database accessors"
+    file: src/server/db.ts
+    status: missing
+    defined_in: WU-001
+    consumed_by: [WU-003, WU-004, WU-005, WU-006]
+
+  - interface: "useCronStore hook"
+    file: src/client/stores/cronStore.ts
+    status: stubbed
+    defined_in: WU-008
+    extended_by: [WU-018]
+    consumed_by: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-019]
+
+  - interface: "Settings store cron fields"
+    file: src/client/stores/settingsStore.ts
+    status: missing
+    defined_in: WU-002
+    consumed_by: [WU-004, WU-005, WU-008, WU-019]
+
+# ─────────────────────────────────────────────────────────
+#  SCAFFOLD VERDICT
+# ─────────────────────────────────────────────────────────
+
+verdict:
+  status: PASS
+  scaffold_complete: true
+  files_to_create: 0
+  reason: >
+    All 30 files exist with typed stubs/shells. Shared types are fully defined
+    in types.ts. 6 UI components are already complete. The remaining 24 files
+    have correct TypeScript signatures and interfaces — implementation can
+    proceed directly by replacing stubs with real logic. No scaffold generation
+    step is required; the codebase is ready for implementation.
+  blockers: []
+  warnings:
+    - "4 packages (cronstrue, cron-parser, motion/react, highlight.js) must be installed before implementation begins"
+    - "WU-003/004/005 share cronManager.ts — strict sequential execution required"
+    - "WU-008/018 share cronStore.ts — strict sequential execution required"
+    - "WU-009/017 share CronManager.tsx — strict sequential execution required"
+    - "WU-010/016 share CronJobList.tsx — strict sequential execution required"

@@ -1,0 +1,292 @@
+schema_version: "decomposition_v1.0"
+
+feature: "Cron & Systemd Timer Manager"
+spec_path: "/home/andrew-cooke/tools/agentboard/.workflow/runs/cron-manager-2026-02-25/refined-spec.yaml"
+project_path: "/home/andrew-cooke/tools/agentboard"
+created_at: "2026-02-25"
+
+summary:
+  total_work_units: 19
+  total_unique_files: 30
+  total_estimated_loc: 3970
+  critical_path: [WU-001, WU-003, WU-005, WU-007]
+  critical_path_length: 4
+  max_parallel_width: 7
+  new_packages:
+    - cronstrue
+    - cron-parser
+    - motion/react
+    - highlight.js
+
+# ┌─────────────────────────────────────────────────────────────┐
+# │                    DEPENDENCY GRAPH                          │
+# │                                                              │
+# │  Layer 1 (no deps):                                         │
+# │    WU-001 (DB)              WU-008 (Store)                  │
+# │      │                        │                              │
+# │  Layer 2:                     ├── WU-009 (App Shell)         │
+# │    ├── WU-002 (Wiring)       ├── WU-010 (List+Row)          │
+# │    ├── WU-003 (Discovery)    ├── WU-011 (Detail Shell)      │
+# │    └── WU-006 (Hist+Logs)    ├── WU-015 (Modals)            │
+# │          │                    └── WU-018 (Notifications)     │
+# │  Layer 3:                         │                          │
+# │    ├── WU-004 (Polling)      ├── WU-012 (Overview+Script)   │
+# │    ├── WU-005 (Operations)   ├── WU-013 (History+Logs)      │
+# │    │                         ├── WU-014 (Controls+Run)      │
+# │  Layer 4:                    ├── WU-016 (Bulk)              │
+# │    └── WU-007 (WS Handlers)  ├── WU-017 (Timeline)          │
+# │                              └── WU-019 (Settings+Session)  │
+# └─────────────────────────────────────────────────────────────┘
+
+work_units:
+  - id: WU-001
+    title: "Database Schema & Accessors"
+    files: [src/server/db.ts]
+    dependencies: []
+    requirements: [REQ-87, REQ-88, REQ-98, REQ-101, REQ-105]
+    estimated_loc: 120
+
+  - id: WU-002
+    title: "Server Wiring & Settings Store"
+    files: [src/server/index.ts, src/client/stores/settingsStore.ts]
+    dependencies: [WU-001]
+    requirements: [REQ-90, REQ-97]
+    estimated_loc: 80
+
+  - id: WU-003
+    title: "CronManager Discovery & Parsing"
+    files: [src/server/cronManager.ts]
+    dependencies: [WU-001]
+    requirements: [REQ-04, REQ-05, REQ-06, REQ-07, REQ-11, REQ-85, REQ-86, REQ-91, REQ-97]
+    estimated_loc: 350
+
+  - id: WU-004
+    title: "Polling, Diff & Health Computation"
+    files: [src/server/cronManager.ts]
+    dependencies: [WU-003]
+    requirements: [REQ-08, REQ-09, REQ-58, REQ-59, REQ-60, REQ-61, REQ-62, REQ-63, REQ-98, REQ-101]
+    estimated_loc: 250
+
+  - id: WU-005
+    title: "Operations & Credential Cache"
+    files: [src/server/cronManager.ts]
+    dependencies: [WU-003, WU-001]
+    requirements: [REQ-37, REQ-40, REQ-41, REQ-42, REQ-43, REQ-45, REQ-46, REQ-47, REQ-48, REQ-49, REQ-50, REQ-51, REQ-52, REQ-53, REQ-54, REQ-55, REQ-56, REQ-81, REQ-83, REQ-84, REQ-96, REQ-99, REQ-102, REQ-104]
+    estimated_loc: 400
+
+  - id: WU-006
+    title: "History & Log Services"
+    files: [src/server/cronHistoryService.ts, src/server/cronLogService.ts]
+    dependencies: [WU-001]
+    requirements: [REQ-26, REQ-30, REQ-31, REQ-88]
+    estimated_loc: 200
+
+  - id: WU-007
+    title: "WebSocket Handlers"
+    files: [src/server/handlers/cronHandlers.ts]
+    dependencies: [WU-003, WU-005, WU-006]
+    requirements: [REQ-08, REQ-09, REQ-38, REQ-39, REQ-103, REQ-104]
+    estimated_loc: 300
+
+  - id: WU-008
+    title: "Zustand Store"
+    files: [src/client/stores/cronStore.ts]
+    dependencies: []
+    requirements: [REQ-89]
+    estimated_loc: 300
+
+  - id: WU-009
+    title: "App Integration & Empty State"
+    files: [src/client/App.tsx, src/client/components/cron/CronEmptyState.tsx, src/client/components/cron/CronManager.tsx]
+    dependencies: [WU-008]
+    requirements: [REQ-01, REQ-02, REQ-03]
+    estimated_loc: 150
+
+  - id: WU-010
+    title: "Job List & Row Components"
+    files: [src/client/components/cron/CronJobList.tsx, src/client/components/cron/CronJobRow.tsx, src/client/components/cron/CronHealthBadge.tsx]
+    dependencies: [WU-008]
+    requirements: [REQ-10, REQ-14, REQ-15, REQ-16, REQ-17, REQ-18, REQ-92, REQ-94, REQ-95]
+    estimated_loc: 250
+
+  - id: WU-011
+    title: "Detail Pane Shell"
+    files: [src/client/components/cron/CronJobDetail.tsx, src/client/components/cron/CronTagInput.tsx, src/client/components/cron/CronSessionLink.tsx]
+    dependencies: [WU-008]
+    requirements: [REQ-21, REQ-64, REQ-65, REQ-66, REQ-72, REQ-73, REQ-76]
+    estimated_loc: 200
+
+  - id: WU-012
+    title: "Overview & Script Tabs"
+    files: [src/client/components/cron/CronOverviewTab.tsx, src/client/components/cron/CronScriptTab.tsx, src/client/components/cron/CronScheduleEditor.tsx]
+    dependencies: [WU-011]
+    requirements: [REQ-22, REQ-23, REQ-24, REQ-25, REQ-34, REQ-35, REQ-36, REQ-43, REQ-44, REQ-63]
+    estimated_loc: 250
+
+  - id: WU-013
+    title: "History & Logs Tabs"
+    files: [src/client/components/cron/CronHistoryTab.tsx, src/client/components/cron/CronLogsTab.tsx]
+    dependencies: [WU-011]
+    requirements: [REQ-26, REQ-27, REQ-28, REQ-29, REQ-30, REQ-31, REQ-32, REQ-33]
+    estimated_loc: 250
+
+  - id: WU-014
+    title: "Job Controls & Run Now"
+    files: [src/client/components/cron/CronJobControls.tsx, src/client/components/cron/CronRunNowOutput.tsx]
+    dependencies: [WU-011]
+    requirements: [REQ-37, REQ-38, REQ-39, REQ-40, REQ-41, REQ-42]
+    estimated_loc: 150
+
+  - id: WU-015
+    title: "Create, Delete & Sudo Modals"
+    files: [src/client/components/cron/CronCreateModal.tsx, src/client/components/cron/CronDeleteConfirm.tsx, src/client/components/cron/CronSudoPrompt.tsx]
+    dependencies: [WU-008]
+    requirements: [REQ-46, REQ-50, REQ-51, REQ-52, REQ-53, REQ-82, REQ-96, REQ-99]
+    estimated_loc: 250
+
+  - id: WU-016
+    title: "Bulk Operations"
+    files: [src/client/components/cron/CronBulkActions.tsx, src/client/components/cron/CronJobList.tsx]
+    dependencies: [WU-010]
+    requirements: [REQ-19, REQ-20, REQ-54, REQ-55, REQ-56, REQ-57]
+    estimated_loc: 150
+
+  - id: WU-017
+    title: "Schedule Timeline"
+    files: [src/client/components/cron/CronTimeline.tsx, src/client/components/cron/CronManager.tsx]
+    dependencies: [WU-009]
+    requirements: [REQ-77, REQ-78, REQ-79, REQ-80, REQ-93]
+    estimated_loc: 200
+
+  - id: WU-018
+    title: "Notifications"
+    files: [src/client/stores/cronStore.ts]
+    dependencies: [WU-008]
+    requirements: [REQ-67, REQ-68, REQ-69, REQ-70, REQ-71, REQ-100]
+    estimated_loc: 120
+
+  - id: WU-019
+    title: "Settings UI & Session Integration"
+    files: [src/client/components/SettingsModal.tsx, src/client/components/SessionList.tsx]
+    dependencies: [WU-002, WU-008]
+    requirements: [REQ-13, REQ-74, REQ-75, REQ-90]
+    estimated_loc: 120
+
+execution_layers:
+  - layer: 1
+    description: "Foundation — no dependencies"
+    work_units: [WU-001, WU-008]
+    note: "DB schema and Zustand store can be built in parallel"
+
+  - layer: 2
+    description: "Core services and UI shells"
+    work_units: [WU-002, WU-003, WU-006, WU-009, WU-010, WU-011, WU-015]
+    note: "Backend services + all independent UI components; max parallel width 7"
+
+  - layer: 3
+    description: "Dependent services and detail components"
+    work_units: [WU-004, WU-005, WU-012, WU-013, WU-014, WU-016, WU-017, WU-018, WU-019]
+    note: "Polling/health, operations, detail tabs, bulk ops, timeline, notifications, settings"
+
+  - layer: 4
+    description: "Integration — full WS handler wiring"
+    work_units: [WU-007]
+    note: "Depends on discovery, operations, and history services completing"
+
+dependency_graph:
+  adjacency:
+    WU-001: []
+    WU-002: [WU-001]
+    WU-003: [WU-001]
+    WU-004: [WU-003]
+    WU-005: [WU-003, WU-001]
+    WU-006: [WU-001]
+    WU-007: [WU-003, WU-005, WU-006]
+    WU-008: []
+    WU-009: [WU-008]
+    WU-010: [WU-008]
+    WU-011: [WU-008]
+    WU-012: [WU-011]
+    WU-013: [WU-011]
+    WU-014: [WU-011]
+    WU-015: [WU-008]
+    WU-016: [WU-010]
+    WU-017: [WU-009]
+    WU-018: [WU-008]
+    WU-019: [WU-002, WU-008]
+
+cross_wu_interfaces:
+  - name: "CronJob type family"
+    source: "src/shared/types.ts (already defined, no WU needed)"
+    consumed_by: [WU-001, WU-002, WU-003, WU-004, WU-005, WU-006, WU-007, WU-008]
+    contract: "CronJob, CronJobDetail, JobRunRecord, CronCreateConfig, SystemdCreateConfig, BulkProgress"
+
+  - name: "WebSocket message protocol"
+    source: "src/shared/types.ts (already defined)"
+    consumed_by: [WU-007, WU-008, WU-009]
+    contract: "ServerMessage and ClientMessage unions with cron-* message types"
+
+  - name: "CronManager class API"
+    defined_in: WU-003
+    extended_by: [WU-004, WU-005]
+    consumed_by: [WU-007]
+    contract: "Discovery, polling, health, operations, credential cache methods"
+
+  - name: "CronHistoryService API"
+    defined_in: WU-006
+    consumed_by: [WU-007]
+    contract: "getRunHistory, recordManualRun, getLogs"
+
+  - name: "Database accessors"
+    defined_in: WU-001
+    consumed_by: [WU-003, WU-004, WU-005, WU-006]
+    contract: "upsertJobPrefs, getJobPrefs, insertRunHistory, getRunHistory, pruneRunHistory"
+
+  - name: "cronStore hook"
+    defined_in: WU-008
+    extended_by: [WU-018]
+    consumed_by: [WU-009, WU-010, WU-011, WU-012, WU-013, WU-014, WU-015, WU-016, WU-017, WU-019]
+    contract: "useCronStore Zustand hook with state, actions, WS handlers"
+
+  - name: "Settings store cron fields"
+    defined_in: WU-002
+    consumed_by: [WU-004, WU-005, WU-008, WU-019]
+    contract: "14 cron settings in settingsStore (pollInterval, avatarStyle, etc.)"
+
+requirement_coverage:
+  total_requirements: 105
+  covered: [
+    REQ-01, REQ-02, REQ-03, REQ-04, REQ-05, REQ-06, REQ-07, REQ-08, REQ-09, REQ-10,
+    REQ-11, REQ-13, REQ-14, REQ-15, REQ-16, REQ-17, REQ-18, REQ-19, REQ-20, REQ-21,
+    REQ-22, REQ-23, REQ-24, REQ-25, REQ-26, REQ-27, REQ-28, REQ-29, REQ-30, REQ-31,
+    REQ-32, REQ-33, REQ-34, REQ-35, REQ-36, REQ-37, REQ-38, REQ-39, REQ-40, REQ-41,
+    REQ-42, REQ-43, REQ-44, REQ-45, REQ-46, REQ-47, REQ-48, REQ-49, REQ-50, REQ-51,
+    REQ-52, REQ-53, REQ-54, REQ-55, REQ-56, REQ-57, REQ-58, REQ-59, REQ-60, REQ-61,
+    REQ-62, REQ-63, REQ-64, REQ-65, REQ-66, REQ-67, REQ-68, REQ-69, REQ-70, REQ-71,
+    REQ-72, REQ-73, REQ-74, REQ-75, REQ-76, REQ-77, REQ-78, REQ-79, REQ-80, REQ-81,
+    REQ-82, REQ-83, REQ-84, REQ-85, REQ-86, REQ-87, REQ-88, REQ-89, REQ-90, REQ-91,
+    REQ-92, REQ-93, REQ-94, REQ-95, REQ-96, REQ-97, REQ-98, REQ-99, REQ-100, REQ-101,
+    REQ-102, REQ-103, REQ-104, REQ-105
+  ]
+  implicit:
+    REQ-12: "Avatar sizes (28x28 in WU-010 list rows, 48x48 in WU-011 detail header)"
+
+constraints_check:
+  max_work_units: { limit: 20, actual: 19, pass: true }
+  max_files_per_wu: { limit: 5, actual_max: 3, pass: true }
+  max_dependencies_per_wu: { limit: 3, actual_max: 3, pass: true }
+  total_files_cap: { limit: 50, actual: 30, pass: true }
+  dag_acyclic: true
+
+file_conflict_notes:
+  - "WU-003/004/005 all modify cronManager.ts — must execute sequentially (enforced by DAG)"
+  - "WU-008/018 both modify cronStore.ts — WU-018 must follow WU-008 (enforced by DAG)"
+  - "WU-009/017 both modify CronManager.tsx — WU-017 must follow WU-009 (enforced by DAG)"
+  - "WU-010/016 both modify CronJobList.tsx — WU-016 must follow WU-010 (enforced by DAG)"
+
+notes:
+  - "All stub files already exist with 'throw new Error(not implemented)' — no new file creation needed"
+  - "src/shared/types.ts already has all cron types fully defined — not modified by any WU"
+  - "JobSource type: use 'user-systemd' (as in types.ts), not 'systemd-user' (as in spec text)"
+  - "cronStore Set serialization: WU-008 must handle custom serialize/deserialize for Sets in localStorage"
+  - "Backend and frontend tracks are largely independent — can proceed in parallel after Layer 1"

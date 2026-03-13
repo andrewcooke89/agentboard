@@ -1,0 +1,86 @@
+overall_verdict: fail
+completed_at: '2026-02-26T07:01:02.544Z'
+work_units:
+  - id: WU-001
+    status: fail
+    test_task_id: mm341dd4-cdkegb
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-002
+    status: fail
+    test_task_id: mm341ssu-en16xb
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-003
+    status: fail
+    test_task_id: mm34288k-2lkkql
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-005
+    status: fail
+    test_task_id: mm342no8-yzdy60
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-009
+    status: fail
+    test_task_id: mm34333y-ddelpw
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-011
+    status: fail
+    test_task_id: mm343ijo-3chfrw
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-004
+    status: fail
+    test_task_id: mm343xze-ni0436
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-006
+    status: fail
+    test_task_id: mm344df4-b38vlb
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-010
+    status: fail
+    test_task_id: mm344suu-fkly4s
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-007
+    status: fail
+    test_task_id: mm3458aj-e09fdx
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-008
+    status: fail
+    test_task_id: mm345nq6-ra5k2a
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-012
+    status: fail
+    test_task_id: mm34635x-fjqjyl
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+  - id: WU-013
+    status: fail
+    test_task_id: mm346iln-t537g5
+    impl_task_id: null
+    retries: 0
+    message: Test task failed
+statistics:
+  total: 13
+  passed: 0
+  failed: 13
+  skipped: 0

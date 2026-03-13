@@ -1,0 +1,68 @@
+id: WU-018
+title: "Schedule Timeline"
+description: |
+  Implement the collapsible schedule timeline visualization displayed above the split
+  pane. Shows stacked bar chart of job execution projections across 24-hour or 7-day
+  ranges with health-colored segments, hover tooltips, and click-to-select.
+
+dependencies: [WU-009]
+
+files:
+  created:
+    - path: src/client/components/cron/CronTimeline.tsx
+      changes: |
+        - CronTimeline component: horizontal bar chart
+        - Togglable via "Timeline" button in CronManager header
+        - Collapsible with animation (motion.div height transition)
+        - Two ranges: 24-hour (default, 24 x 1-hour buckets) and 7-day (7 x daily buckets)
+        - Range selector (toggle or dropdown)
+        - Each bucket: stacked bar showing job count, colored by health status
+          (green=healthy, yellow=warning, red=critical, gray=unknown)
+        - Hover tooltip: lists specific job names firing in that window
+        - Click job name in tooltip: selects job in list, opens detail
+        - Projection: compute next N occurrences per job using cron-parser (cron)
+          or calendar spec parser (systemd), cap at 500 total data points
+        - Client-side computation from cronStore.jobs schedules
+        - Timeline visibility and range persisted via cronStore
+
+acceptance_criteria:
+  - req: REQ-77
+    type: behavioral
+    check: "Timeline collapsible, toggled via header button"
+  - req: REQ-78
+    type: behavioral
+    check: "24-hour (1h buckets) and 7-day (daily buckets) ranges; stacked bars colored by health"
+  - req: REQ-79
+    type: behavioral
+    check: "Hover tooltip lists job names; clicking a name selects the job"
+  - req: REQ-80
+    type: benchmark
+    check: "Timeline computed client-side; capped at 500 data points; renders within 100ms for 200 jobs"
+  - req: REQ-93
+    type: benchmark
+    check: "100ms render target for 200 jobs x 7 days"
+
+test_specs:
+  - id: TEST-74
+    description: "24h view: 5 jobs, 24 buckets, colored bars where jobs fire"
+  - id: TEST-75
+    description: "Hover tooltip shows 2 job names in a bucket"
+  - id: TEST-76
+    description: "Click job name in tooltip selects job in list"
+  - id: TEST-77
+    description: "7-day view: 7 buckets displayed"
+  - id: TEST-78
+    description: "Timeline toggle visibility persists across page refresh"
+
+cross_wu_interfaces:
+  imports:
+    - from: WU-009
+      name: "Slot in CronManager above split pane"
+
+implementation_notes: |
+  Use cron-parser to project next N occurrences for cron jobs. For systemd calendar
+  specs, implement a simple parser for common patterns (daily, weekly, hourly) or
+  delegate to the backend. The 500 data point cap prevents performance issues: if
+  total projected points exceed 500, reduce per-job projections proportionally.
+  The bar chart can be pure CSS (flex columns) or a simple SVG — no charting library
+  needed. Colors should use the same health-to-color mapping as CronHealthBadge.

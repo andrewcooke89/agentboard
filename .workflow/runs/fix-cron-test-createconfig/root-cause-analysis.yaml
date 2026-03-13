@@ -1,0 +1,91 @@
+verdict: pass
+
+root_cause: |
+  Two test files were written against an older version of the CronCreateConfig
+  interface and CronManager class, then never updated when the interface gained
+  a required `tags: string[]` field and the crontab helper methods were marked
+  `private`.
+
+  Specifically:
+  1. CronCreateConfig (src/shared/types.ts:820-825) now requires four fields:
+     command, schedule, comment, and tags. Both test files construct config
+     objects omitting `tags`, producing TS2741/TS2345 errors.
+  2. readCrontab and writeCrontab are declared `private` in CronManager
+     (src/server/cronManager.ts:752, 760). cronDuplicateDetection.test.ts
+     directly reassigns these on the instance (lines 32-36, 73-74), producing
+     TS2341 errors. cronFlockWrapping.test.ts creates a subclass
+     TestableCronManager that attempts to redeclare them as `protected`
+     (line 25), producing TS2415.
+
+location:
+  file: "src/server/__tests__/cronDuplicateDetection.test.ts"
+  line_range: "24-78"
+  function: "N/A (test setup and test bodies)"
+  secondary:
+    - file: "src/server/__tests__/cronFlockWrapping.test.ts"
+      line_range: "25-153"
+      function: "TestableCronManager class + test bodies"
+    - file: "src/shared/types.ts"
+      line_range: "820-825"
+      function: "CronCreateConfig interface"
+    - file: "src/server/cronManager.ts"
+      line_range: "752-760"
+      function: "readCrontab / writeCrontab"
+
+mechanism: |
+  Interface evolution without test updates. The `tags` field was added to
+  CronCreateConfig as a required property, but existing test files that
+  construct CronCreateConfig literals were not updated to include it. Similarly,
+  readCrontab/writeCrontab were changed to `private` without updating the test
+  mocking strategy that relied on direct property access or subclass overrides.
+
+  Error breakdown (16 total):
+  - cronDuplicateDetection.test.ts (7 errors):
+    - 3x TS2345/TS2741: missing `tags` in config objects (lines 41, 46, 78)
+    - 4x TS2341: private member access on readCrontab/writeCrontab (lines 32, 33, 35, 36, 73, 74)
+  - cronFlockWrapping.test.ts (9 errors):
+    - 1x TS2415: TestableCronManager cannot override private members (line 25)
+    - 6x TS2741: missing `tags` in CronCreateConfig literals (lines 62, 81, 98, 114, 148, 153)
+    - 1x TS2739: missing `comment` AND `tags` in config literal (line 132)
+
+fix_approach: |
+  Two categories of fixes:
+
+  1. Add `tags: []` to every CronCreateConfig object literal in both test files.
+     For the config at cronFlockWrapping.test.ts:132, also add `comment: ''`.
+
+  2. Fix private member access patterns:
+     a. In cronDuplicateDetection.test.ts: cast the CronManager instance to
+        `any` for private member access, e.g.:
+          (cronManager as any).readCrontab = async () => crontabContent
+          (cronManager as any).writeCrontab = async (content: string) => { ... }
+     b. In cronFlockWrapping.test.ts: change `readCrontab` and `writeCrontab`
+        from `private` to `protected` in the CronManager base class
+        (src/server/cronManager.ts:752, 760). This is the cleanest fix since
+        the TestableCronManager subclass pattern is the idiomatic way to test
+        classes with I/O dependencies. Alternatively, use `as any` casts, but
+        the `protected` approach is preferred for type safety in the subclass.
+
+  After applying fixes, run `bun run typecheck` to verify zero errors in
+  both files.
+
+risk_assessment: |
+  Low risk overall.
+
+  - Adding `tags: []` is purely additive to test data and has no behavioral
+    impact since the tests don't exercise tag-related logic.
+
+  - The `as any` cast in cronDuplicateDetection.test.ts is test-only code and
+    carries no production risk. The tradeoff is losing type safety on the mock
+    assignments, but this is acceptable for test mocking.
+
+  - Changing `private` → `protected` on readCrontab/writeCrontab in the
+    production CronManager class is the most impactful change. It widens
+    visibility from "class only" to "class + subclasses". This is safe because:
+    (a) CronManager has no other subclasses in the codebase,
+    (b) the methods are internal helpers for crontab I/O, and
+    (c) `protected` still prevents external callers from accessing them.
+    If this is deemed too invasive, the alternative `as any` cast can be used
+    in the test subclass instead (at the cost of less type-safe overrides).
+
+  - No changes to business logic, runtime behavior, or public API surface.

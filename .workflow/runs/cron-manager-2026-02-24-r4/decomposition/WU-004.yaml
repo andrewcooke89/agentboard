@@ -1,0 +1,90 @@
+id: WU-004
+title: "CronManager - Polling, Diff & Health"
+description: |
+  Extend the CronManager class with the polling loop, incremental diff computation,
+  health status derivation, orphaned preferences cleanup, and the onJobsChanged callback
+  system. This enables real-time updates by detecting added/removed/updated jobs between
+  poll cycles and computing health from run history.
+
+dependencies: [WU-003]
+
+files:
+  modified:
+    - path: src/server/cronManager.ts
+      changes: |
+        - Add private jobCache: Map<string, CronJob> for diff baseline
+        - startPolling(intervalMs: number): start setInterval calling discoverAllJobs + diff
+        - stopPolling(): clear interval
+        - onJobsChanged(callback: (added: CronJob[], removed: string[], updated: CronJob[]) => void): register callback
+        - private computeDiff(newJobs: CronJob[]): compare against jobCache, emit added/removed/updated
+        - computeHealth(job: CronJob, history: JobRunRecord[]): { health: HealthStatus, reason: string | null }
+          - healthy: last 10 runs all succeeded
+          - warning: last run failed, or missed scheduled run, or duration > 2x average
+          - critical: 2+ consecutive failures, or systemd unit in failed state
+          - unknown: no history available
+        - private detectMissedRun(job: CronJob): check if time since last run > 2x expected interval
+        - cleanOrphanedPrefs(currentJobIds: string[]): delete prefs with last_seen > 24h and not in current set
+
+acceptance_criteria:
+  - req: REQ-08
+    type: contract
+    check: "Polling at configurable interval (default 5s, min 2s, max 30s); starts on first WS client, pauses on zero clients"
+  - req: REQ-09
+    type: contract
+    check: "Only diffs (additions, removals, updates) sent to clients; full list only on initial connection"
+  - req: REQ-58
+    type: contract
+    check: "Health computed server-side from run history with 4 levels: healthy, warning, critical, unknown"
+  - req: REQ-59
+    type: invariant
+    check: "Health recomputed each poll cycle after run history gathered; not persisted to database"
+  - req: REQ-60
+    type: contract
+    check: "healthReason provides human-readable explanation for non-healthy states"
+  - req: REQ-61
+    type: contract
+    check: "Missed run detection: time since last run > 2x expected interval from schedule"
+  - req: REQ-62
+    type: contract
+    check: "lastRunDuration and avgDuration (rolling 10-run average) tracked per job"
+  - req: REQ-98
+    type: contract
+    check: "Orphaned prefs with last_seen > 24h and job_id not in current set deleted hourly"
+
+test_specs:
+  - id: TEST-12
+    description: "Polling sends only diffs — one status change + one new job, unchanged not resent"
+  - id: TEST-13
+    description: "Polling pauses with no clients, resumes on reconnect"
+  - id: TEST-14
+    description: "Removed job sends removal notification"
+  - id: TEST-49
+    description: "Healthy status with 10 successful runs"
+  - id: TEST-50
+    description: "Warning on single failure"
+  - id: TEST-51
+    description: "Critical on 2+ consecutive failures"
+  - id: TEST-52
+    description: "Warning on missed scheduled run"
+  - id: TEST-53
+    description: "Warning on slow run (duration > 2x average)"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager polling API"
+      consumers: [WU-007]
+      contract: |
+        startPolling(intervalMs: number): void
+        stopPolling(): void
+        onJobsChanged(callback): void
+    - name: "CronManager health API"
+      consumers: [WU-007]
+      contract: |
+        computeHealth(job: CronJob, history: JobRunRecord[]): { health: HealthStatus, reason: string | null }
+
+implementation_notes: |
+  The diff engine should deep-compare relevant CronJob fields (status, health, lastRun, nextRun,
+  lastExitCode, consecutiveFailures, avgDuration) to detect updates. Use a Map<string, CronJob>
+  as the cache for O(1) lookup. The polling loop should be a simple setInterval — no need for
+  complex scheduling. Health computation is pure: takes a job + history, returns health status.
+  Orphaned prefs cleanup runs on a separate hourly interval, not every poll cycle.

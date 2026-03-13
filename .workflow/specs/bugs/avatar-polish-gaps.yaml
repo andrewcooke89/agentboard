@@ -1,0 +1,69 @@
+title: "Avatar style setting ignored, error fallback missing colored circle"
+severity: minor
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronJobRow.tsx
+  - src/client/components/cron/CronJobDetail.tsx
+  - src/client/stores/settingsStore.ts
+
+reproduction:
+  steps:
+    - "Open Settings → Cron Manager"
+    - "Change 'Avatar Style' from 'bottts' to something else"
+    - "Close settings and observe job avatars"
+    - "Observe: still using 'bottts', setting ignored"
+    - "Break avatar URL (block dicebear API) and reload"
+    - "Observe: avatar image hidden, no fallback shown"
+  environment: "Any"
+
+expected: |
+  - Avatar style setting controls DiceBear style parameter
+  - Avatar errors show colored circle with first letter of job name
+
+actual: |
+  - Avatar URL hardcoded to 'bottts' style
+  - Avatar error hides image with no fallback
+
+affected_requirements:
+  - REQ-11 # Avatar style setting respected
+  - REQ-13 # Avatar error fallback
+
+root_cause_hints: |
+  1. CronJobRow.tsx:37 — URL hardcoded to `style=bottts`
+  2. CronJobDetail.tsx:76-77 — Same hardcoded style
+  3. CronJobRow.tsx:42 — onError sets `style.display='none'`, no fallback rendered
+  4. settingsStore.ts:332 has cronAvatarStyle but never read
+
+fix_approach: |
+  1. Read avatar style setting:
+     - In CronJobRow and CronJobDetail, read from settingsStore
+     - Or pass via props from store
+
+  2. Update URL construction:
+     ```tsx
+     const avatarStyle = useSettings(state => state.cronAvatarStyle) || 'bottts'
+     const url = `https://api.dicebear.com/7.x/${avatarStyle}/svg?seed=${seed}`
+     ```
+
+  3. Error fallback:
+     - Add state: `avatarError: boolean`
+     - OnError: setAvatarError(true)
+     - When avatarError is true, render colored circle:
+       ```tsx
+       {avatarError ? (
+         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-medium ${bgColor}`}>
+           {name.charAt(0).toUpperCase()}
+         </div>
+       ) : (
+         <img ... onError={() => setAvatarError(true)} />
+       )}
+       ```
+     - bgColor based on tagColor(job.name)
+
+acceptance_criteria:
+  - "Avatar style setting changes DiceBear style immediately"
+  - "All avatar styles available: bottts, identicon, initials, shapes"
+  - "Avatar error shows colored circle with first letter"
+  - "Circle color matches job's hash-based color"
+  - "Fallback is same size as original avatar (28px in list, 48px in detail)"

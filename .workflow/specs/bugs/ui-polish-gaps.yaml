@@ -1,0 +1,89 @@
+title: "INI highlighting missing, Open in Terminal button missing, WSS warning missing, empty state issues"
+severity: minor
+type: frontend
+
+affected_area:
+  - src/client/components/cron/CronOverviewTab.tsx
+  - src/client/components/cron/CronScriptTab.tsx
+  - src/client/components/cron/CronEmptyState.tsx
+  - src/server/index.ts
+
+reproduction:
+  steps:
+    - "Open job detail for systemd timer"
+    - "Go to Overview tab, look at timer/service config section"
+    - "Observe: plain text, no syntax highlighting for INI format"
+    - "Go to Script tab for script job"
+    - "Observe: no 'Open in Terminal' button"
+    - "Connect via plain WS (not WSS) to agentboard"
+    - "Observe: no warning about insecure connection"
+    - "Navigate to Cron Manager with no jobs"
+    - "Observe: empty state has stat cards but no mini timeline"
+  environment: "Any"
+
+expected: |
+  - Systemd unit files have INI syntax highlighting
+  - Script tab has "Open in Terminal" button
+  - Warning shown for plain WS connections
+  - Empty state includes mini timeline
+
+actual: |
+  - Systemd config shown as plain <pre> blocks
+  - No terminal button
+  - No WSS warning
+  - Mini timeline not in empty state
+
+affected_requirements:
+  - REQ-03 # Mini timeline in empty state
+  - REQ-21 # Managed toggle in detail header
+  - REQ-24 # INI highlighting for systemd
+  - REQ-25 # Cron env vars shown
+  - REQ-36 # Open in Terminal button
+  - REQ-84 # WSS warning
+
+root_cause_hints: |
+  1. CronOverviewTab.tsx:190-213 — <pre> blocks, no hljs highlighting
+  2. CronScriptTab.tsx — no terminal button component
+  3. index.ts:461 — has tlsEnabled detection but no warning sent
+  4. CronManager.tsx — timeline above split pane, not embedded in empty state
+
+fix_approach: |
+  1. INI highlighting:
+     - Import hljs with 'ini' language
+     - Wrap systemd config in highlighted <pre>
+     - Use same highlight.js pattern as CronScriptTab
+
+  2. Terminal button:
+     - Add button to CronScriptTab (near file path breadcrumb)
+     - On click, send `terminal-open` WS message
+     - In backend, handle by creating new tmux pane or session
+     - Or just open user's default terminal with path (limited)
+
+  3. WSS warning:
+     - On WS connection, check if protocol is 'ws:' (not 'wss:')
+     - If so, send warning message to client
+     - Show toast/banner: "Warning: Using insecure WebSocket connection"
+     - Add "Don't show again" option stored in localStorage
+
+  4. Empty state timeline:
+     - Pass timelineVisible state to CronEmptyState
+     - When true, render mini CronTimeline (height ~100px)
+     - Or move existing timeline layout to be inside empty state condition
+
+  5. Cron env vars:
+     - Parse env vars from crontab lines (KEY=value before schedule)
+     - Show in Overview tab in dedicated section
+
+  6. Managed toggle:
+     - Add toggle switch to detail header
+     - Wire to cron-job-set-managed WS message
+     - Update managed icon state
+
+acceptance_criteria:
+  - "Systemd unit files have syntax highlighting (highlight.js ini)"
+  - "Open in Terminal button opens terminal at script directory"
+  - "Plain WS connection shows warning banner"
+  - "Warning can be dismissed and remembered"
+  - "Empty state shows mini timeline when timelineVisible=true"
+  - "Cron environment variables shown in Overview tab"
+  - "Managed toggle in detail header switches is_managed state"

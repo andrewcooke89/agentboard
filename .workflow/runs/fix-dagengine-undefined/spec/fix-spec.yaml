@@ -1,0 +1,34 @@
+verdict: pass
+title: "Fix: TypeScript 'possibly undefined' errors in dagEngine.test.ts"
+description: |
+  Add non-null assertion operators (!) to 5 property accesses on `task` variables
+  returned by Array.find() in dagEngine.test.ts. The preceding expect(task).toBeTruthy()
+  calls ensure the value exists at runtime, but TypeScript cannot narrow the type through
+  opaque assertion functions. The ! operator tells TypeScript the value is defined, which
+  is safe given the runtime guard.
+
+changes:
+  - file: "src/server/__tests__/dagEngine.test.ts"
+    description: |
+      Add non-null assertion operator (!) to 5 occurrences of `task.prompt` access:
+
+      Lines 764-765 (test: "spawn_session injects typed inputs into prompt"):
+        - Line 764: expect(task.prompt) → expect(task!.prompt)
+        - Line 765: expect(task.prompt) → expect(task!.prompt)
+
+      Lines 801-803 (test: "spawn_session keeps reference inputs as paths only"):
+        - Line 801: expect(task.prompt) → expect(task!.prompt)
+        - Line 802: expect(task.prompt) → expect(task!.prompt)
+        - Line 803: expect(task.prompt) → expect(task!.prompt)
+
+      No other changes needed. The expect(task).toBeTruthy() guards remain as-is
+      to provide the runtime null check.
+    change_type: modify
+
+acceptance_criteria:
+  - "bun run typecheck passes with zero TS18048 errors in dagEngine.test.ts"
+  - "bun run test passes — all dagEngine tests still pass with no regressions"
+  - "Only the 5 specified lines are changed; no other modifications to the file"
+
+regression_risks:
+  - "Risk: Masking a real undefined value — mitigated by the preceding toBeTruthy() assertion that fails the test at runtime if the value is actually undefined"

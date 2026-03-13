@@ -1,0 +1,112 @@
+id: WU-014
+title: "Script Tab & Job Controls"
+description: |
+  Implement the Script tab with syntax-highlighted code viewer and the job control strip
+  with Run Now (with streaming output), Pause/Resume toggle, Edit Frequency, and Delete
+  buttons. Includes the inline schedule editor with live preview and validation.
+
+dependencies: [WU-012]
+
+files:
+  created:
+    - path: src/client/components/cron/CronScriptTab.tsx
+      changes: |
+        - Read-only syntax-highlighted code viewer for job's script file
+        - Language auto-detected from file extension (bash, python, js, ts, ruby, perl)
+        - Line numbers enabled
+        - File path breadcrumb at top
+        - "Open in Terminal" button
+        - If no script file (inline command): display raw command in code block
+        - Uses highlight.js for syntax highlighting
+
+    - path: src/client/components/cron/CronJobControls.tsx
+      changes: |
+        - Control strip rendered below detail header / above tabs
+        - "Run Now" button: triggers cron-job-run-now WS message
+          - Disabled with spinner while running (tracked via runningJobs set)
+          - Shows CronRunNowOutput panel below when running
+          - Lock icon if job.requiresSudo
+        - Pause/Resume toggle: sends cron-job-pause or cron-job-resume
+          - Lock icon if job.requiresSudo
+        - "Edit Frequency" button: opens inline CronScheduleEditor
+          - Lock icon if job.requiresSudo
+        - "Delete" button (red): triggers CronDeleteConfirm dialog (WU-016)
+          - Lock icon if job.requiresSudo
+        - All sudo-requiring buttons check credential cache before proceeding;
+          if not cached, trigger CronSudoPrompt (WU-016)
+
+    - path: src/client/components/cron/CronRunNowOutput.tsx
+      changes: |
+        - Mini-terminal panel for streaming Run Now output
+        - Appears below controls when a run is active
+        - Receives chunks from cron-run-output WS messages via cronStore
+        - Auto-scrolls to bottom
+        - On completion: displays exit code badge and duration inline
+        - Dismissable after completion
+        - Monospace font, dark background
+
+acceptance_criteria:
+  - req: REQ-34
+    type: behavioral
+    check: "Script tab shows syntax-highlighted code with line numbers; language auto-detected"
+  - req: REQ-35
+    type: behavioral
+    check: "Inline commands shown in code block when no script file"
+  - req: REQ-36
+    type: behavioral
+    check: "File path breadcrumb and 'Open in Terminal' button"
+  - req: REQ-37
+    type: contract
+    check: "Run Now triggers job execution via WS"
+  - req: REQ-38
+    type: behavioral
+    check: "Run Now: spinner while running, real-time output streaming, exit code + duration on completion"
+  - req: REQ-40
+    type: invariant
+    check: "Only one manual run per job at a time; button disabled with 'Running...' while active"
+  - req: REQ-41
+    type: contract
+    check: "Pause/Resume toggle sends appropriate WS message"
+  - req: REQ-42
+    type: behavioral
+    check: "Status updates in list within one poll cycle after pause/resume"
+  - req: REQ-43
+    type: behavioral
+    check: "Edit Frequency opens inline editor with text input and live preview"
+  - req: REQ-44
+    type: contract
+    check: "Schedule validation: red border + error for invalid; green + preview for valid"
+  - req: REQ-46
+    type: behavioral
+    check: "Delete button styled as destructive (red); triggers confirmation dialog"
+  - req: REQ-49
+    type: behavioral
+    check: "After deletion: job removed from list with animation, detail reverts to empty state"
+
+test_specs:
+  - id: TEST-25
+    description: "Schedule editor validates cron — invalid shows error, valid shows preview"
+  - id: TEST-26
+    description: "Script viewer: .sh gets bash highlighting, .py gets python"
+  - id: TEST-28
+    description: "Run Now: spinner, streaming output, exit code + duration on completion"
+  - id: TEST-29
+    description: "Run Now disabled during execution, re-enabled on completion"
+  - id: TEST-31
+    description: "Run Now with sudo: prompt appears first, then execution proceeds"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronJobControls component"
+      consumers: [WU-016]
+      contract: "Integrates with CronSudoPrompt for sudo operations and CronDeleteConfirm for delete"
+    - name: "CronScheduleEditor (inline)"
+      consumers: [WU-015]
+      note: "CronScheduleEditor is also used in CronCreateModal"
+
+implementation_notes: |
+  The CronScheduleEditor can be a shared sub-component used both here (inline edit)
+  and in WU-015 (create modal). It takes a schedule string, validates it, and shows
+  a live human-readable preview. Validation for cron uses cron-parser's parse() in a
+  try/catch. The Run Now output panel is a simple div with overflow-y: auto and
+  whiteSpace: pre-wrap. Lock icons use a small padlock SVG/icon next to the button text.

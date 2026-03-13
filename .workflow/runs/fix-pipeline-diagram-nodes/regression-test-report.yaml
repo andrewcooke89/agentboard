@@ -1,0 +1,56 @@
+verdict: pass
+
+test_files_created:
+  - "src/client/__tests__/pipelineDiagramNodes.regression.test.tsx"
+
+test_count: 5
+
+description: |
+  Regression tests for 4 bugs in StepNode.tsx and ParallelGroupNode.tsx:
+
+  BUG-1 (StepNode skipped color):
+    - Test: "REGRESSION: skipped status must use bg-yellow-500 (not bg-gray-500)"
+    - Verifies: StepNode.tsx line 10 uses bg-yellow-500 for skipped status
+    - Current failure: Shows bg-gray-500 instead of bg-yellow-500
+
+  BUG-2a (ParallelGroupNode dependency spacing):
+    - Test: "REGRESSION: dependency info must have space after colon and no parentheses"
+    - Verifies: ParallelGroupNode.tsx lines 229/256 render "depends_on: independent"
+    - Current failure: Shows "(depends_on:independent)" without space, with parens
+
+  BUG-2b (ParallelGroupNode empty array):
+    - Test: "REGRESSION: empty childSteps array must show 0/0 complete (not No steps)"
+    - Verifies: ParallelGroupNode.tsx line 187 shows "0/0 complete" for []
+    - Current failure: Shows "No steps" instead of "0/0 complete"
+
+  BUG-2c (ParallelGroupNode undefined):
+    - Test: "REGRESSION: undefined childSteps must show 0/0 complete (not No steps)"
+    - Verifies: ParallelGroupNode.tsx line 187 shows "0/0 complete" for undefined
+    - Current failure: Shows "No steps" instead of "0/0 complete"
+
+  Additional test (passes):
+    - "cancelled status uses bg-gray-500 (unchanged)" - confirms cancelled still uses gray
+
+test_results:
+  - test: "BUG-1 > REGRESSION: skipped status must use bg-yellow-500"
+    status: FAIL
+    expected: "bg-yellow-500"
+    actual: "bg-gray-500"
+
+  - test: "BUG-2a > REGRESSION: dependency info must have space after colon"
+    status: FAIL
+    expected: "depends_on: independent"
+    actual: "(depends_on:independent)"
+
+  - test: "BUG-2b > REGRESSION: empty childSteps array must show 0/0 complete"
+    status: FAIL
+    expected: "0/0 complete"
+    actual: "No steps"
+
+  - test: "BUG-2c > REGRESSION: undefined childSteps must show 0/0 complete"
+    status: FAIL
+    expected: "0/0 complete"
+    actual: "No steps"
+
+  - test: "cancelled status uses bg-gray-500 (unchanged)"
+    status: PASS

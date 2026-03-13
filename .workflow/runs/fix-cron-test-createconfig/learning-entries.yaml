@@ -1,0 +1,46 @@
+```yaml
+- pattern_name: "Bug reproduction"
+  confidence: "RAW"
+  analysis: |
+    The bug was easily and consistently reproducible. The reproduction steps were straightforward: `bun install` followed by `bun run typecheck`. This indicates that the TypeScript compiler itself was the primary mechanism for detecting these errors, and they were static, compiler-level issues, not runtime or environmental flukes. The clarity and simplicity of the reproduction steps made diagnosis efficient.
+
+- pattern_name: "Root cause"
+  confidence: "RAW"
+  analysis: |
+    The root cause was precisely identified in the expected locations, confirming the initial bug specification. It was a clear case of "interface evolution without test updates."
+    1.  **Interface Change:** The `CronCreateConfig` interface (`src/shared/types.ts`) was updated to include a required `tags: string[]` field.
+    2.  **Visibility Change:** Key internal methods (`readCrontab`, `writeCrontab`) in the `CronManager` class (`src/server/cronManager.ts`) were changed from their previous (likely public or protected) state to `private`.
+    The existing test files (`cronDuplicateDetection.test.ts` and `cronFlockWrapping.test.ts`) were not updated to reflect these changes, leading to TypeScript compilation errors. This is a systemic issue common in evolving codebases where changes to core types or class structures are not automatically propagated or validated against all dependents, especially tests. It highlights a maintenance and synchronization challenge rather than a logical bug in the new code itself.
+
+- pattern_name: "Fix complexity"
+  confidence: "RAW"
+  analysis: |
+    The fix touched the exact files identified as requiring changes: the two test files (`cronDuplicateDetection.test.ts`, `cronFlockWrapping.test.ts`) and the `CronManager` class (`src/server/cronManager.ts`). It did not spread to unexpected areas, indicating a localized problem.
+    The complexity of the code changes themselves was low:
+    -   Adding `tags: []` and `comment: ''` to object literals is a trivial code addition.
+    -   Using `as any` casts for private member access in one test is a simple syntax modification.
+    -   Changing `private` to `protected` in the `CronManager` class is a single keyword change.
+    The primary complexity involved a design decision regarding the visibility of `readCrontab`/`writeCrontab` (`private` vs. `protected`) to balance encapsulation with testability, which was resolved by opting for `protected` to enable idiomatic subclass testing.
+
+- pattern_name: "Regression risk"
+  confidence: "RAW"
+  analysis: |
+    The regression risk was explicitly assessed as "Low" in the Root Cause Analysis, and this assessment is well-supported by the nature of the changes.
+    -   **Test Data Changes:** Adding `tags: []` and `comment: ''` to test configuration objects is purely additive and does not alter existing test logic or production behavior.
+    -   **Test-Only Casts:** The `as any` casts are confined to test code in `cronDuplicateDetection.test.ts` and thus pose no risk to production code.
+    -   **Visibility Widening:** Changing `private` to `protected` in `CronManager` was the most significant change to production code. However, its risk was mitigated because:
+        -   The methods (`readCrontab`, `writeCrontab`) are internal helpers.
+        -   `CronManager` has no other subclasses in the codebase that might inadvertently rely on these methods.
+        -   `protected` still prevents external callers from accessing them, maintaining a reasonable level of encapsulation.
+    Overall, the changes were highly localized, mostly confined to test files, and the single change to production code was carefully considered, leading to minimal regression concerns.
+
+- pattern_name: "Process gaps"
+  confidence: "RAW"
+  analysis: |
+    This bug highlights several potential process gaps that, if addressed, could have caught the issue much earlier, ideally during development or code review:
+    1.  **Lack of Coordinated Updates:** The primary mechanism ("Interface evolution without test updates") points to a missing process for ensuring that when core interfaces or class member visibilities change, all dependent code (especially tests) are updated simultaneously.
+    2.  **Insufficient CI/CD Gating:** While `bun run typecheck` *did* catch the errors, the fact that they accumulated to a "major" severity bug implies that the `typecheck` command might not be a mandatory or early gate in the CI/CD pipeline for every pull request. If `typecheck` were a strict requirement for merging, these errors would have prevented the initial interface/class changes from being merged without corresponding test updates.
+    3.  **Code Review Rigor:** Code reviews should ideally flag such discrepancies. A change to a required interface field or a method's visibility should prompt reviewers to ask about dependent code and how it's affected, especially tests.
+    4.  **Test Design and Maintenance:** The tests themselves, while present, weren't robust enough to break immediately and prevent the issue from being introduced. This suggests a need for a more integrated approach to testing where changes to core types or class structures are immediately reflected in test failures if dependencies are not met. The need to change `private` to `protected` also suggests that the initial `private` declaration might have been too restrictive for a testable design, or the testing pattern should have been adapted earlier when the `private` keyword was introduced.
+    The core learning is to enforce `typecheck` as a strict and early gate in the development workflow and to foster a culture of holistic updates when core types or class structures evolve.
+```

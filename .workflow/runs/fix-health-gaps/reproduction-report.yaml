@@ -1,0 +1,92 @@
+# Bug Reproduction Report
+# Generated: 2026-02-27
+# Updated: 2026-02-27 (live reproduction test)
+
+verdict: pass  # Bug IS reproducible
+
+reproduced: true
+
+reproduction_output: |
+  == Live Reproduction Test Results ==
+
+  TEST ENVIRONMENT:
+  - Started backend-only server: `bun --watch src/server/index.ts`
+  - No vite frontend started, no browser opened
+  - No WebSocket client connected
+  - Waited 35+ seconds for initial cleanup timeout
+
+  BUG 1: Health computation unwired - REPRODUCED
+  $ curl -s http://localhost:4040/api/cron-ai/health
+  {"healthy":0,"warning":0,"critical":0}
+
+  $ curl -s http://localhost:4040/api/cron-ai/jobs | python3 -c "import json,sys; jobs = json.load(sys.stdin); print(f'First job health: {jobs[0].get(\"health\")}')"
+  First job health: unknown
+
+  Evidence: handleGetJobs/handleSearchJobs/handleGetJobDetail all call
+  discoverAllJobs() directly (cronAiService.ts:293-337), returning jobs
+  with health='unknown' (the default from parseCrontabLines).
+
+  BUG 2: Poll interval hardcoded - ALREADY FIXED
+  - config.ts:105-108 defines cronPollIntervalMs from CRON_POLL_INTERVAL_MS env var
+  - cronHandlers.ts:139 calls startPolling(config.cronPollIntervalMs)
+  - Regression tests exist to guard against re-introduction
+
+  BUG 3: Orphan cleanup gated on jobCache - REPRODUCED
+  $ grep -i "cron_cleanup" /tmp/dev-server.log
+  >>> NO MATCHES FOUND <<<
+
+  The cleanup timer fired but cron_cleanup_initial log entry never appeared
+  because jobCache.size === 0 (no WS client connected to populate it).
+
+  Code path: index.ts:318-324 has `if (cronManager.jobCache.size > 0)` guard.
+  jobCache is only populated by startPollingLifecycle() via onClientConnect().
+
+  BUG 4: History pruning gated on jobCache - REPRODUCED
+  Same test as Bug 3. pruneRunHistory() is in the same gated block
+  (index.ts:321,331) and silently skipped for the same reason.
+
+bugs_confirmed:
+  - id: 1
+    title: "Health computation unwired from API handlers"
+    status: REPRODUCED
+    evidence:
+      - "curl /api/cron-ai/health returned {\"healthy\":0,\"warning\":0,\"critical\":0}"
+      - "curl /api/cron-ai/jobs returned jobs with health: 'unknown'"
+    code_path: "src/server/cronAiService.ts:293-337"
+
+  - id: 2
+    title: "Poll interval hardcoded"
+    status: ALREADY_FIXED
+    evidence:
+      - "config.ts defines cronPollIntervalMs from CRON_POLL_INTERVAL_MS env var"
+      - "cronHandlers.ts uses config.cronPollIntervalMs"
+
+  - id: 3
+    title: "Orphan cleanup gated on jobCache"
+    status: REPRODUCED
+    evidence:
+      - "No cron_cleanup_initial log entry after 35+ seconds"
+      - "jobCache.size === 0 without WS client connection"
+    code_path: "src/server/index.ts:318-324"
+
+  - id: 4
+    title: "History pruning gated on jobCache"
+    status: REPRODUCED
+    evidence:
+      - "Same gated block as Bug 3 (index.ts:321,331)"
+    code_path: "src/server/index.ts:321,331"
+
+notes: |
+  Live reproduction test confirmed bugs 1, 3, and 4 are reproducible.
+  Bug 2 was already fixed before this test.
+
+  Root causes:
+  - Bug 1: cronAiService handlers bypass enriched jobCache
+  - Bugs 3 & 4: jobCache.size > 0 guard blocks cleanup when no WS client connects
+
+  Test methodology:
+  1. Started backend-only (no vite, no browser)
+  2. Waited 35+ seconds for cleanup timeout
+  3. Checked logs for cron_cleanup entries (none found)
+  4. Called /api/cron-ai/health (all zeros)
+  5. Called /api/cron-ai/jobs (health: unknown)

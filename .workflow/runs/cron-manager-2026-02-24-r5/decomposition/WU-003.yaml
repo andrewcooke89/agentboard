@@ -1,0 +1,98 @@
+id: WU-003
+title: "CronManager - Discovery & Parsing"
+description: |
+  Create the CronManager class with all job discovery methods (user crontab, system crontab,
+  user systemd timers, system systemd timers), systemd availability detection, cron/systemd
+  schedule parsing, script path resolution, project grouping logic, deterministic job ID
+  generation, and avatar URL generation. This is the core backend service that all other
+  backend WUs build upon.
+
+dependencies: [WU-001, WU-002]
+
+files:
+  created:
+    - path: src/server/cronManager.ts
+      purpose: |
+        CronManager class with discovery, parsing, and utility methods:
+        - systemdAvailable: boolean (detected at startup)
+        - detectSystemd(): Promise<void> -- run systemctl --version
+        - discoverAllJobs(): Promise<CronJob[]> -- parallel discovery from all sources
+        - discoverUserCrontab(): Promise<CronJob[]> -- parse crontab -l output
+        - discoverSystemCrontab(): Promise<CronJob[]> -- parse /etc/crontab + /etc/cron.d/*
+        - discoverUserTimers(): Promise<CronJob[]> -- systemctl --user list-timers (skip if !systemdAvailable)
+        - discoverSystemTimers(): Promise<CronJob[]> -- systemctl list-timers (skip if !systemdAvailable)
+        - generateJobId(source, name, command): string -- deterministic hash
+        - parseCronSchedule(expression): string -- human-readable via cronstrue
+        - parseSystemdCalendar(spec): string -- human-readable conversion
+        - resolveScriptPath(command): string | null -- extract file path from command
+        - inferProjectGroup(scriptPath, command): string -- directory-based grouping
+        - generateAvatarUrl(jobName, style): string -- DiceBear URL
+        - projectNextRuns(schedule, source, count): Date[] -- cron-parser projection
+
+acceptance_criteria:
+  - req: REQ-04
+    type: contract
+    check: "Discovers from all 4 sources; individual source failures caught and logged without blocking others"
+  - req: REQ-05
+    type: invariant
+    check: "Job ID is deterministic hash of source+name+command; stable across polls; changes only when command changes"
+  - req: REQ-06
+    type: contract
+    check: "Script path resolved from command/ExecStart; null for pipelines/inline scripts"
+  - req: REQ-07
+    type: contract
+    check: "projectGroup derived from script directory; 'System' for unresolvable; System always sorted last"
+  - req: REQ-11
+    type: contract
+    check: "Avatar URL uses DiceBear pattern with configurable style and job name seed"
+  - req: REQ-85
+    type: contract
+    check: "Cron expressions converted to human-readable via cronstrue"
+  - req: REQ-86
+    type: contract
+    check: "Systemd calendar specs converted to human-readable strings"
+  - req: REQ-91
+    type: benchmark
+    check: "Discovery completes within 2 seconds for <200 jobs; individual source failures caught"
+  - req: REQ-97
+    type: contract
+    check: "systemdAvailable detected at startup via systemctl --version; systemd sources skipped if unavailable"
+
+test_specs:
+  - id: TEST-01
+    description: "User crontab parsing with script path, inline command, and env var entries"
+  - id: TEST-02
+    description: "System crontab parsing with user field"
+  - id: TEST-03
+    description: "User systemd timer discovery"
+  - id: TEST-04
+    description: "System systemd timer discovery"
+  - id: TEST-05
+    description: "Discovery resilience -- partial source failures do not block others"
+  - id: TEST-06
+    description: "Deterministic job IDs stable across polls; schedule change preserves ID; command change changes ID"
+  - id: TEST-07
+    description: "Script path grouping logic"
+  - id: TEST-08
+    description: "System group always sorted last"
+  - id: TEST-09
+    description: "Avatar URL generation with correct pattern"
+  - id: TEST-94
+    description: "Non-systemd graceful degradation -- only crontab sources when systemd unavailable"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager class (discovery + parsing API)"
+      consumers: [WU-004, WU-005, WU-007]
+  imports:
+    - from: WU-001
+      name: "CronJob, CronJobDetail, JobSource types"
+    - from: WU-002
+      name: "Database tables (cron_job_prefs for tags/prefs merging)"
+
+implementation_notes: |
+  Use cronstrue for cron-to-human conversion and cron-parser for next-run projection.
+  Job ID generation: SHA-256 hash of `${source}:${name}:${command}` truncated to 16 hex chars.
+  Discovery should use Promise.allSettled to run all sources in parallel, catching individual
+  failures. System crontab parsing must handle the 6th user field. For systemd, parse the
+  JSON output from systemctl --output=json. Avatar URL: `https://api.dicebear.com/9.x/${style}/svg?seed=${encodeURIComponent(jobName)}`.

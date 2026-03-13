@@ -1,0 +1,82 @@
+id: WU-015
+title: "Job Creation Modal"
+description: |
+  Implement the job creation modal with two modes: Quick (cron) and Advanced (systemd).
+  Quick mode accepts command, schedule with live preview, and optional name/tags.
+  Advanced mode accepts all systemd unit fields. Includes input validation, duplicate
+  detection, and auto-selection of newly created jobs.
+
+dependencies: [WU-009]
+
+files:
+  created:
+    - path: src/client/components/cron/CronCreateModal.tsx
+      changes: |
+        - Modal dialog triggered by "Create Job" buttons
+        - Two tabs: Quick (cron) and Advanced (systemd)
+        - Advanced tab hidden if !systemdAvailable (from cronStore)
+        - Quick mode fields: command (required), schedule expression (required, with CronScheduleEditor
+          for live preview), optional comment/name, optional tags (via CronTagInput)
+        - Advanced mode fields: serviceName (required, validated), command/ExecStart (required),
+          OnCalendar schedule (required, with validation), optional Description,
+          optional WorkingDirectory, user-vs-system scope toggle, optional tags
+        - Submit: sends cron-job-create WS message with mode + config
+        - Validation: all required fields, service name regex, schedule validation
+        - Duplicate detection: warn if command matches existing job (non-blocking)
+        - On success: close modal, auto-select new job in list
+
+    - path: src/client/components/cron/CronScheduleEditor.tsx
+      changes: |
+        - Reusable schedule editor component (used here and in WU-014 inline edit)
+        - Text input for raw schedule expression
+        - Live human-readable preview below (updates on keystroke)
+        - Validation indicator: green border + preview for valid, red border + error for invalid
+        - For cron: validate via cron-parser, preview via cronstrue
+        - For systemd: validate via regex or backend call, preview via parseSystemdCalendar
+
+acceptance_criteria:
+  - req: REQ-50
+    type: behavioral
+    check: "Create Job button in list header and empty state; modal with Quick/Advanced tabs; Advanced hidden if no systemd"
+  - req: REQ-51
+    type: contract
+    check: "Quick mode: command + schedule (with live preview) + optional name/tags; appends to user crontab"
+  - req: REQ-52
+    type: contract
+    check: "Advanced mode: serviceName validated, all fields, user/system scope; generates .timer+.service"
+  - req: REQ-53
+    type: behavioral
+    check: "All inputs validated before submit; duplicate detection warns (not blocks); new job auto-selected"
+  - req: REQ-97
+    type: contract
+    check: "Advanced tab hidden when systemdAvailable is false"
+
+test_specs:
+  - id: TEST-41
+    description: "Quick mode creates cron job — sends cron-job-create with mode:'cron'"
+  - id: TEST-42
+    description: "Advanced mode creates systemd timer — sends cron-job-create with mode:'systemd'"
+  - id: TEST-43
+    description: "Validation: empty command rejected; invalid systemd name rejected; valid inputs accepted"
+  - id: TEST-44
+    description: "Duplicate detection: warning shown for existing command, still submittable"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronScheduleEditor component"
+      consumers: [WU-014]
+      contract: |
+        <CronScheduleEditor
+          value: string
+          onChange: (value: string) => void
+          mode: 'cron' | 'systemd'
+          isValid: boolean (output)
+        />
+
+implementation_notes: |
+  The modal follows existing modal patterns in the codebase. Use motion.div for
+  entrance/exit animation. The schedule editor is the same component used for inline
+  frequency editing — extract it here as a standalone component. Duplicate detection
+  compares the command field against cronStore.jobs[].command. The CronTagInput component
+  from WU-017 may not be available yet — use a simple text input with comma separation
+  as a placeholder, to be enhanced when WU-017 lands.

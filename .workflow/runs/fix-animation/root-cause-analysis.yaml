@@ -1,0 +1,84 @@
+verdict: pass
+
+root_cause: |
+  TaskQueue.tsx and TaskItem.tsx were implemented without framer-motion
+  (motion/react) animation support. They use plain React elements (<div>)
+  and bare {tasks.map(...)} rendering, while the rest of the codebase
+  (SessionList.tsx, CronJobList.tsx, PendingReviewDashboard.tsx) uses a
+  consistent AnimatePresence + motion.div pattern for list item enter/exit
+  transitions. This is a missing-feature bug — the animation pattern was
+  never applied to these two components.
+
+location:
+  file: "src/client/components/TaskQueue.tsx"
+  line_range: "147-197"
+  function: "TaskQueue"
+  secondary:
+    file: "src/client/components/TaskItem.tsx"
+    line_range: "79-200"
+    function: "TaskItem"
+
+mechanism: |
+  Missing implementation — not a logic error, race condition, or regression.
+
+  The three task list sections in TaskQueue.tsx (Running at lines 147-159,
+  Queued at lines 167-179, Recent at lines 186-197) render TaskItem
+  components via plain {tasks.map()} without an AnimatePresence wrapper.
+
+  TaskItem.tsx renders a plain <div> as its root element (line 79) instead
+  of a <motion.div> with initial/animate/exit props.
+
+  Neither file imports anything from 'motion/react'. There is no
+  useReducedMotion hook call for accessibility.
+
+  The established codebase pattern (confirmed in SessionList.tsx:609-637,
+  CronJobList.tsx:114-126, PendingReviewDashboard.tsx:168-272) is:
+    1. Import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
+    2. Call useReducedMotion() at the component level
+    3. Wrap list .map() calls in <AnimatePresence initial={false}>
+    4. Use <motion.div key={item.id}> with:
+       - initial: prefersReducedMotion ? false : { opacity: 0, height: 0 }
+       - animate: { opacity: 1, height: 'auto' }
+       - exit: prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }
+       - transition: { duration: 0.2 }
+
+fix_approach: |
+  Two-file change:
+
+  1. TaskQueue.tsx:
+     - Add import: { AnimatePresence, useReducedMotion } from 'motion/react'
+     - Call useReducedMotion() at top of component
+     - Wrap each of the three task list .map() blocks (lines 147, 167, 186)
+       in <AnimatePresence initial={false}> ... </AnimatePresence>
+
+  2. TaskItem.tsx:
+     - Add import: { motion, useReducedMotion } from 'motion/react'
+     - Replace root <div> (line 79) with <motion.div> and add:
+         initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+         animate={{ opacity: 1, height: 'auto' }}
+         exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+         transition={{ duration: 0.2 }}
+     - Note: useReducedMotion is a hook and cannot be called inside
+       TaskItem directly if it's rendered as a child of AnimatePresence
+       without being a proper component. Since TaskItem IS a proper
+       component, calling useReducedMotion inside it is fine.
+     - Add style={{ overflow: 'hidden' }} to prevent content flash
+       during height animation (consistent with SessionList pattern
+       at line 854).
+
+  Follow the simpler CronJobList pattern (not the more complex SessionList
+  DnD/spring-physics pattern) since TaskQueue has no drag-and-drop.
+
+risk_assessment: |
+  Very low risk:
+  - The fix adds animation wrappers around existing rendering — no logic changes
+  - The pattern is well-established across 4+ other components in this codebase
+  - motion/react is already a project dependency (used extensively)
+  - useReducedMotion provides accessibility fallback
+  - AnimatePresence initial={false} prevents mount-flash on page load
+  - Only two files are touched (TaskQueue.tsx, TaskItem.tsx)
+  - No API, state management, or data flow changes
+  - Potential minor risk: if TaskItem re-renders rapidly (e.g. during
+    status polling), AnimatePresence may queue animations. This is
+    mitigated by the short 200ms duration and is consistent with how
+    SessionList handles rapid updates.

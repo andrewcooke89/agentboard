@@ -1,0 +1,33 @@
+id: WU-002
+title: "Server Wiring & Settings Store"
+description: |
+  Wire CronManager singleton and services into the Hono server in index.ts.
+  Instantiate CronManager, CronHistoryService, CronLogService. Call createCronHandlers
+  and wire to WebSocket router. Detect systemd availability at startup.
+  Add 14 cron-specific settings fields to settingsStore.ts with defaults.
+files:
+  - path: src/server/index.ts
+    action: modify
+    description: "Import and instantiate cron singletons, wire WS handlers"
+  - path: src/client/stores/settingsStore.ts
+    action: modify
+    description: "Add 14 cron settings fields with defaults"
+dependencies:
+  - WU-001
+requirements:
+  - REQ-90
+  - REQ-97
+acceptance_criteria:
+  - type: integration
+    description: "CronManager singleton instantiated on server start"
+  - type: integration
+    description: "Cron WS handlers registered in message router"
+  - type: unit_test
+    description: "Settings store includes all 14 cron settings with correct defaults"
+  - type: unit_test
+    description: "systemdAvailable flag detected at startup"
+interfaces:
+  exports:
+    - "cronManager: CronManager (singleton)"
+    - "cronSettings: CronSettingsSlice in settingsStore"
+estimated_loc: 80

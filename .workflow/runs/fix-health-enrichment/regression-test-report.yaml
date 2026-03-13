@@ -1,0 +1,51 @@
+verdict: pass
+
+test_files_created:
+  - "src/server/__tests__/health-regex-regression.test.ts"
+
+test_count: 7
+
+description: |
+  Regression tests for the regex extraction bug in health-gaps-regression.test.ts.
+
+  The broken regex on line 25 of health-gaps-regression.test.ts can only handle
+  ONE level of brace nesting. When extracting startPolling() which has 3+ levels
+  (method → setInterval callback → if/for blocks), the regex terminates at the
+  first inner closing brace, never reaching the enrichAllJobsWithHealth call.
+
+  Tests verify:
+  1. BROKEN REGEX FAILS - Tests on line 36-78 demonstrate the bug:
+     - "broken regex fails to capture enrichAllJobsWithHealth in method body" - FAILS
+     - "broken regex captures only partial method body" - FAILS
+     These tests expect to find setInterval, discoverAllJobs, computeDiff, and
+     enrichAllJobsWithHealth in the captured body, but the broken regex only
+     captures up to the first if-block's closing brace.
+
+  2. FIXED REGEX PASSES - Tests on line 81-148 verify the fix works:
+     - "fixed regex correctly captures enrichAllJobsWithHealth" - PASSES
+     - "fixed regex captures complete method body" - PASSES
+     - "fixed regex captures correct enrichment ordering" - PASSES
+
+  3. VALIDATION TESTS - Tests on line 151-172 verify production code:
+     - "startPolling method exists with expected signature" - PASSES
+     - "production code calls enrichAllJobsWithHealth" - PASSES
+
+  Current test results:
+  - 2 fail (broken regex tests - demonstrating the bug)
+  - 5 pass (fixed regex and validation tests)
+
+  After the fix is applied (replacing the broken regex with the fixed one in
+  health-gaps-regression.test.ts), all 7 tests should pass.
+
+test_results:
+  before_fix:
+    total: 7
+    passed: 5
+    failed: 2
+    failing_tests:
+      - "REGEX-BUG: startPolling method extraction > broken regex (single-level brace matching) > broken regex fails to capture enrichAllJobsWithHealth in method body"
+      - "REGEX-BUG: startPolling method extraction > broken regex (single-level brace matching) > broken regex captures only partial method body"
+  after_fix_expected:
+    total: 7
+    passed: 7
+    failed: 0

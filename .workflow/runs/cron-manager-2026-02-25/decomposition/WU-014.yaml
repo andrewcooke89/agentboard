@@ -1,0 +1,43 @@
+id: WU-014
+title: "Job Controls & Run Now"
+description: |
+  Implement CronJobControls: Run Now button (disabled with spinner during run),
+  Pause/Resume toggle, Edit Frequency button (opens inline CronScheduleEditor),
+  Delete button (opens CronDeleteConfirm). Lock icons on sudo-required controls.
+  Only one manual run per job at a time. Implement CronRunNowOutput: mini-terminal
+  below controls showing streaming output from manual run, exit code + duration
+  on completion.
+files:
+  - path: src/client/components/cron/CronJobControls.tsx
+    action: modify
+    description: "Implement control buttons with state management"
+  - path: src/client/components/cron/CronRunNowOutput.tsx
+    action: modify
+    description: "Implement mini-terminal for streaming run output"
+dependencies:
+  - WU-011
+requirements:
+  - REQ-37
+  - REQ-38
+  - REQ-39
+  - REQ-40
+  - REQ-41
+  - REQ-42
+acceptance_criteria:
+  - type: unit_test
+    description: "Run Now button disabled with spinner during active run"
+  - type: unit_test
+    description: "Only one manual run per job at a time"
+  - type: unit_test
+    description: "Pause/Resume toggle sends correct WS messages"
+  - type: unit_test
+    description: "Lock icons shown on sudo-required controls"
+  - type: unit_test
+    description: "Run output streams into mini-terminal"
+  - type: unit_test
+    description: "Exit code and duration shown on completion"
+interfaces:
+  exports:
+    - "CronJobControls component"
+    - "CronRunNowOutput component"
+estimated_loc: 150

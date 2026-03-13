@@ -1,0 +1,94 @@
+id: WU-004
+title: "CronManager - Polling, Diff & Health"
+description: |
+  Extend the CronManager class with the polling loop, incremental diff computation,
+  health status derivation, missed-run detection, duration tracking, and orphaned
+  preferences cleanup. This makes the discovery results live-updating and adds the
+  health intelligence layer.
+
+dependencies: [WU-003]
+
+files:
+  modified:
+    - path: src/server/cronManager.ts
+      changes: |
+        - Add startPolling(intervalMs): void -- setInterval-based poll loop
+        - Add stopPolling(): void -- clearInterval
+        - Add onJobsChanged(callback: (added, removed, updated) => void): void -- diff event
+        - Add private jobCache: Map<string, CronJob> -- previous poll state
+        - Add private computeDiff(oldJobs, newJobs) -- returns added/removed/updated
+        - Add computeHealth(job, history): { health, reason } -- health derivation
+        - Add detectMissedRun(job): boolean -- compare last run vs expected interval
+        - Add private getExpectedInterval(schedule, source): number -- derive interval from schedule
+        - Add cleanOrphanedPrefs(currentJobIds): void -- delete stale prefs with 24h grace
+        - Add private lastCleanupTime: number -- track hourly cleanup cadence
+        - Duration tracking: compute avgDuration from last 10 runs, set lastRunDuration
+
+acceptance_criteria:
+  - req: REQ-08
+    type: contract
+    check: "Polling at configurable interval (default 5s, min 2s, max 30s); starts/stops based on client count"
+  - req: REQ-09
+    type: contract
+    check: "Only diffs (added/removed/updated) sent after each poll; full list only on initial connection"
+  - req: REQ-58
+    type: contract
+    check: "Health computed from run history: healthy (all 10 ok), warning (last failed/missed/slow), critical (2+ consecutive failures)"
+  - req: REQ-59
+    type: invariant
+    check: "Health recomputed each poll; never persisted to DB; always derived from live data"
+  - req: REQ-60
+    type: contract
+    check: "healthReason provides human-readable explanation for the health status"
+  - req: REQ-61
+    type: contract
+    check: "Missed run detected when time since last run exceeds 2x expected interval"
+  - req: REQ-62
+    type: contract
+    check: "lastRunDuration and avgDuration (rolling 10-run average) tracked per job"
+  - req: REQ-98
+    type: contract
+    check: "Orphaned prefs cleaned hourly; prefs with last_seen >24h and no matching job deleted"
+
+test_specs:
+  - id: TEST-12
+    description: "Polling sends only diffs -- changed and new jobs sent, unchanged not resent"
+  - id: TEST-13
+    description: "Polling pauses with no clients, resumes on reconnect"
+  - id: TEST-14
+    description: "Removed job triggers cron-job-removed message"
+  - id: TEST-49
+    description: "Healthy status when 10 successful runs"
+  - id: TEST-50
+    description: "Warning on single failure after successes"
+  - id: TEST-51
+    description: "Critical on 3 consecutive failures"
+  - id: TEST-52
+    description: "Warning on missed run (last ran 3h ago on hourly schedule)"
+  - id: TEST-53
+    description: "Warning on slow run (duration > 2x average)"
+  - id: TEST-56
+    description: "Duration stats: last, avg, trend indicator"
+  - id: TEST-57
+    description: "Slow run warning when last > 2x average"
+
+cross_wu_interfaces:
+  exports:
+    - name: "CronManager polling API (startPolling, stopPolling, onJobsChanged)"
+      consumers: [WU-007]
+    - name: "CronManager health API (computeHealth)"
+      consumers: [WU-007]
+  imports:
+    - from: WU-003
+      name: "CronManager class (discovery + parsing)"
+    - from: WU-001
+      name: "JobRunRecord, HealthStatus types"
+
+implementation_notes: |
+  The diff algorithm: convert both old and new job arrays to Maps keyed by ID. Walk new map:
+  if not in old -> added; if in old but fields changed -> updated. Walk old map: if not in
+  new -> removed. For health computation, use the job's run history (from CronHistoryService
+  or the DB). Health is NEVER stored -- always derived. Missed-run detection: parse schedule
+  to get expected interval, compare against now - lastRun. Orphan cleanup: once per hour,
+  query cron_job_prefs WHERE last_seen < datetime('now', '-24 hours') AND job_id NOT IN
+  (current discovered job IDs).
