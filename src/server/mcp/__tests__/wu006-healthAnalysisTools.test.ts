@@ -117,7 +117,6 @@ function jsonResponse(data: unknown, status = 200): Response {
 // ─── Module Import ────────────────────────────────────────────────────────────
 
 import {
-  fetchFromAgentboard,
   getHealthSummary,
   getFailingJobs,
   getScheduleConflicts,
