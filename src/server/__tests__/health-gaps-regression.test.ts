@@ -10,7 +10,7 @@
  * These tests MUST FAIL until the fix is applied.
  */
 
-import { describe, test, expect, beforeEach, mock } from 'bun:test'
+import { describe, test, expect, mock } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
