@@ -46,20 +46,23 @@ interface Finding {
 
 // ─── CLI Arg Parsing ─────────────────────────────────────────────────────────
 
-function parseArgs(): { project?: string; config: string } {
+function parseArgs(): { project?: string; config: string; skipSweep: boolean } {
   const args = process.argv.slice(2)
   let project: string | undefined
   let config = path.join(os.homedir(), '.agentboard', 'minion-projects.yaml')
+  let skipSweep = false
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--project' && args[i + 1]) {
       project = args[++i]
     } else if (args[i] === '--config' && args[i + 1]) {
       config = args[++i]
+    } else if (args[i] === '--skip-sweep') {
+      skipSweep = true
     }
   }
 
-  return { project, config }
+  return { project, config, skipSweep }
 }
 
 // ─── Config Loading ───────────────────────────────────────────────────────────
@@ -282,6 +285,80 @@ function runDetector(
   }
 }
 
+// ─── Staleness Sweep ─────────────────────────────────────────────────────────
+
+function sweepStaleTickets(storage: FileStorage, projectPath: string, tag: string): void {
+  const listResult = storage.listTickets({ status: 'open', limit: 1000, offset: 0, sort_by: 'created', sort_order: 'desc' })
+
+  let removedCount = 0
+  let modifiedCount = 0
+
+  for (const summary of listResult.tickets) {
+    const ticket = storage.getTicket(summary.id)
+    if (!ticket) continue
+    if (!ticket.source?.file) continue
+
+    const sourceFile = ticket.source.file
+
+    // Check 1: source file no longer exists
+    if (!fs.existsSync(sourceFile)) {
+      storage.transitionTicket(ticket.id, 'resolved', {
+        reason: 'source file removed',
+        resolved_by: 'sweep',
+      })
+      removedCount++
+      continue
+    }
+
+    // Check 2: lines were modified after ticket creation
+    const lineStart = ticket.source.line_start
+    const lineEnd = ticket.source.line_end ?? lineStart
+    const createdAt = ticket.created_at
+
+    // Try line-level git log first (-L flag)
+    const lineLog = Bun.spawnSync(
+      ['git', 'log', '--format=%aI', `-L${lineStart},${lineEnd}:${sourceFile}`],
+      { cwd: projectPath },
+    )
+
+    let lastModified: string | null = null
+
+    if (lineLog.exitCode === 0) {
+      const output = lineLog.stdout.toString().trim()
+      // git log -L output has commit info interspersed; find the first ISO date line
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed.match(/^\d{4}-\d{2}-\d{2}T/)) {
+          lastModified = trimmed
+          break
+        }
+      }
+    }
+
+    // Fallback: file-level log
+    if (!lastModified) {
+      const fileLog = Bun.spawnSync(
+        ['git', 'log', '-1', '--format=%aI', '--', sourceFile],
+        { cwd: projectPath },
+      )
+      if (fileLog.exitCode === 0) {
+        lastModified = fileLog.stdout.toString().trim() || null
+      }
+    }
+
+    if (lastModified && lastModified > createdAt) {
+      storage.transitionTicket(ticket.id, 'resolved', {
+        reason: 'source code modified since ticket creation',
+        resolved_by: 'sweep',
+      })
+      modifiedCount++
+    }
+  }
+
+  const total = removedCount + modifiedCount
+  console.log(`${tag} Sweep: ${total} tickets closed (${removedCount} file removed, ${modifiedCount} code modified)`)
+}
+
 // ─── Ticket Creation ──────────────────────────────────────────────────────────
 
 function findingToCategory(detector: string): TicketCategory {
@@ -289,10 +366,16 @@ function findingToCategory(detector: string): TicketCategory {
   return 'error-handling'
 }
 
-async function processProject(project: ProjectConfig): Promise<void> {
+async function processProject(project: ProjectConfig, skipSweep: boolean): Promise<void> {
   console.log(`\nProject: ${project.path}`)
+  const tag = `[minion-detect][${path.basename(project.path)}]`
 
   const storage = new FileStorage(project.path)
+
+  // Run staleness sweep before detection
+  if (!skipSweep) {
+    sweepStaleTickets(storage, project.path, tag)
+  }
 
   // Load all existing open tickets for dedup
   const listResult = storage.listTickets({ status: 'open', limit: 1000, offset: 0, sort_by: 'created', sort_order: 'desc' })
@@ -368,7 +451,7 @@ async function processProject(project: ProjectConfig): Promise<void> {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  const { project: projectFilter, config: configPath } = parseArgs()
+  const { project: projectFilter, config: configPath, skipSweep } = parseArgs()
 
   console.log(`minion-detect: loading config from ${configPath}`)
   const config = loadConfig(configPath)
@@ -386,7 +469,7 @@ async function main(): Promise<void> {
   console.log(`Running detectors for ${projects.length} project(s)...`)
 
   for (const project of projects) {
-    await processProject(project)
+    await processProject(project, skipSweep)
   }
 
   console.log('\nDone.')

@@ -351,7 +351,22 @@ async function processProject(
               { cwd: projectPath },
             )
             if (pr.exitCode === 0) {
-              console.log(`${tag} PR created: ${pr.stdout.toString().trim()}`)
+              const prUrl = pr.stdout.toString().trim()
+              console.log(`${tag} PR created: ${prUrl}`)
+              // Auto-merge after CI passes (or immediately if no branch protection)
+              try {
+                const merge = Bun.spawnSync(
+                  ['gh', 'pr', 'merge', '--auto', '--squash', prUrl],
+                  { cwd: projectPath },
+                )
+                if (merge.exitCode === 0) {
+                  console.log(`${tag} Auto-merge enabled for PR`)
+                } else {
+                  console.log(`${tag} Auto-merge not available: ${merge.stderr.toString().trim()}`)
+                }
+              } catch {
+                console.log(`${tag} Could not enable auto-merge`)
+              }
             } else {
               console.error(`${tag} PR creation failed: ${pr.stderr.toString()}`)
             }
