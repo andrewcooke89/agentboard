@@ -5,7 +5,6 @@
 
 // ─── Env Config ──────────────────────────────────────────────────────────────
 
-const _AGENTBOARD_URL = process.env.AGENTBOARD_URL || 'http://localhost:4040'
 const AGENTBOARD_WS = process.env.AGENTBOARD_WS || 'ws://localhost:4040/ws'
 const AGENTBOARD_AUTH_TOKEN = process.env.AGENTBOARD_AUTH_TOKEN || ''
 
