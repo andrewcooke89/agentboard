@@ -1,0 +1,43 @@
+# constitution.yaml — User-editable constitution rules for spec validation
+#
+# Each section defines a set of checks run against feature specs.
+# Sections can use regex patterns (matched against all string values in the spec)
+# or special handlers (implemented in specValidator.ts).
+#
+# severity: fail | warn
+#   - fail: constitution check reports 'fail' result
+#   - warn: constitution check reports 'fail' result but with advisory intent
+#
+# patterns[].regex: Regular expression string (no delimiters)
+# patterns[].flags: Optional regex flags (e.g., "i" for case-insensitive)
+# patterns[].description: Human-readable description of what the pattern detects
+
+version: 1
+
+sections:
+  security:
+    description: "Secrets or credentials detected in spec"
+    severity: fail
+    patterns:
+      - regex: 'AKIA[0-9A-Z]{16}'
+        description: "AWS access key"
+      - regex: '(?:password|passwd|secret)\s*[:=]\s*\S+'
+        flags: i
+        description: "Password/secret assignment"
+      - regex: '(?:mysql|postgres|mongodb):\/\/[^@\s]+@'
+        flags: i
+        description: "Connection string with credentials"
+
+  architecture:
+    description: "Architectural constraint violations"
+    severity: fail
+    patterns:
+      - regex: '\*\*\/\*'
+        description: "Wildcard scope **/*"
+      - regex: '\*\.\*'
+        description: "Wildcard scope *.*"
+
+  quality:
+    description: "Quality gate checks"
+    severity: warn
+    special: acceptance_typing

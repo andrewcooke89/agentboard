@@ -265,7 +265,7 @@ describe('StepNode — Phase 15 status colors', () => {
       { status: 'paused_human', expectedClass: 'bg-orange-500' },
       { status: 'paused_exploration', expectedClass: 'bg-blue-500' },
       { status: 'invalidated', expectedClass: 'step-invalidated' },
-      { status: 'skipped', expectedClass: 'bg-gray-500' },
+      { status: 'skipped', expectedClass: 'bg-yellow-500' },
     ]
 
     for (const { status, expectedClass } of statusColorTests) {

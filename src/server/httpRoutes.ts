@@ -14,6 +14,7 @@ import { createWorkflowHandlers } from './handlers/workflowHandlers'
 import { createPoolHandlers } from './handlers/poolHandlers'
 import type { SessionPool } from './sessionPool'
 import { toAgentSession } from './agentSessions'
+import { CronAiService } from './cronAiService'
 
 const MAX_DIRECTORY_ENTRIES = 200
 
@@ -396,6 +397,10 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
     const timeoutSeconds = body.timeoutSeconds !== undefined ? Number(body.timeoutSeconds) : 1800
     const maxRetries = body.maxRetries !== undefined ? Number(body.maxRetries) : 0
 
+    const metadata = (body.metadata && typeof body.metadata === 'object')
+      ? JSON.stringify(body.metadata)
+      : null
+
     const task = ctx.taskStore.createTask({
       projectPath,
       prompt,
@@ -406,16 +411,11 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
       timeoutSeconds,
       parentTaskId: null,
       followUpPrompt: null,
-      metadata: null,
+      metadata,
     })
 
-    let updatedTask = task
-    if (body.metadata && typeof body.metadata === 'object') {
-      updatedTask = ctx.taskStore.updateTask(task.id, { metadata: JSON.stringify(body.metadata) }) ?? task
-    }
-
-    ctx.broadcast({ type: 'task-created', task: updatedTask })
-    return c.json(updatedTask, 201)
+    ctx.broadcast({ type: 'task-created', task })
+    return c.json(task, 201)
   })
 
   app.get('/api/tasks/:id', (c) => {
@@ -820,6 +820,192 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
       })
     } catch {
       return c.json({ error: 'Failed to fetch cost summary' }, 500)
+    }
+  })
+
+  // --- Cron AI Orchestrator REST endpoints (WU-004) ---
+  // CronAiService can be pre-created (index.ts) or auto-created with fallback deps
+  const cronAiService: CronAiService = (ctx as any)._cronAiService ?? (() => {
+    // Lightweight stub for test/dev — no real CronManager available
+    const stubJob = {
+      id: 'job-1', name: 'stub-job', command: 'echo ok', schedule: '* * * * *',
+      source: 'cron' as const, user: 'test', enabled: true, nextRun: null, lastRun: null,
+      health: 'healthy' as const, tags: [], projectGroup: null, managed: false,
+      linkedSessionId: null, avatarUrl: null,
+    }
+    const cache = new Map([[stubJob.id, stubJob]])
+    return new CronAiService(
+      {
+        cronManager: { discoverAllJobs: async () => [stubJob], jobCache: cache },
+        historyService: { getRunHistory: async () => [], getRecentDurations: async () => [] },
+        logService: { getLogs: async () => [] },
+        sessionManager: ctx.sessionManager,
+      },
+      { port: ctx.config.port, authToken: ctx.config.authToken }
+    )
+  })()
+
+  // Auth middleware specific to cron-ai routes (uses CronAiService.validateAuth)
+  app.use('/api/cron-ai/*', async (c, next) => {
+    if (!ctx.config.authToken) return next()
+    const authHeader = c.req.header('Authorization')
+    if (!cronAiService.validateAuth(authHeader)) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+    return next()
+  })
+
+  app.get('/api/cron-ai/jobs', async (c) => {
+    try {
+      const group = c.req.query('group')
+      const jobs = await cronAiService.handleGetJobs(group ? { group } : undefined)
+      return c.json(jobs)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get jobs' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/jobs/search', async (c) => {
+    try {
+      const q = c.req.query('q') || ''
+      const jobs = await cronAiService.handleSearchJobs(q)
+      return c.json(jobs)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Search failed' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/jobs/:id/history', async (c) => {
+    try {
+      const jobId = c.req.param('id')
+      const limit = Number(c.req.query('limit')) || 20
+      const before = c.req.query('before')
+      const history = await cronAiService.handleGetJobHistory(jobId, limit, before ?? undefined)
+      return c.json(history)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get history' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/jobs/:id/logs', async (c) => {
+    try {
+      const jobId = c.req.param('id')
+      const lines = Number(c.req.query('lines')) || 50
+      const offset = c.req.query('offset') ? Number(c.req.query('offset')) : undefined
+      const logs = await cronAiService.handleGetJobLogs(jobId, lines, offset)
+      return c.json(logs)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get logs' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/jobs/:id/duration-trends', async (c) => {
+    try {
+      const jobId = c.req.param('id')
+      const trends = await cronAiService.handleGetDurationTrends(jobId)
+      return c.json(trends)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get trends' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/jobs/:id', async (c) => {
+    try {
+      const jobId = c.req.param('id')
+      const detail = await cronAiService.handleGetJobDetail(jobId)
+      return c.json(detail)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to get job'
+      return c.json({ error: message }, message.startsWith('Job not found') ? 404 : 500)
+    }
+  })
+
+  app.get('/api/cron-ai/health', async (c) => {
+    try {
+      const health = await cronAiService.handleGetHealth()
+      return c.json(health)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get health' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/health/failing', async (c) => {
+    try {
+      const failing = await cronAiService.handleGetFailingJobs()
+      return c.json(failing)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get failing jobs' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/schedule/conflicts', async (c) => {
+    try {
+      const conflicts = await cronAiService.handleGetScheduleConflicts()
+      return c.json(conflicts)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get conflicts' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/schedule/load', async (c) => {
+    try {
+      const load = await cronAiService.handleGetScheduleLoad()
+      return c.json(load)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get load' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/context', async (c) => {
+    try {
+      const context = await cronAiService.handleGetContext()
+      return c.json(context ?? {})
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get context' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/sessions', async (c) => {
+    try {
+      const sessions = await cronAiService.handleGetSessions()
+      return c.json(sessions)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get sessions' }, 500)
+    }
+  })
+
+  app.get('/api/cron-ai/ai-health', async (c) => {
+    try {
+      const health = await cronAiService.handleGetAiHealth()
+      return c.json(health)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to get AI health' }, 500)
+    }
+  })
+
+  app.post('/api/cron-ai/proposals', async (c) => {
+    let body: Record<string, unknown>
+    try {
+      body = await c.req.json()
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400)
+    }
+    try {
+      // createProposal returns a Promise that resolves on user accept/reject/timeout.
+      // Don't await the full resolution — respond with 201 once queued.
+      const proposalPromise = cronAiService.handlePostProposal(body)
+      // Race against a short timer: if the promise hasn't resolved/rejected
+      // synchronously, the proposal was queued successfully.
+      const raceResult = await Promise.race([
+        proposalPromise.then((r) => ({ type: 'resolved' as const, result: r })),
+        new Promise<{ type: 'queued' }>((resolve) => setTimeout(() => resolve({ type: 'queued' }), 50)),
+      ])
+      if (raceResult.type === 'queued') {
+        return c.json({ status: 'pending' }, 201)
+      }
+      return c.json(raceResult.result, 201)
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : 'Failed to create proposal' }, 400)
     }
   })
 

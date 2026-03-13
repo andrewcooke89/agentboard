@@ -5,7 +5,7 @@
  * against YAML-based schemas and runs constitution checks.
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import yaml from 'js-yaml'
 
 // ─── Public Types ───────────────────────────────────────────────────────────
@@ -31,9 +31,9 @@ export interface SpecValidationReport {
   constitution_checks: ConstitutionCheckResult[]
 }
 
-// ─── Constitution Check Patterns ────────────────────────────────────────────
+// ─── Constitution Check Patterns (default fallback) ────────────────────────
 
-const CONSTITUTION_CHECKS: Record<string, { patterns: RegExp[]; description: string }> = {
+const CONSTITUTION_CHECKS: Record<string, { patterns: RegExp[]; description: string; severity?: string; special?: string }> = {
   security: {
     patterns: [
       /AKIA[0-9A-Z]{16}/,                    // AWS access key
@@ -41,6 +41,7 @@ const CONSTITUTION_CHECKS: Record<string, { patterns: RegExp[]; description: str
       /(?:mysql|postgres|mongodb):\/\/[^@\s]+@/i,  // Connection strings with credentials
     ],
     description: 'Secrets or credentials detected in spec',
+    severity: 'fail',
   },
   architecture: {
     patterns: [
@@ -48,12 +49,78 @@ const CONSTITUTION_CHECKS: Record<string, { patterns: RegExp[]; description: str
       /\*\.\*/,                               // Wildcard scope *.*
     ],
     description: 'Wildcard scope detected (overly broad)',
+    severity: 'fail',
   },
   quality: {
     // This is handled specially - checks for untyped acceptance criteria
     patterns: [],
     description: 'Untyped acceptance criteria',
+    severity: 'warn',
+    special: 'acceptance_typing',
   },
+}
+
+// ─── Constitution File Loading ─────────────────────────────────────────────
+
+interface ConstitutionPatternDef {
+  regex: string
+  flags?: string
+  description?: string
+}
+
+interface ConstitutionSectionDef {
+  description?: string
+  severity?: string
+  special?: string
+  patterns?: ConstitutionPatternDef[]
+}
+
+interface ConstitutionFile {
+  version?: number
+  sections?: Record<string, ConstitutionSectionDef>
+}
+
+/**
+ * Load constitution rules from a YAML file. Returns null if file doesn't exist
+ * or can't be parsed, allowing fallback to hardcoded defaults.
+ */
+export function loadConstitution(
+  constitutionPath: string,
+): Record<string, { patterns: RegExp[]; description: string; severity?: string; special?: string }> | null {
+  if (!existsSync(constitutionPath)) {
+    return null
+  }
+
+  try {
+    const content = readFileSync(constitutionPath, 'utf-8')
+    const parsed = yaml.load(content) as ConstitutionFile
+    if (!parsed || typeof parsed !== 'object' || !parsed.sections) {
+      return null
+    }
+
+    const result: Record<string, { patterns: RegExp[]; description: string; severity?: string; special?: string }> = {}
+
+    for (const [sectionName, sectionDef] of Object.entries(parsed.sections)) {
+      const patterns: RegExp[] = []
+      if (sectionDef.patterns && Array.isArray(sectionDef.patterns)) {
+        for (const pat of sectionDef.patterns) {
+          if (pat.regex) {
+            patterns.push(new RegExp(pat.regex, pat.flags || ''))
+          }
+        }
+      }
+      result[sectionName] = {
+        patterns,
+        description: sectionDef.description || sectionName,
+        severity: sectionDef.severity,
+        special: sectionDef.special,
+      }
+    }
+
+    return result
+  } catch {
+    return null
+  }
 }
 
 // ─── Main Entry Point ───────────────────────────────────────────────────────
@@ -65,12 +132,14 @@ const CONSTITUTION_CHECKS: Record<string, { patterns: RegExp[]; description: str
  * @param schemaPath - Path to the YAML schema file
  * @param constitutionSections - Optional array of constitution section names to check
  * @param strict - If true, warnings are promoted to errors (causes failure)
+ * @param constitutionPath - Optional path to a constitution YAML file (falls back to hardcoded defaults)
  */
 export function validateSpec(
   specPath: string,
   schemaPath: string,
   constitutionSections: string[] = [],
   strict: boolean = false,
+  constitutionPath?: string,
 ): SpecValidationReport {
   const report: SpecValidationReport = {
     spec_path: specPath,
@@ -210,9 +279,12 @@ export function validateSpec(
     }
   }
 
-  // Constitution checks
+  // Constitution checks — load from file if provided, else use hardcoded defaults
+  const constitutionRules = constitutionPath
+    ? loadConstitution(constitutionPath) ?? CONSTITUTION_CHECKS
+    : CONSTITUTION_CHECKS
   for (const section of constitutionSections) {
-    const check = runConstitutionCheck(section, spec)
+    const check = runConstitutionCheck(section, spec, constitutionRules)
     report.constitution_checks.push(check)
   }
 
@@ -250,21 +322,25 @@ function checkFieldType(value: unknown, expectedType: string): boolean {
   }
 }
 
-function runConstitutionCheck(section: string, spec: Record<string, unknown>): ConstitutionCheckResult {
+function runConstitutionCheck(
+  section: string,
+  spec: Record<string, unknown>,
+  rules: Record<string, { patterns: RegExp[]; description: string; severity?: string; special?: string }> = CONSTITUTION_CHECKS,
+): ConstitutionCheckResult {
   const result: ConstitutionCheckResult = {
     section,
     result: 'pass',
     findings: [],
   }
 
-  const checkDef = CONSTITUTION_CHECKS[section]
+  const checkDef = rules[section]
   if (!checkDef) {
     // Unknown section - pass by default
     return result
   }
 
-  // Special handling for quality section (acceptance criteria typing)
-  if (section === 'quality') {
+  // Special handling for acceptance_typing (quality section or any section with special flag)
+  if (checkDef.special === 'acceptance_typing' || (section === 'quality' && !checkDef.special)) {
     if (spec.acceptance && Array.isArray(spec.acceptance)) {
       for (let i = 0; i < (spec.acceptance as unknown[]).length; i++) {
         const criterion = (spec.acceptance as unknown[])[i]

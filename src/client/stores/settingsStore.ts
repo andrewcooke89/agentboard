@@ -204,6 +204,15 @@ interface SettingsState {
   setCronMaxHistoryDays: (v: number) => void
   cronMaxHistoryPerJob: number
   setCronMaxHistoryPerJob: (v: number) => void
+  // Cron AI settings (WU-002)
+  cronAiEnabled: boolean
+  setCronAiEnabled: (v: boolean) => void
+  cronAiDrawerWidth: number
+  setCronAiDrawerWidth: (v: number) => void
+  cronAiAutoGreet: boolean
+  setCronAiAutoGreet: (v: boolean) => void
+  cronAiProposalTimeout: number
+  setCronAiProposalTimeout: (v: number) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -355,6 +364,15 @@ export const useSettingsStore = create<SettingsState>()(
       setCronMaxHistoryDays: (v) => set({ cronMaxHistoryDays: v }),
       cronMaxHistoryPerJob: 500,
       setCronMaxHistoryPerJob: (v) => set({ cronMaxHistoryPerJob: v }),
+      // Cron AI settings (WU-002)
+      cronAiEnabled: true,
+      setCronAiEnabled: (v) => set({ cronAiEnabled: v }),
+      cronAiDrawerWidth: 480,
+      setCronAiDrawerWidth: (v) => set({ cronAiDrawerWidth: v }),
+      cronAiAutoGreet: true,
+      setCronAiAutoGreet: (v) => set({ cronAiAutoGreet: v }),
+      cronAiProposalTimeout: 300000,
+      setCronAiProposalTimeout: (v) => set({ cronAiProposalTimeout: v }),
     }),
     {
       name: 'agentboard-settings',

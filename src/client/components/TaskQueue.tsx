@@ -1,5 +1,6 @@
 // TaskQueue.tsx - Main task queue panel component
 import { useState, useCallback } from 'react'
+import { AnimatePresence, useReducedMotion } from 'motion/react'
 import type { Task, SendClientMessage } from '@shared/types'
 import { useTaskStore } from '../stores/taskStore'
 import TaskItem from './TaskItem'
@@ -16,6 +17,7 @@ interface TaskQueueProps {
 }
 
 export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask, onNavigateToWorkflow }: TaskQueueProps) {
+  const prefersReducedMotion = useReducedMotion()
   const tasks = useTaskStore((s) => s.tasks)
   const templates = useTaskStore((s) => s.templates)
   const stats = useTaskStore((s) => s.stats)
@@ -144,19 +146,21 @@ export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask
         {runningTasks.length > 0 && (
           <div>
             <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Running</div>
-            {runningTasks.map((task) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                isSelected={task.id === selectedTaskId}
-                onSelect={setSelectedTaskId}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onViewOutput={handleViewOutput}
-                onWatch={onWatchTask}
-                onNavigateToWorkflow={onNavigateToWorkflow}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {runningTasks.map((task) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  isSelected={task.id === selectedTaskId}
+                  onSelect={setSelectedTaskId}
+                  onCancel={handleCancel}
+                  onRetry={handleRetry}
+                  onViewOutput={handleViewOutput}
+                  onWatch={onWatchTask}
+                  onNavigateToWorkflow={onNavigateToWorkflow}
+                />
+              ))}
+            </AnimatePresence>
           </div>
         )}
 
@@ -164,18 +168,20 @@ export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask
         {queuedTasks.length > 0 && (
           <div>
             <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Queued</div>
-            {queuedTasks.map((task) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                isSelected={task.id === selectedTaskId}
-                onSelect={setSelectedTaskId}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onViewOutput={handleViewOutput}
-                onNavigateToWorkflow={onNavigateToWorkflow}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {queuedTasks.map((task) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  isSelected={task.id === selectedTaskId}
+                  onSelect={setSelectedTaskId}
+                  onCancel={handleCancel}
+                  onRetry={handleRetry}
+                  onViewOutput={handleViewOutput}
+                  onNavigateToWorkflow={onNavigateToWorkflow}
+                />
+              ))}
+            </AnimatePresence>
           </div>
         )}
 
@@ -183,18 +189,20 @@ export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask
         {recentTasks.length > 0 && (
           <div>
             <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Recent</div>
-            {recentTasks.slice(0, 20).map((task) => (
-              <TaskItem
-                key={task.id}
-                task={task}
-                isSelected={task.id === selectedTaskId}
-                onSelect={setSelectedTaskId}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onViewOutput={handleViewOutput}
-                onNavigateToWorkflow={onNavigateToWorkflow}
-              />
-            ))}
+            <AnimatePresence initial={false}>
+              {recentTasks.slice(0, 20).map((task) => (
+                <TaskItem
+                  key={task.id}
+                  task={task}
+                  isSelected={task.id === selectedTaskId}
+                  onSelect={setSelectedTaskId}
+                  onCancel={handleCancel}
+                  onRetry={handleRetry}
+                  onViewOutput={handleViewOutput}
+                  onNavigateToWorkflow={onNavigateToWorkflow}
+                />
+              ))}
+            </AnimatePresence>
           </div>
         )}
       </div>

@@ -7,13 +7,14 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import yaml from 'js-yaml'
-import { validateSpec } from '../specValidator'
+import { validateSpec, loadConstitution } from '../specValidator'
 
 // ─── Test Helpers ───────────────────────────────────────────────────────────
 
-function writeTestFile(dir: string, filename: string, data: Record<string, unknown>): string {
+function writeTestFile(dir: string, filename: string, data: Record<string, unknown>, useDefaultSchema = false): string {
   const filePath = path.join(dir, filename)
-  writeFileSync(filePath, yaml.dump(data, { schema: yaml.FAILSAFE_SCHEMA }))
+  const opts = useDefaultSchema ? {} : { schema: yaml.FAILSAFE_SCHEMA }
+  writeFileSync(filePath, yaml.dump(data, opts))
   return filePath
 }
 
@@ -306,6 +307,150 @@ describe('specValidator', () => {
       expect(Array.isArray(report.errors)).toBe(true)
       expect(Array.isArray(report.warnings)).toBe(true)
       expect(Array.isArray(report.constitution_checks)).toBe(true)
+    })
+  })
+
+  // ─── Constitution file loading ────────────────────────────────────────────
+
+  describe('Constitution file loading', () => {
+    test('loadConstitution returns null for missing file', () => {
+      const result = loadConstitution(path.join(testDir, 'nonexistent.yaml'))
+      expect(result).toBeNull()
+    })
+
+    test('loadConstitution parses valid constitution file', () => {
+      const constitution = {
+        version: 1,
+        sections: {
+          security: {
+            description: 'Custom security checks',
+            severity: 'fail',
+            patterns: [
+              { regex: 'SECRET_[A-Z]+', description: 'Custom secret pattern' },
+            ],
+          },
+        },
+      }
+      const constitutionPath = writeTestFile(testDir, 'constitution.yaml', constitution, true)
+      const result = loadConstitution(constitutionPath)
+
+      expect(result).not.toBeNull()
+      expect(result!.security).toBeDefined()
+      expect(result!.security.patterns).toHaveLength(1)
+      expect(result!.security.description).toBe('Custom security checks')
+      expect(result!.security.severity).toBe('fail')
+    })
+
+    test('loadConstitution handles regex flags', () => {
+      const constitution = {
+        version: 1,
+        sections: {
+          custom: {
+            description: 'Case insensitive check',
+            severity: 'warn',
+            patterns: [
+              { regex: 'todo', flags: 'i', description: 'TODO comments' },
+            ],
+          },
+        },
+      }
+      const constitutionPath = writeTestFile(testDir, 'constitution.yaml', constitution, true)
+      const result = loadConstitution(constitutionPath)
+
+      expect(result).not.toBeNull()
+      expect(result!.custom.patterns[0].flags).toBe('i')
+      expect(result!.custom.patterns[0].test('TODO')).toBe(true)
+      expect(result!.custom.patterns[0].test('todo')).toBe(true)
+    })
+
+    test('loadConstitution returns null for invalid YAML', () => {
+      writeFileSync(path.join(testDir, 'bad.yaml'), '{{invalid yaml')
+      const result = loadConstitution(path.join(testDir, 'bad.yaml'))
+      expect(result).toBeNull()
+    })
+
+    test('validateSpec falls back to defaults when constitution file missing', () => {
+      const spec = {
+        title: 'Test Feature',
+        acceptance: [{ type: 'contract', criterion: 'Test' }],
+        scope: { files: ['src/test.ts'] },
+        notes: 'My AWS key is AKIAIOSFODNN7EXAMPLE',
+      }
+
+      const specPath = writeTestFile(testDir, 'spec.yaml', spec)
+      const schemaPath = writeTestFile(testDir, 'schema.yaml', BASE_SCHEMA)
+
+      // Pass nonexistent constitution path — should fall back to hardcoded defaults
+      const report = validateSpec(specPath, schemaPath, ['security'], false, path.join(testDir, 'nonexistent.yaml'))
+
+      expect(report.constitution_checks).toHaveLength(1)
+      expect(report.constitution_checks[0].section).toBe('security')
+      expect(report.constitution_checks[0].result).toBe('fail')
+    })
+
+    test('validateSpec uses custom patterns from constitution file', () => {
+      const constitution = {
+        version: 1,
+        sections: {
+          custom_check: {
+            description: 'Detects TODO markers',
+            severity: 'warn',
+            patterns: [
+              { regex: 'TODO', description: 'TODO found in spec' },
+            ],
+          },
+        },
+      }
+      const constitutionPath = writeTestFile(testDir, 'constitution.yaml', constitution, true)
+
+      const spec = {
+        title: 'Test Feature',
+        acceptance: [{ type: 'contract', criterion: 'Test' }],
+        scope: { files: ['src/test.ts'] },
+        notes: 'TODO: finish this later',
+      }
+
+      const specPath = writeTestFile(testDir, 'spec.yaml', spec)
+      const schemaPath = writeTestFile(testDir, 'schema.yaml', BASE_SCHEMA)
+
+      const report = validateSpec(specPath, schemaPath, ['custom_check'], false, constitutionPath)
+
+      expect(report.constitution_checks).toHaveLength(1)
+      expect(report.constitution_checks[0].section).toBe('custom_check')
+      expect(report.constitution_checks[0].result).toBe('fail')
+      expect(report.constitution_checks[0].findings.length).toBeGreaterThan(0)
+    })
+
+    test('validateSpec with constitution file special: acceptance_typing', () => {
+      const constitution = {
+        version: 1,
+        sections: {
+          my_quality: {
+            description: 'Quality via constitution',
+            severity: 'warn',
+            special: 'acceptance_typing',
+          },
+        },
+      }
+      const constitutionPath = writeTestFile(testDir, 'constitution.yaml', constitution, true)
+
+      const spec = {
+        title: 'Test Feature',
+        acceptance: [
+          { criterion: 'No type field here' },
+        ],
+        scope: { files: ['src/test.ts'] },
+      }
+
+      const specPath = writeTestFile(testDir, 'spec.yaml', spec)
+      const schemaPath = writeTestFile(testDir, 'schema.yaml', BASE_SCHEMA)
+
+      const report = validateSpec(specPath, schemaPath, ['my_quality'], false, constitutionPath)
+
+      expect(report.constitution_checks).toHaveLength(1)
+      expect(report.constitution_checks[0].section).toBe('my_quality')
+      expect(report.constitution_checks[0].result).toBe('fail')
+      expect(report.constitution_checks[0].findings).toContain('acceptance[0]: missing type field')
     })
   })
 

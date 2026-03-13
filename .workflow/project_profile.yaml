@@ -1,0 +1,48 @@
+# project_profile.yaml — Agentboard project profile
+#
+# Provides deterministic configuration for pipeline steps including
+# test writing constraints and model routing/escalation.
+
+project_name: agentboard
+language: typescript
+framework: bun
+
+# ── Test Context ────────────────────────────────────────────────────────────
+# Read by wu-orchestrator's buildTestPrompt() to inject environment constraints.
+# This ensures GLM writes tests that actually work in this project's environment.
+
+test_context:
+  runner: "bun test"
+  import_style: "import { describe, test, expect } from 'bun:test'"
+  file_pattern: "src/**/__tests__/*.test.ts"
+  constraints:
+    - "No external services (no database, no Redis, no network calls)"
+    - "Mock all database/storage modules using bun:test mock"
+    - "Never import or require a running server"
+    - "Do not use jest or vitest APIs — only bun:test"
+  mock_patterns:
+    - "Use mock() from bun:test for module mocking"
+    - "Mock database calls by mocking the db module import"
+    - "Use spyOn() for spying on existing functions"
+  reference_tests:
+    - "src/server/__tests__/specValidator.test.ts"
+    - "src/client/__tests__/app.test.tsx"
+
+# ── Model Routing ───────────────────────────────────────────────────────────
+# Activates shouldEscalate()/getEscalatedModel() in modelEnvLoader.ts
+
+model_routing:
+  enabled: true
+  default_model: glm
+  complexity_routing:
+    simple: glm
+    medium: glm
+    complex: claude
+    atomic: glm
+  escalation:
+    - from: glm
+      to: claude
+      condition: "retry_count >= 2"
+    - from: claude
+      to: human
+      condition: "retry_count >= 1"

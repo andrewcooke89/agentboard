@@ -1,0 +1,155 @@
+# Context-Assisted Implementation Pipeline
+# =====================================
+# Demonstrates end-to-end context injection:
+# 1. Gemini extracts relevant context from spec + codebase
+# 2. Agent receives injected context directly in prompt
+#
+# This pattern reduces agent workload by using a fast, large-context model
+# (Gemini) to prepare context before the main agent does its work.
+
+name: context-assisted-pipeline
+description: "Implementation with Gemini-generated context injection"
+
+system:
+  engine: dag
+  session_pool: true
+
+defaults:
+  timeoutSeconds: 1800
+
+variables:
+  - name: spec_path
+    type: path
+    description: "Path to the feature specification"
+    required: true
+
+  - name: project_path
+    type: path
+    description: "Root path of the project"
+    required: true
+
+  - name: output_dir
+    type: path
+    description: "Directory for pipeline outputs"
+    required: true
+
+steps:
+  # ── Step 1: Context Extraction (Gemini) ─────────────────────────────
+  # Gemini reads the spec and extracts structured context for the agent
+  - name: extract-context
+    type: gemini_offload
+    description: "Extract relevant context from spec for agent consumption"
+    prompt_template: |
+      You are a context extractor for an AI agent workflow. Analyze the feature
+      specification and extract the information an implementor agent would need.
+
+      ## Feature Specification
+      {{spec}}
+
+      Extract and return a YAML document with these sections:
+
+      ```yaml
+      areas_touched:
+        - path: "src/path/to/file.ts"
+          components: ["ComponentName", "HelperFunction"]
+          changes_required: "brief description"
+
+      implementation_details:
+        - "Key requirement 1"
+        - "Key requirement 2"
+
+      dependencies:
+        - "module1 depends on module2"
+        - "service X calls service Y"
+
+      edge_cases:
+        - "Case 1: description"
+        - "Case 2: description"
+
+      testing_notes:
+        - "What to test"
+        - "Test scenarios"
+      ```
+
+      Return ONLY valid YAML, no markdown formatting.
+    inputs:
+      - path: "{{ spec_path }}"
+        label: spec
+    output_file: "{{ output_dir }}/context-summary.yaml"
+    model: gemini-2.5-flash
+    max_tokens: 4000
+    timeoutSeconds: 60
+
+  # ── Step 2: Implementation (Agent with injected context) ─────────────
+  # Agent receives the Gemini-generated context directly in its prompt
+  - name: implement
+    type: spawn_session
+    depends_on: [extract-context]
+    description: "Implement the feature with context assistance"
+    projectPath: "{{ project_path }}"
+    agent: implementor
+    inputs:
+      # Context from Gemini gets injected here
+      - path: "{{ output_dir }}/context-summary.yaml"
+        type: context
+        label: Context
+      # Spec for reference (path only, agent can read if needed)
+      - path: "{{ spec_path }}"
+        type: reference
+    agent_prompt_override: |
+      You are implementing a feature. The context above was extracted from the
+      specification by a context-analysis model. Use this information to guide
+      your implementation.
+
+      Key points:
+      - Focus on the areas_touched listed in the context
+      - Handle the edge_cases explicitly mentioned
+      - Ensure testing_notes are addressed
+
+      After implementation, write a brief summary of what was changed.
+
+  # ── Step 3: Verification (Agent with same context) ───────────────────
+  # Reviewer also gets the same context for consistent understanding
+  - name: verify
+    type: spawn_session
+    depends_on: [implement]
+    description: "Verify implementation against context and spec"
+    projectPath: "{{ project_path }}"
+    agent: reviewer
+    inputs:
+      # Same context injected for reviewer
+      - path: "{{ output_dir }}/context-summary.yaml"
+        type: context
+        label: Context
+      - path: "{{ spec_path }}"
+        type: reference
+    agent_prompt_override: |
+      You are reviewing an implementation. The context above was prepared by
+      context-analysis. Verify that:
+
+      1. All areas_touched were correctly modified
+      2. Implementation details match the context requirements
+      3. Edge cases were properly handled
+      4. Testing notes were addressed
+
+      Return your review as a PASS/FAIL verdict with notes.
+
+# Example Usage
+# ==============
+#
+# Start this pipeline with:
+#
+#   curl -X POST http://localhost:4040/api/workflows/{WORKFLOW_ID}/run \
+#     -H 'Content-Type: application/json' \
+#     -d '{
+#       "variables": {
+#         "spec_path": "/path/to/project/.workflow/specs/feature.yaml",
+#         "project_path": "/path/to/project",
+#         "output_dir": "/path/to/project/.workflow/runs/context-test-2026-02-26"
+#       }
+#     }'
+#
+# Expected Output:
+# - Step 1 (extract-context): Creates context-summary.yaml
+# - Step 2 (implement): Agent receives context in prompt, implements feature
+# - Step 3 (verify): Agent receives same context in prompt, reviews work

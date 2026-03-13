@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import yaml from 'js-yaml'
-import { loadProjectProfile } from '../projectProfile'
+import { loadProjectProfile, extractTestContext } from '../projectProfile'
 
 describe('projectProfile', () => {
   let testDir: string
@@ -160,5 +160,75 @@ describe('projectProfile', () => {
     // FAILSAFE_SCHEMA means everything comes back as strings
     expect(result['settings.port']).toBe('3000')
     expect(result['settings.debug']).toBe('true')
+  })
+})
+
+describe('extractTestContext', () => {
+  test('extracts full test context from profile', () => {
+    const profile = {
+      test_context: {
+        runner: 'bun test',
+        import_style: "import { describe, test, expect } from 'bun:test'",
+        file_pattern: 'src/**/__tests__/*.test.ts',
+        constraints: ['No database', 'No network calls'],
+        mock_patterns: ['Use mock() from bun:test'],
+        reference_tests: ['src/server/__tests__/specValidator.test.ts'],
+      },
+    }
+
+    const result = extractTestContext(profile)
+    expect(result).not.toBeNull()
+    expect(result!.runner).toBe('bun test')
+    expect(result!.import_style).toContain('bun:test')
+    expect(result!.file_pattern).toBe('src/**/__tests__/*.test.ts')
+    expect(result!.constraints).toHaveLength(2)
+    expect(result!.constraints[0]).toBe('No database')
+    expect(result!.mock_patterns).toHaveLength(1)
+    expect(result!.reference_tests).toHaveLength(1)
+  })
+
+  test('returns null when test_context is missing', () => {
+    const result = extractTestContext({})
+    expect(result).toBeNull()
+  })
+
+  test('returns null when test_context is not an object', () => {
+    const result = extractTestContext({ test_context: 'invalid' })
+    expect(result).toBeNull()
+  })
+
+  test('provides defaults for missing fields', () => {
+    const profile = {
+      test_context: {
+        // Only runner specified, everything else should get defaults
+        runner: 'jest',
+      },
+    }
+
+    const result = extractTestContext(profile)
+    expect(result).not.toBeNull()
+    expect(result!.runner).toBe('jest')
+    expect(result!.import_style).toContain('bun:test') // default
+    expect(result!.file_pattern).toBe('src/**/__tests__/*.test.ts') // default
+    expect(result!.constraints).toEqual([])
+    expect(result!.mock_patterns).toEqual([])
+    expect(result!.reference_tests).toEqual([])
+  })
+
+  test('handles non-array constraints gracefully', () => {
+    const profile = {
+      test_context: {
+        runner: 'bun test',
+        constraints: 'not an array',
+        mock_patterns: 42,
+        reference_tests: null,
+      },
+    }
+
+    const result = extractTestContext(profile)
+    expect(result).not.toBeNull()
+    expect(result!.constraints).toEqual([])
+    expect(result!.mock_patterns).toEqual([])
+    expect(result!.reference_tests).toEqual([])
   })
 })

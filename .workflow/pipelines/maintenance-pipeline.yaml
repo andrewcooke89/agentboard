@@ -1,0 +1,527 @@
+# Maintenance Pipeline
+# =====================
+# Spec-governed dependency updates, tech debt reduction, and documentation maintenance.
+# Handles scheduled and event-driven maintenance work with tier-based ceremony levels.
+#
+# Coverage:
+#   REQ-11: Scheduled dependency scans, doc freshness, tech debt reviews
+#   REQ-12: Classify maintenance work by type and determine tier
+#   REQ-13: Dependency impact analysis
+#   REQ-14: Apply dependency updates with auto-approval for non-breaking
+#   REQ-15: Security advisory handling with elevated priority
+#   REQ-16: Tech debt reduction from SCHEMA_GAP, amendments, learning entries
+#   REQ-17: Documentation freshness checks
+#   REQ-31: Maintenance classification and routing
+#   REQ-32: Event-driven triggers (CVE, schema gaps)
+#   REQ-33: Impact analysis before changes
+#   REQ-34: Fast-track security patches
+#
+# Trigger types: manual, scheduled, event_driven
+# Depends on: Phase 5 (session pool), Phase 13 (gemini_offload), Phase 11 (conformance)
+#
+# Context Injection: Gemini extracts maintenance context early, injected into
+# all spawn_session steps to reduce workload on main agents.
+
+pipeline:
+  name: maintenance-pipeline
+  version: "1.1"
+  description: "Spec-governed dependency updates, tech debt reduction, and documentation maintenance"
+
+  # System configuration
+  session_pool: true
+  tier_filter: true  # Tier determines ceremony level for maintenance
+
+  # Trigger configuration (REQ-11, REQ-32)
+  triggers:
+    manual:
+      enabled: true
+      command: "workflow maintain <type>"
+      description: "Developer invokes maintenance work: dependency_update, tech_debt, or documentation"
+
+    scheduled:
+      dependency_scan:
+        interval: weekly
+        description: "Automated weekly dependency check for outdated packages and security advisories"
+        default_tier: 1
+        tier_override:
+          security_critical: 2
+          breaking_change: 2
+
+      doc_freshness:
+        interval: biweekly
+        description: "Check docs against current specs/code for staleness"
+        default_tier: 0
+        tier_override:
+          api_docs: 1
+
+      tech_debt_review:
+        interval: monthly
+        description: "Review accumulated tech debt items from SCHEMA_GAP, amendments, learning"
+        default_tier: 1
+        tier_override:
+          multi_module: 2
+
+    event_driven:
+      security_advisory:
+        trigger: immediate
+        tier_min: 2
+        priority: elevated  # Session pool prioritizes over Tier 1
+        description: "CVE notifications trigger immediate Tier 2 response (REQ-15, REQ-34)"
+        fast_track_release: true  # Can bypass normal release cadence
+
+      schema_gap_threshold:
+        trigger_count: 3
+        description: "3+ SCHEMA_GAP records for same field trigger schema review and tech debt work (REQ-16)"
+        default_tier: 1
+        tier_override:
+          public_api: 2
+
+  # Pipeline defaults
+  defaults:
+    tier_min: 1
+    timeout_minutes: 60
+    on_failure: pause_and_notify
+
+  # Security patch configuration (REQ-15, REQ-34)
+  security_patch:
+    priority: elevated
+    tier_min: 2
+    pool_priority: true  # Session pool prioritizes over Tier 1 maintenance
+    fast_track_release: true  # Can bypass normal release cadence via dedicated release-pipeline
+    description: "Security advisories trigger immediate Tier 2 maintenance with session pool priority"
+
+  # Pipeline stages
+  steps:
+    # ── Stage 1: Classify Maintenance Work ──────────────────────────────
+    # Classify incoming work by type and determine tier (REQ-12, REQ-31)
+    - name: classify-maintenance
+      type: native_step
+      agent: workflow-router
+      mode: maintenance
+      description: "Classify incoming maintenance work by type (dependency_update, tech_debt, documentation) and determine tier"
+      inputs:
+        - trigger_payload
+        - project_profile
+      outputs:
+        - "{{ run_dir }}/classification.yaml"
+      timeout_seconds: 120
+
+      actions:
+        - classify_work_type
+        - determine_tier
+        - route_to_subflow
+
+      classification_rules:
+        dependency_update:
+          triggers: [security_advisory, scheduled_dependency_scan, manual]
+          default_tier: 1
+          tier_override:
+            breaking_change: 2
+            security_critical: 2
+            major_version_bump: 2
+          description: "Dependency updates require spec-governed process (REQ-14)"
+
+        tech_debt:
+          triggers: [manual, tech_debt_review, schema_gap_threshold]
+          default_tier: 1
+          tier_override:
+            multi_module: 2
+            architectural_change: 2
+          sources: [SCHEMA_GAP_records, amendment_frequency_data, learning_entries, manual_developer_flagging]
+          description: "Tech debt reduction uses refactor spec schema with required invariants (REQ-16)"
+
+        documentation:
+          triggers: [doc_freshness, spec_change, manual]
+          default_tier: 0
+          tier_override:
+            api_docs: 1
+            public_facing_docs: 1
+          description: "Documentation maintenance checks freshness and updates (REQ-17)"
+
+    # ── Stage 1.5: Extract Maintenance Context (NEW) ─────────────────────
+    # Gemini extracts maintenance context from classification and project state
+    - name: extract-maintenance-context
+      type: gemini_offload
+      depends_on: [classify-maintenance]
+      description: "Extract maintenance context for injection into subsequent steps"
+      prompt_template: |
+        Analyze the maintenance classification and extract relevant context.
+
+        ## Classification
+        {{classification}}
+
+        Extract and structure:
+        - work_type: dependency_update | tech_debt | documentation
+        - scope_summary: What areas are affected
+        - risk_assessment: Potential risks and mitigation strategies
+        - prerequisites: What needs to be checked before starting
+        - success_criteria: How to verify the work is complete
+
+        Output as YAML.
+      inputs:
+        - path: "{{ run_dir }}/classification.yaml"
+          label: classification
+      output_file: "{{ run_dir }}/maintenance-context.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 60
+
+    # ── Stage 2: Dependency Impact Analysis ─────────────────────────────
+    # Analyze dependency changes before applying (REQ-13, REQ-33)
+    - name: dependency-impact-analysis
+      type: spawn_session
+      model: glm
+      agent: workhorse
+      condition: "classification.type == dependency_update"
+      depends_on: [classify-maintenance, extract-maintenance-context]
+      description: "Scan outdated dependencies, analyze changelogs, map impact, check security advisories"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/classification.yaml"
+        - project_profile
+      outputs:
+        - "{{ run_dir }}/dependency-report.yaml"
+      timeout_seconds: 300
+
+      actions:
+        - scan_outdated_deps  # Use package manager to find outdated dependencies
+        - analyze_changelog   # Review changelog for breaking changes, security fixes
+        - map_impact          # Identify affected modules using dependency graph
+        - check_security_advisories  # Query CVE databases for known vulnerabilities
+
+      impact_analysis:
+        breaking_changes:
+          - API signature changes
+          - Deprecation removals
+          - Behavior changes
+        security_impact:
+          - CVE severity
+          - Exploit availability
+          - Affected versions
+        compatibility:
+          - Transitive dependency conflicts
+          - Platform compatibility
+          - Minimum version requirements
+
+    # ── Stage 3: Write Update Spec ──────────────────────────────────────
+    # Create spec for dependency update (REQ-14)
+    - name: write-update-spec
+      type: spawn_session
+      model: claude
+      agent: spec-writer
+      mode: dependency_update
+      condition: "classification.type == dependency_update"
+      depends_on: [dependency-impact-analysis, extract-maintenance-context]
+      description: "Write spec for dependency update following constitution guidelines"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/dependency-report.yaml"
+        - path: "{{ run_dir }}/classification.yaml"
+        - ".workflow/constitution/"
+      outputs:
+        - "{{ run_dir }}/spec/update-spec.yaml"
+      timeout_seconds: 300
+
+      spec_requirements:
+        - describe_change: "What dependency is being updated and why"
+        - breaking_changes: "List any breaking changes from changelog analysis"
+        - migration_steps: "How to adapt code if breaking"
+        - test_strategy: "Which tests verify update compatibility"
+        - rollback_plan: "How to revert if update causes issues"
+
+    # ── Stage 4: Apply Dependency Update ────────────────────────────────
+    # Execute dependency update with testing (REQ-14)
+    - name: apply-dependency-update
+      type: spawn_session
+      model: glm
+      condition: "classification.type == dependency_update"
+      depends_on: [write-update-spec, extract-maintenance-context]
+      description: "Apply dependency update, build check, run affected tests, verify API compatibility"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/spec/update-spec.yaml"
+        - path: "{{ run_dir }}/dependency-report.yaml"
+      outputs:
+        - "{{ run_dir }}/update-result.yaml"
+      timeout_seconds: 600
+      on_test_failure: pause_and_notify
+
+      team:
+        mode: team
+        members:
+          - role: primary
+            agent: workhorse
+            description: "Apply dependency update and build check"
+          - role: tester
+            agent: test-runner
+            description: "Run affected tests and API compatibility checks"
+
+      actions:
+        - update_dependency     # Update package.json, Cargo.toml, requirements.txt, etc.
+        - build_check           # Verify project builds with new dependency
+        - run_affected_tests    # Run tests for modules using updated dependency
+        - check_api_compatibility  # Verify public API hasn't changed unexpectedly
+
+      auto_approval:
+        enabled: true
+        conditions:
+          - tier: 1
+          - non_breaking: true
+          - tests_pass: true
+          - no_api_changes: true
+        description: "Non-breaking updates with passing tests at Tier 1 eligible for auto-approval (REQ-14)"
+
+      approval_bypass:
+        security_critical: true  # Security patches auto-approved even if breaking (REQ-15)
+
+    # ── Stage 5: Dependency Conformance ─────────────────────────────────
+    # Verify update conforms to spec (REQ-14)
+    - name: dependency-conformance
+      type: spawn_session
+      model: claude
+      agent: conformance-checker
+      condition: "classification.type == dependency_update && classification.tier >= 2"
+      tier_min: 2  # Only for breaking/security updates
+      depends_on: [apply-dependency-update, extract-maintenance-context]
+      description: "Verify dependency update conforms to update-spec (Tier 2+ only)"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/spec/update-spec.yaml"
+        - path: "{{ run_dir }}/update-result.yaml"
+      outputs:
+        - "{{ run_dir }}/conformance-report.yaml"
+      timeout_seconds: 300
+
+    # ── Stage 6: Write Tech Debt Spec ───────────────────────────────────
+    # Create spec for tech debt reduction (REQ-16)
+    - name: write-debt-spec
+      type: spawn_session
+      model: claude
+      agent: spec-writer
+      mode: refactor  # Uses refactor spec schema — invariants REQUIRED
+      condition: "classification.type == tech_debt"
+      depends_on: [classify-maintenance, extract-maintenance-context]
+      description: "Write refactor spec for tech debt reduction with required invariants"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/classification.yaml"
+        - ".workflow/constitution/"
+      outputs:
+        - "{{ run_dir }}/spec/debt-spec.yaml"
+      timeout_seconds: 300
+
+      tech_debt_sources:
+        - SCHEMA_GAP_records: "Fields agents needed but weren't in spec"
+        - amendment_frequency_data: "Sections frequently amended indicate unclear spec"
+        - learning_entries: "Patterns from audit findings and fix-pipeline learnings"
+        - manual_developer_flagging: "Developers explicitly mark tech debt in code/issues"
+
+      invariant_requirements:
+        - public_api_unchanged: "Refactor must not change public API contracts"
+        - behavior_preserved: "Observable behavior must remain identical"
+        - test_coverage_maintained: "Test coverage must not decrease"
+        - performance_non_regressive: "Performance must not regress"
+
+    # ── Stage 7: Implement Tech Debt Reduction ──────────────────────────
+    # Execute tech debt work (REQ-16)
+    - name: implement-debt-reduction
+      type: spawn_session
+      model: glm
+      condition: "classification.type == tech_debt"
+      depends_on: [write-debt-spec, extract-maintenance-context]
+      description: "Implement tech debt reduction following refactor spec and invariants"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/spec/debt-spec.yaml"
+      outputs:
+        - "{{ run_dir }}/implementation/"
+        - "{{ run_dir }}/debt-result.yaml"
+      timeout_seconds: 900
+      on_test_failure: pause_and_notify
+
+      team:
+        mode: team
+        members:
+          - role: primary
+            agent: workhorse
+            description: "Implement refactoring changes"
+          - role: tester
+            agent: test-runner
+            description: "Run full test suite and verify invariants"
+
+      post_step:
+        - run_generated_tests  # Execute tests from TDD verification pipeline
+        - verify_invariants    # Confirm all invariants from debt-spec hold
+        - check_public_api     # Ensure public API unchanged
+        - performance_baseline # Compare against pre-refactor baseline
+
+    # ── Stage 8: Documentation Freshness Check ──────────────────────────
+    # Check docs for staleness (REQ-17)
+    - name: doc-freshness-check
+      type: native_step
+      condition: "classification.type == documentation"
+      depends_on: [classify-maintenance]
+      description: "Compare docs to specs and code, identify stale sections"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/classification.yaml"
+        - ".workflow/specs/"
+        - project_profile
+      outputs:
+        - "{{ run_dir }}/freshness-report.yaml"
+      timeout_seconds: 300
+
+      actions:
+        - compare_docs_to_specs    # Check if docs match current specs
+        - compare_docs_to_code     # Verify code examples compile and run
+        - identify_stale_sections  # Flag sections unchanged despite spec/code changes
+
+      command: "python3 .workflow/lib/doc_freshness.py --project-root {{ project_root }} --run-dir {{ run_dir }}"
+
+    # ── Stage 9: Update Documentation ───────────────────────────────────
+    # Apply documentation updates (REQ-17)
+    - name: update-documentation
+      type: spawn_session
+      model: glm
+      agent: workhorse
+      condition: "classification.type == documentation"
+      depends_on: [doc-freshness-check, extract-maintenance-context]
+      description: "Update documentation based on freshness report and current specs"
+      inputs:
+        - path: "{{ run_dir }}/maintenance-context.yaml"
+          type: context
+          label: MaintenanceContext
+        - path: "{{ run_dir }}/freshness-report.yaml"
+        - ".workflow/specs/"
+      outputs:
+        - "{{ run_dir }}/updated-docs/"
+      timeout_seconds: 600
+
+      actions:
+        - update_stale_sections   # Rewrite stale documentation sections
+        - verify_code_examples    # Ensure code examples compile and run
+        - update_api_references   # Sync API docs with current code
+        - link_to_specs           # Add references to relevant specs
+
+    # ── Stage 10: Observe and Learn ─────────────────────────────────────
+    # Extract learnings from maintenance work (shared final step)
+    - name: observe-and-learn
+      type: gemini_offload
+      posture: neutral
+      description: "Extract patterns from maintenance work for knowledge memory"
+      depends_on: [apply-dependency-update, dependency-conformance, implement-debt-reduction, update-documentation]
+      dependency_mode: any_completed  # Runs after whichever sub-flow completes
+      inputs:
+        - path: "{{ run_dir }}/classification.yaml"
+          label: classification
+        - path: "{{ run_dir }}/update-result.yaml"
+          label: update_result
+          optional: true
+        - path: "{{ run_dir }}/conformance-report.yaml"
+          label: conformance_report
+          optional: true
+        - path: "{{ run_dir }}/debt-result.yaml"
+          label: debt_result
+          optional: true
+        - path: "{{ run_dir }}/freshness-report.yaml"
+          label: freshness_report
+          optional: true
+      outputs:
+        - "{{ run_dir }}/learning-entries.yaml"
+      timeout_seconds: 120
+
+      prompt_template: |
+        Analyze the following maintenance work and extract learning patterns.
+
+        ## Classification
+        {{classification}}
+
+        {{#update_result}}
+        ## Update Result
+        {{update_result}}
+        {{/update_result}}
+
+        {{#conformance_report}}
+        ## Conformance Report
+        {{conformance_report}}
+        {{/conformance_report}}
+
+        {{#debt_result}}
+        ## Debt Result
+        {{debt_result}}
+        {{/debt_result}}
+
+        {{#freshness_report}}
+        ## Freshness Report
+        {{freshness_report}}
+        {{/freshness_report}}
+
+        Focus on:
+        1. Dependency patterns — recurring update issues, compatibility patterns
+        2. Tech debt sources — what types of debt accumulate, why?
+        3. Documentation drift — why do docs go stale, which sections most affected?
+        4. SCHEMA_GAP analysis — if tech debt, were schema gaps addressed?
+        5. Amendment frequency — did this work address frequently-amended specs?
+        6. Automation opportunities — could any of this be automated further?
+
+        Produce structured learning entries with:
+        - pattern_name: "descriptive name"
+        - category: "dependency_management" | "tech_debt" | "documentation"
+        - observation: "what was learned"
+        - recommendation: "actionable takeaway"
+        - confidence: "RAW" (since this is direct observation)
+
+        Output as YAML list under 'learning_entries' key.
+
+        Note: Some sections may be empty if their corresponding steps were skipped or not applicable.
+
+      output_format: yaml
+      model: gemini-2.5-flash
+      max_tokens: 4000
+
+# Maintenance Pipeline Summary
+# ────────────────────────────
+# Dependency Updates (REQ-13, REQ-14, REQ-15, REQ-34):
+#   1. classify-maintenance → determines tier
+#   1.5. extract-maintenance-context → Gemini extracts context
+#   2. dependency-impact-analysis → assess changes (REQ-13, REQ-33)
+#   3. write-update-spec → spec-governed process
+#   4. apply-dependency-update → execute with testing (REQ-14)
+#   5. dependency-conformance → verify (Tier 2+)
+#
+#   Auto-approval: Non-breaking Tier 1 updates with passing tests
+#   Fast-track: Security patches bypass normal release cadence (REQ-15, REQ-34)
+#
+# Tech Debt Reduction (REQ-16):
+#   1. classify-maintenance → determines tier
+#   1.5. extract-maintenance-context → Gemini extracts context
+#   2. write-debt-spec → refactor spec with REQUIRED invariants
+#   3. implement-debt-reduction → execute with invariant verification
+#
+#   Sources: SCHEMA_GAP, amendment frequency, learning entries, manual flagging
+#
+# Documentation (REQ-17):
+#   1. classify-maintenance → determines tier
+#   1.5. extract-maintenance-context → Gemini extracts context
+#   2. doc-freshness-check → compare to specs/code
+#   3. update-documentation → apply updates
+#
+# Event-Driven Triggers (REQ-32):
+#   - security_advisory: Immediate Tier 2 response with pool priority
+#   - schema_gap_threshold: 3+ SCHEMA_GAP for same field triggers review
+#
+# Learning: All paths feed observe-and-learn for knowledge memory

@@ -197,6 +197,19 @@ export const useCronStore = create<CronStore>()(
         if (error) {
           console.warn(`cron-operation-result: ${operation} on ${jobId} failed — ${error}`)
         }
+        if (operation === 'create') {
+          const prev = get().notifications
+          const entry = {
+            id: Date.now().toString(36),
+            jobId,
+            event: 'create',
+            message: success ? 'Job created' : (error ?? 'Failed to create job'),
+            severity: success ? 'success' : 'error',
+            timestamp: Date.now(),
+          }
+          set({ notifications: [entry, ...prev].slice(0, 50) })
+          return
+        }
         if (success) {
           if (operation === 'pause') {
             const jobs = get().jobs.map((j) =>

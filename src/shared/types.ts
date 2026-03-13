@@ -332,6 +332,7 @@ export interface WorkflowStep {
   schema_path?: string
   strict?: boolean
   constitution_sections?: string[]
+  constitution_path?: string
   // Phase 10: Amendment system fields
   can_request_amendment?: boolean
   amendment_budget?: {
@@ -742,6 +743,15 @@ export interface DraftSwarmConfig {
   max_concurrent?: number
   timeout_ms?: number
   rate_limit_per_minute?: number
+}
+
+export interface TestContext {
+  runner: string
+  import_style: string
+  file_pattern: string
+  constraints: string[]
+  mock_patterns: string[]
+  reference_tests: string[]
 }
 
 export interface ContextBriefingConfig {

@@ -334,7 +334,7 @@ describe('component rendering', () => {
         session={baseSession}
         sessions={[baseSession]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}
@@ -354,7 +354,7 @@ describe('component rendering', () => {
         session={null}
         sessions={[]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}
@@ -381,7 +381,7 @@ describe('component rendering', () => {
         session={baseSession}
         sessions={[baseSession, secondSession]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}

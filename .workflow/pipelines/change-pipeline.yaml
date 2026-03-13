@@ -70,6 +70,7 @@ steps:
     model: glm
     spec_path: "{{ spec_path }}"
     schema_path: "{{ project_path }}/.workflow/schemas/feature_spec_v1.yaml"
+    constitution_path: "{{ project_path }}/.workflow/constitution.yaml"
     constitution_sections:
       - security
       - architecture
@@ -79,6 +80,7 @@ steps:
   # Stage 2: Review loop for spec refinement
   - name: spec-review-loop
     type: review_loop
+    tier_min: 2
     model: claude
     depends_on:
       - validate-spec
@@ -140,6 +142,24 @@ steps:
         - Project: {{ project_path }}
 
       Output: {{ output_dir }}/decomposition/manifest.yaml + WU-*.yaml files
+
+      IMPORTANT: For each work unit, include structured test_specs to guide the
+      test-writer. The test-writer is a less capable model (GLM) that needs explicit
+      guidance on what to test and how to mock dependencies.
+
+      For each work unit YAML, include:
+        test_specs:
+          - file: "path/to/__tests__/filename.test.ts"
+            type: unit
+            mock_modules: ["../db", "../externalApi"]
+            scenarios:
+              - "description of specific test case"
+              - "another specific test case"
+
+      Be specific about:
+      - Which modules need mocking (database, external APIs, file system)
+      - What scenarios to test (happy path, error cases, edge cases)
+      - Where test files should be placed
     signal_protocol: true
     signal_dir: "{{ run_dir }}/signals"
     result_file: "{{ output_dir }}/decomposition/manifest.yaml"
@@ -154,6 +174,7 @@ steps:
     steps:
       - name: generate-scaffold
         type: spawn_session
+        tier_min: 2
         model: glm
         projectPath: "{{ project_path }}"
         prompt: |
@@ -166,8 +187,94 @@ steps:
         result_file: "{{ output_dir }}/generation/scaffold-report.yaml"
         timeoutSeconds: 1800
 
+      - name: spec-traceability-check
+        type: native_step
+        tier_min: 2
+        command: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          SPEC="{{ output_dir }}/refined-spec.yaml"
+          DECOMP_DIR="{{ output_dir }}/decomposition"
+
+          if [ ! -f "$SPEC" ]; then
+            echo "FAIL: refined-spec.yaml not found at $SPEC"
+            exit 1
+          fi
+          if ! ls "$DECOMP_DIR"/WU-*.yaml >/dev/null 2>&1; then
+            echo "FAIL: No WU-*.yaml files found in $DECOMP_DIR"
+            exit 1
+          fi
+
+          echo "=== Spec-to-WU Traceability Check ==="
+          echo "Spec: $SPEC"
+          echo "Decomposition: $DECOMP_DIR"
+          echo ""
+
+          # 1. Extract acceptance criterion IDs from spec
+          SPEC_IDS=$(yq -r '.acceptance[].id // empty' "$SPEC" 2>/dev/null | sort -u || true)
+          # Also extract non-functional requirement IDs
+          NF_IDS=$(yq -r '.non_functional | .. | .id? // empty' "$SPEC" 2>/dev/null | grep -v '^$' | sort -u || true)
+          ALL_SPEC_IDS=$(printf '%s\n%s\n' "$SPEC_IDS" "$NF_IDS" | grep -v '^$' | sort -u)
+          SPEC_COUNT=$(echo "$ALL_SPEC_IDS" | grep -c . || true)
+          echo "Spec defines $SPEC_COUNT requirement IDs"
+
+          if [ "$SPEC_COUNT" -eq 0 ]; then
+            echo "SKIP: No requirement IDs found in spec (acceptance[].id)"
+            exit 0
+          fi
+
+          # 2. Extract all req references from WU files
+          WU_REFS=$(yq -r '.acceptance_criteria[].req // empty' "$DECOMP_DIR"/WU-*.yaml 2>/dev/null | sort -u || true)
+          WU_REF_COUNT=$(echo "$WU_REFS" | grep -c . || true)
+          echo "WU files reference $WU_REF_COUNT requirement IDs"
+          echo ""
+
+          # 3. Find UNCOVERED spec IDs (in spec but not in any WU)
+          echo "--- Uncovered Requirements ---"
+          UNCOVERED=0
+          while IFS= read -r id; do
+            [ -z "$id" ] && continue
+            if ! echo "$WU_REFS" | grep -qxF "$id"; then
+              echo "  UNCOVERED: $id"
+              UNCOVERED=$((UNCOVERED + 1))
+            fi
+          done <<< "$ALL_SPEC_IDS"
+          [ "$UNCOVERED" -eq 0 ] && echo "  PASS: All spec requirements traced to work units"
+          echo ""
+
+          # 4. Find PHANTOM refs (in WUs but not in spec)
+          echo "--- Phantom References ---"
+          PHANTOMS=0
+          while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            if ! echo "$ALL_SPEC_IDS" | grep -qxF "$ref"; then
+              echo "  PHANTOM: $ref (referenced in WU but not in spec)"
+              PHANTOMS=$((PHANTOMS + 1))
+            fi
+          done <<< "$WU_REFS"
+          [ "$PHANTOMS" -eq 0 ] && echo "  PASS: No phantom requirement references"
+          echo ""
+
+          # Summary
+          echo "=== Summary ==="
+          echo "Spec IDs: $SPEC_COUNT | WU refs: $WU_REF_COUNT | Uncovered: $UNCOVERED | Phantom: $PHANTOMS"
+          echo ""
+          if [ "$UNCOVERED" -gt 0 ]; then
+            echo "WARN: $UNCOVERED requirement(s) not traced to any work unit"
+            exit 1
+          fi
+          if [ "$PHANTOMS" -gt 0 ]; then
+            echo "WARN: $PHANTOMS phantom reference(s) in work units"
+          fi
+          echo "PASS: All spec requirements are traced to work units"
+        working_dir: "{{ project_path }}"
+        on_step_failure: completed_with_warnings
+        timeoutSeconds: 300
+
       - name: generation-consistency-check
         type: native_step
+        tier_min: 2
         depends_on:
           - generate-scaffold
         command: |
@@ -307,25 +414,25 @@ steps:
         on_step_failure: completed_with_warnings
         timeoutSeconds: 300
 
-      # TDD red-phase verification (REQ-63, REQ-64)
-      - name: tdd-verify-red
+      # Capture test baseline BEFORE red-phase (REQ-63 prerequisite)
+      - name: capture-test-baseline
         type: native_step
         tier_min: 2
         depends_on:
-          - generate-scaffold
-          # - generate-tests  # Uncomment when test-writer available
+          - generation-consistency-check
         command: |
-          # Run tests - expect them to FAIL (red phase)
-          # Capture exit code properly (no || true which swallows it)
+          BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+          mkdir -p "$(dirname "$BASELINE_FILE")"
+
           set +e
           if [ -f "package.json" ]; then
-            bun test 2>&1
+            TEST_OUTPUT=$(bun test 2>&1)
             TEST_EXIT=$?
           elif [ -f "Cargo.toml" ]; then
-            cargo test 2>&1
+            TEST_OUTPUT=$(cargo test 2>&1)
             TEST_EXIT=$?
           elif [ -f "pyproject.toml" ]; then
-            pytest 2>&1
+            TEST_OUTPUT=$(pytest 2>&1)
             TEST_EXIT=$?
           else
             echo "Unknown test framework"
@@ -333,13 +440,62 @@ steps:
           fi
           set -e
 
-          # Tests SHOULD fail in red phase (new feature tests not yet implemented)
-          if [ $TEST_EXIT -eq 0 ]; then
-            echo "ERROR: Tests passed before implementation (trivially passing tests)"
+          # Parse bun test output: "X pass, Y fail, Z skip"
+          PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ pass' | grep -oP '\d+' || echo "0")
+          FAIL_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | grep -oP '\d+' || echo "0")
+          TOTAL_TESTS=$(echo "$TEST_OUTPUT" | grep -oP 'Ran \d+ tests' | grep -oP '\d+' || echo "0")
+
+          echo "{\"pass\": ${PASS_COUNT:-0}, \"fail\": ${FAIL_COUNT:-0}, \"total\": ${TOTAL_TESTS:-0}, \"exit_code\": $TEST_EXIT}" > "$BASELINE_FILE"
+          echo "Baseline captured: pass=${PASS_COUNT:-0} fail=${FAIL_COUNT:-0} total=${TOTAL_TESTS:-0} exit=$TEST_EXIT"
+          cat "$BASELINE_FILE"
+        working_dir: "{{ project_path }}"
+        timeoutSeconds: 300
+
+      # TDD red-phase verification (REQ-63, REQ-64)
+      - name: tdd-verify-red
+        type: native_step
+        tier_min: 2
+        depends_on:
+          - capture-test-baseline
+          # - generate-tests  # Uncomment when test-writer available
+        command: |
+          BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+          if [ ! -f "$BASELINE_FILE" ]; then
+            echo "ERROR: No baseline file at $BASELINE_FILE"
             exit 1
+          fi
+          BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+          echo "Baseline failures: $BASELINE_FAIL"
+
+          # Run tests
+          set +e
+          if [ -f "package.json" ]; then
+            TEST_OUTPUT=$(bun test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "Cargo.toml" ]; then
+            TEST_OUTPUT=$(cargo test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "pyproject.toml" ]; then
+            TEST_OUTPUT=$(pytest 2>&1)
+            TEST_EXIT=$?
           else
-            echo "PASS: Tests failed as expected in red phase (exit code: $TEST_EXIT)"
+            echo "Unknown test framework"
+            exit 1
+          fi
+          set -e
+
+          CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+          NEW_FAILURES=$(( ${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0} ))
+          echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+          # Tests SHOULD fail in red phase (new feature tests not yet implemented)
+          if [ "$NEW_FAILURES" -gt 0 ]; then
+            echo "PASS: RED phase verified — $NEW_FAILURES new test failures from scaffold"
             exit 0
+          else
+            echo "ERROR: No new test failures — tests are trivially passing before implementation"
+            echo "Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
+            exit 1
           fi
         working_dir: "{{ project_path }}"
         timeoutSeconds: 600
@@ -359,8 +515,21 @@ steps:
       field: overall_verdict
       allowed:
         - pass
-      fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass'"
+        - needs_human
+      fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass' or 'needs_human'"
     timeoutSeconds: 14400
+
+  # Stage 5a-gate: Human review gate (triggers when WUs need human intervention)
+  - name: human-review
+    type: human_gate
+    depends_on:
+      - implement
+    condition: "steps.implement.verdict == 'needs_human'"
+    prompt: |
+      Work units requiring human intervention detected.
+      Review human_action_required.yaml in the implementation output directory
+      for details on which WUs failed and what was attempted.
+    timeoutSeconds: 86400
 
   # Stage 5b: Amendment verification (resolves any amendment signals from implement)
   - name: verify-amendments
@@ -381,22 +550,31 @@ steps:
     timeoutSeconds: 600
 
   # TDD green-phase verification (REQ-65)
+  # Confirm no NEW failures vs baseline (pre-existing failures are OK)
   - name: tdd-verify-green
     type: native_step
     tier_min: 2
     depends_on:
       - verify-amendments
     command: |
-      # Run tests - expect them to PASS (green phase)
+      BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+      if [ ! -f "$BASELINE_FILE" ]; then
+        echo "ERROR: No baseline file at $BASELINE_FILE"
+        exit 1
+      fi
+      BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+      echo "Baseline failures: $BASELINE_FAIL"
+
+      # Run tests
       set +e
       if [ -f "package.json" ]; then
-        bun test 2>&1
+        TEST_OUTPUT=$(bun test 2>&1)
         TEST_EXIT=$?
       elif [ -f "Cargo.toml" ]; then
-        cargo test 2>&1
+        TEST_OUTPUT=$(cargo test 2>&1)
         TEST_EXIT=$?
       elif [ -f "pyproject.toml" ]; then
-        pytest 2>&1
+        TEST_OUTPUT=$(pytest 2>&1)
         TEST_EXIT=$?
       else
         echo "Unknown test framework"
@@ -404,12 +582,17 @@ steps:
       fi
       set -e
 
-      # Tests SHOULD pass in green phase
-      if [ $TEST_EXIT -eq 0 ]; then
-        echo "PASS: Tests passed after implementation (green phase verified)"
+      CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+      NEW_FAILURES=$(( ${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0} ))
+      echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+      if [ "$NEW_FAILURES" -le 0 ]; then
+        echo "PASS: GREEN phase verified — no new failures vs baseline"
+        echo "  Pre-existing: $BASELINE_FAIL, Current: ${CURRENT_FAIL:-0}"
         exit 0
       else
-        echo "FAIL: Tests still failing after implementation"
+        echo "FAIL: $NEW_FAILURES new test failures after implementation"
+        echo "  Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
         exit 1
       fi
     working_dir: "{{ project_path }}"
@@ -418,6 +601,7 @@ steps:
   # Stage 5c: Edge contract verification (deterministic, no AI)
   - name: verify-edges
     type: native_step
+    tier_min: 2
     depends_on:
       - tdd-verify-green
     command: |

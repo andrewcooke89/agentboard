@@ -262,7 +262,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={(msg) => { sentMessages.push(msg) }}
+          sendMessage={(msg) => { sentMessages.push(msg); return true }}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -354,7 +354,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -480,7 +480,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession, secondSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={(id) => selectCalls.push(id)}
@@ -549,7 +549,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={(msg) => { sentMessages.push(msg) }}
+          sendMessage={(msg) => { sentMessages.push(msg); return true }}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -604,7 +604,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="reconnecting"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -648,7 +648,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}

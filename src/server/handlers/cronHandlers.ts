@@ -7,6 +7,7 @@ import { CronManager } from '../cronManager'
 import { CronHistoryService } from '../cronHistoryService'
 import { CronLogService } from '../cronLogService'
 import { upsertJobPrefs, getJobPrefs } from '../db'
+import { config } from '../config'
 import type { CronJob, CronJobDetail, CronCreateConfig, SystemdCreateConfig } from '../../shared/types'
 
 // ─── CronHandlers ────────────────────────────────────────────────────────────
@@ -135,7 +136,7 @@ export function createCronHandlers(
       jobs: enrichedJobs,
       systemdAvailable: cronManager.systemdAvailable,
     })
-    cronManager.startPolling(5000)
+    cronManager.startPolling(config.cronPollIntervalMs)
     pollingStarted = true
   }
 

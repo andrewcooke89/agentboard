@@ -7,7 +7,7 @@ import { loadModelEnvs } from './modelEnvLoader'
 import { ensureTmux } from './prerequisites'
 import { SessionManager } from './SessionManager'
 import { SessionRegistry } from './SessionRegistry'
-import { initDatabase } from './db'
+import { initDatabase, initPoolTables } from './db'
 import { LogPoller } from './logPoller'
 import { toAgentSession } from './agentSessions'
 import { resolveTerminalMode } from './terminal'
@@ -24,6 +24,7 @@ import { createSessionHandlers } from './handlers/sessionHandlers'
 import { resurrectPinnedSessions } from './sessionResurrection'
 import { createRefreshOrchestrator } from './sessionRefresh'
 import { updateAgentSessions, hydrateSessionsWithAgentSessions } from './sessionHydration'
+import { createSessionPool } from './sessionPool'
 import { initTaskStore } from './taskStore'
 import { initWorkflowStore } from './workflowStore'
 import { createTaskWorker } from './taskWorker'
@@ -40,6 +41,7 @@ import { CronManager } from './cronManager'
 import { CronHistoryService } from './cronHistoryService'
 import { CronLogService } from './cronLogService'
 import { createCronHandlers } from './handlers/cronHandlers'
+import { CronAiService } from './cronAiService'
 
 // --- Startup checks ---
 checkPortAvailable(config.port, logger)
@@ -113,8 +115,20 @@ const historyService = new HistoryService({
 
 // --- Cron Manager ---
 const cronManager = new CronManager()
+cronManager.setDb(db.db) // Set db immediately so cleanup/prune timers have a valid reference
 const cronHistoryService = new CronHistoryService(db.db)
 const cronLogService = new CronLogService(db.db)
+
+// --- Cron AI Service (WU-004) ---
+const cronAiService = new CronAiService(
+  {
+    cronManager,
+    historyService: cronHistoryService,
+    logService: cronLogService,
+    sessionManager,
+  },
+  { port: config.port, authToken: config.authToken }
+)
 
 // --- Context wiring ---
 function broadcast(msg: import('../shared/types').ServerMessage) {
@@ -128,6 +142,7 @@ function send(ws: ServerWebSocket<WSData>, msg: import('../shared/types').Server
 // TaskWorker and WorkflowEngine are created after ctx, assigned below
 let taskWorker: import('./taskWorker').TaskWorker
 let workflowEngineInstance: WorkflowEngine | null = null
+let sessionPoolInstance: import('./sessionPool').SessionPool | null = null
 
 const ctx: ServerContext = {
   db,
@@ -148,6 +163,9 @@ const ctx: ServerContext = {
     return workflowEngineInstance
   },
 }
+
+// Expose cronAiService on ctx for httpRoutes (WU-004)
+;(ctx as any)._cronAiService = cronAiService
 
 // --- Module instantiation ---
 const refreshOrchestrator = createRefreshOrchestrator(ctx, {
@@ -185,8 +203,10 @@ if (config.workflowEngineEnabled) {
   workflowFileWatcher = createWorkflowFileWatcher(ctx, workflowStore)
   workflowFileWatcher.start()
 
-  // Create and start workflow engine
-  workflowEngineInstance = createWorkflowEngine(ctx, workflowStore, taskStore)
+  // Create session pool and workflow engine
+  initPoolTables(db.db)
+  sessionPoolInstance = createSessionPool(db.db)
+  workflowEngineInstance = createWorkflowEngine(ctx, workflowStore, taskStore, sessionPoolInstance)
   workflowEngineInstance.recoverRunningWorkflows()
   workflowEngineInstance.start()
 
@@ -319,7 +339,7 @@ cronCleanupInterval = setInterval(() => {
 
 // --- HTTP routes ---
 const tlsEnabled = !!(config.tlsCert && config.tlsKey)
-registerHttpRoutes(app, ctx, tlsEnabled, historyService)
+registerHttpRoutes(app, ctx, tlsEnabled, historyService, sessionPoolInstance)
 app.use('/*', serveStatic({ root: './dist/client' }))
 
 // --- Registry event wiring ---
@@ -344,6 +364,14 @@ logger.info('startup_state', {
 
 // Detect systemd availability for cron manager
 cronManager.detectSystemd().catch(() => {})
+
+// Cron AI: generate MCP config and skill file at startup (WU-004, REQ-15/REQ-16)
+cronAiService.generateMcpConfig(config.port).catch((err) => {
+  logger.warn('cron_ai_mcp_config_failed', { error: String(err) })
+})
+cronAiService.generateSkillFile().catch((err) => {
+  logger.warn('cron_ai_skill_file_failed', { error: String(err) })
+})
 
 // --- Initial data load ---
 refreshOrchestrator.refreshSessionsSync({ verifyAssociations: true })
@@ -402,6 +430,49 @@ const wsHandlers = {
   onCronSudoAuth: cronHandlers.handleCronSudoAuth.bind(cronHandlers),
   onCronJobLogs: cronHandlers.handleCronJobLogs.bind(cronHandlers),
   onCronJobHistory: cronHandlers.handleCronJobHistory.bind(cronHandlers),
+  // Cron AI Orchestrator handlers (WU-004)
+  onCronAiContextUpdate: (_ws: ServerWebSocket<WSData>, context: import('../shared/types').UiContext) => {
+    cronAiService.updateContext(context)
+  },
+  onCronAiProposalResponse: (_ws: ServerWebSocket<WSData>, id: string, approved: boolean, feedback?: string) => {
+    const result = cronAiService.resolveProposal(id, approved, feedback)
+    broadcast({ type: 'cron-ai-proposal-resolved', id, status: approved ? 'accepted' : 'rejected', feedback })
+    cronAiService.forwardToMcp({ type: 'proposal_resolved', id, ...result })
+  },
+  onCronAiDrawerOpen: (_ws: ServerWebSocket<WSData>) => {
+    broadcast({ type: 'cron-ai-session-status', status: 'starting' })
+    cronAiService.createAiSession().then(({ sessionId, tmuxTarget }) => {
+      refreshOrchestrator.refreshSessionsSync()
+      broadcast({ type: 'cron-ai-session-status', status: 'waiting', windowId: tmuxTarget, sessionId })
+    }).catch((err) => {
+      console.error('[cron-ai] Failed to create AI session on drawer open:', err)
+      broadcast({ type: 'cron-ai-session-status', status: 'offline' })
+    })
+  },
+  onCronAiDrawerClose: (_ws: ServerWebSocket<WSData>) => {
+    // Session persists after drawer close — no action needed
+  },
+  onCronAiNewConversation: (_ws: ServerWebSocket<WSData>) => {
+    broadcast({ type: 'cron-ai-session-status', status: 'starting' })
+    cronAiService.killAiSession().catch((err) => {
+      console.error('[cron-ai] Failed to kill AI session for new conversation:', err)
+    }).finally(() => {
+      cronAiService.createAiSession().then(({ sessionId, tmuxTarget }) => {
+        refreshOrchestrator.refreshSessionsSync()
+        broadcast({ type: 'cron-ai-session-status', status: 'waiting', windowId: tmuxTarget, sessionId })
+      }).catch((err) => {
+        console.error('[cron-ai] Failed to create AI session for new conversation:', err)
+        broadcast({ type: 'cron-ai-session-status', status: 'offline' })
+      })
+    })
+  },
+  onCronAiMcpRegister: (ws: ServerWebSocket<WSData>) => {
+    const success = cronAiService.registerMcpClient(ws)
+    send(ws, { type: 'cron-ai-mcp-register', success })
+  },
+  onCronAiNavigate: (_ws: ServerWebSocket<WSData>, action: string, payload: Record<string, unknown>) => {
+    broadcast({ type: 'cron-ai-navigate', action, payload })
+  },
 }
 
 // --- Server ---
@@ -474,6 +545,7 @@ Bun.serve<WSData>({
     },
     close(ws) {
       cronHandlers.onClientDisconnect(ws)
+      cronAiService.unregisterMcpClient()
       terminalHandlers.cleanupTerminals(ws)
       sockets.delete(ws)
     },
@@ -492,6 +564,9 @@ logger.info('server_started', {
 
 // --- Cleanup ---
 function cleanupAllTerminals() {
+  // Kill AI session before shutdown (WU-004, REQ-70)
+  cronAiService.killAiSession().catch(() => {})
+
   // Stop workflow engine and file watcher
   if (workflowEngineInstance) workflowEngineInstance.stop()
   if (workflowFileWatcher) workflowFileWatcher.stop()

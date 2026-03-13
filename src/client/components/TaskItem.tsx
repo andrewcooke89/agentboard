@@ -1,4 +1,5 @@
 // TaskItem.tsx - Individual task row component
+import { motion, useReducedMotion } from 'motion/react'
 import type { Task } from '@shared/types'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -70,13 +71,19 @@ function getWorkflowMeta(metadata: string | null): { workflow_run_id: string; wo
 }
 
 export default function TaskItem({ task, isSelected, onSelect, onCancel, onRetry, onViewOutput, onWatch, onNavigateToWorkflow }: TaskItemProps) {
+  const prefersReducedMotion = useReducedMotion()
   const canCancel = task.status === 'queued' || task.status === 'running'
   const canRetry = task.status === 'failed' || task.status === 'cancelled'
   const hasOutput = task.status === 'completed' || (task.status === 'failed' && task.outputPath)
   const workflowMeta = getWorkflowMeta(task.metadata)
 
   return (
-    <div
+    <motion.div
+      initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+      transition={{ duration: 0.2 }}
+      style={{ overflow: 'hidden' }}
       className={`flex items-center gap-2 px-3 py-2 cursor-pointer rounded-md transition-colors ${
         isSelected ? 'bg-white/10' : 'hover:bg-white/5'
       }`}
@@ -197,6 +204,6 @@ export default function TaskItem({ task, isSelected, onSelect, onCancel, onRetry
           </button>
         )}
       </div>
-    </div>
+    </motion.div>
   )
 }

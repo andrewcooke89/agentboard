@@ -256,8 +256,19 @@ class TerminalProxyMock {
 
 mock.module('../../config', () => ({
   config: configState,
+  GEMINI_API_KEY: '',
+  GEMINI_RATE_LIMIT_TOKENS_PER_MINUTE: 60000,
+  DEFAULT_L1_MODEL: 'glm',
+  DEFAULT_L2_MODEL: 'claude',
 }))
 mock.module('../../db', () => ({
+  // Named function exports used by cronManager, cronHistoryService, cronHandlers
+  pruneRunHistory: () => {},
+  deleteOrphanedPrefs: () => {},
+  getRunHistory: () => [],
+  insertRunHistory: () => {},
+  upsertJobPrefs: () => {},
+  getJobPrefs: () => null,
   initDatabase: () => ({
     db: new (require('bun:sqlite').Database)(':memory:'),
     getSessionById: (sessionId: string) => dbState.records.get(sessionId) ?? null,

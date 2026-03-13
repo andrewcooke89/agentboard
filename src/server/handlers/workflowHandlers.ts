@@ -1,7 +1,7 @@
 // workflowHandlers.ts - REST API handlers for workflow management (WO-007)
 import type { Hono } from 'hono'
 import fs from 'node:fs/promises'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { ServerContext } from '../serverContext'
 import { parseWorkflowYAML, validateVariables } from '../workflowSchema'
@@ -9,6 +9,7 @@ import type { StepRunState } from '../../shared/types'
 import { sanitizeForLog } from '../validators'
 import { loadProjectProfile } from '../projectProfile'
 import { expandPerWorkUnit, type ExpansionContext } from '../perWorkUnitEngine'
+import yaml from 'js-yaml'
 
 /** Kebab-case: lowercase letters, digits, and hyphens only. No path separators. */
 const KEBAB_CASE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -249,6 +250,42 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         }
       } catch {
         // No body or invalid JSON — that's fine, variables are optional
+      }
+
+      // Auto-detect tier from spec file count when tier is absent, "auto", or "1" (default)
+      if (providedVars.spec_path && (!providedVars.tier || providedVars.tier === 'auto' || providedVars.tier === '1')) {
+        try {
+          const specContent = readFileSync(providedVars.spec_path, 'utf8')
+          const specDoc = yaml.load(specContent) as Record<string, unknown>
+          // Collect files from common spec fields: scope.included, affected_files, files, changes[].file
+          const fileSet = new Set<string>()
+          const scopeIncluded = (specDoc?.scope as Record<string, unknown>)?.included
+          if (Array.isArray(scopeIncluded)) {
+            for (const f of scopeIncluded) { if (typeof f === 'string') fileSet.add(f) }
+          }
+          for (const field of ['affected_files', 'files'] as const) {
+            const val = specDoc?.[field]
+            if (Array.isArray(val)) {
+              for (const f of val) { if (typeof f === 'string') fileSet.add(f) }
+            }
+          }
+          const changes = specDoc?.changes
+          if (Array.isArray(changes)) {
+            for (const c of changes) {
+              if (c && typeof c === 'object' && typeof (c as Record<string, unknown>).file === 'string') {
+                fileSet.add((c as Record<string, unknown>).file as string)
+              }
+            }
+          }
+          if (fileSet.size > 0) {
+            const fileCount = fileSet.size
+            const detectedTier = fileCount <= 2 ? '1' : fileCount <= 5 ? '2' : '3'
+            logger.info('tier_auto_detected', { specPath: sanitizeForLog(providedVars.spec_path), fileCount, tier: detectedTier })
+            providedVars.tier = detectedTier
+          }
+        } catch (err) {
+          logger.warn('tier_auto_detect_failed', { specPath: sanitizeForLog(providedVars.spec_path), error: String(err) })
+        }
       }
 
       // Validate declared variables
@@ -930,6 +967,51 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         const msg = err instanceof Error ? err.message : String(err)
         return c.json({ error: msg }, 500)
       }
+    })
+
+    // Long-poll: wait for run status or step change
+    app.get('/api/workflow-runs/:runId/wait', async (c) => {
+      const runId = c.req.param('runId')
+      const currentStatus = c.req.query('current_status')
+      const currentStep = c.req.query('current_step')
+      const timeout = Math.min(Number(c.req.query('timeout') || 600), 600)
+
+      if (!currentStatus) {
+        return c.json({ error: 'current_status query param is required' }, 400)
+      }
+
+      function stripRun(run: ReturnType<typeof workflowStore.getRun>) {
+        if (!run) return null
+        return {
+          ...run,
+          steps_state: run.steps_state.map(
+            ({ resultContent, reviewFeedback, reviewIterations, detectedSignals, childSteps, ...rest }: Record<string, unknown>) => rest
+          ),
+        }
+      }
+
+      const deadline = Date.now() + timeout * 1000
+
+      while (Date.now() < deadline) {
+        const run = workflowStore.getRun(runId)
+        if (!run) return c.json({ error: 'Run not found' }, 404)
+
+        const changed =
+          run.status !== currentStatus ||
+          (currentStep !== undefined && String(run.current_step_index) !== currentStep)
+
+        if (changed) {
+          return c.json({ timeout: false, run: stripRun(run) })
+        }
+
+        // Sleep in small increments so we can detect deadline expiry accurately
+        const remaining = deadline - Date.now()
+        if (remaining <= 0) break
+        await Bun.sleep(Math.min(3000, remaining))
+      }
+
+      const run = workflowStore.getRun(runId)
+      return c.json({ timeout: true, run: run ? stripRun(run) : null })
     })
 
     // Phase 10: Amendment history endpoint

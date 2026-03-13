@@ -55,6 +55,36 @@ export function createPoolHandlers(ctx: ServerContext, pool: SessionPool) {
       })
       return c.json({ ok: true, maxSlots })
     })
+
+    // POST /api/pool/release — force-release a slot by ID
+    app.post('/api/pool/release', async (c) => {
+      let body: Record<string, unknown>
+      try {
+        body = await c.req.json()
+      } catch {
+        return c.json({ error: 'Invalid JSON body' }, 400)
+      }
+      const slotId = body.slot_id
+      if (!slotId || typeof slotId !== 'string') {
+        return c.json({ error: 'slot_id is required (string)' }, 400)
+      }
+      const slot = pool.getSlot(slotId)
+      if (!slot) {
+        return c.json({ error: `Slot not found: ${slotId}` }, 404)
+      }
+      if (slot.status === 'released') {
+        return c.json({ error: `Slot already released: ${slotId}` }, 400)
+      }
+      const promoted = pool.releaseSlot(slotId)
+      const status = pool.getStatus()
+      ctx.broadcast({
+        type: 'pool_status_update',
+        active: status.active.length,
+        queued: status.queue.length,
+        max: status.config.maxSlots,
+      })
+      return c.json({ ok: true, released: slotId, promoted: promoted?.id ?? null })
+    })
   }
 
   return { registerRoutes }

@@ -131,6 +131,10 @@ describe('useWebSocket', () => {
       throw new Error('Expected WebSocket instance')
     }
 
+    act(() => {
+      ws.triggerOpen()
+    })
+
     const received: ServerMessage[] = []
     const unsubscribe = hookResult?.subscribe((message: ServerMessage) =>
       received.push(message)

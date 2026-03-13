@@ -40,20 +40,32 @@ class AsyncMutex {
 const rateLimitMutex = new AsyncMutex()
 
 // Allow API key override for testing
+// _apiKeyOverrideActive tracks whether setApiKeyOverride has been called at all,
+// so that setApiKeyOverride(undefined) means "no key" rather than "fall back to env config".
 let _apiKeyOverride: string | undefined
+let _apiKeyOverrideActive = false
 
 /**
- * Set API key override (for testing)
+ * Set API key override (for testing).
+ * Pass undefined to simulate a missing API key (disables env config fallback).
+ * Pass a string to use that key instead of env config.
  */
 export function setApiKeyOverride(key: string | undefined): void {
   _apiKeyOverride = key
+  _apiKeyOverrideActive = true
 }
 
 /**
- * Get the effective API key (override or config)
+ * Get the effective API key (override or config).
+ * If setApiKeyOverride was called, the override value is used exclusively
+ * (even if it is undefined/empty), so tests can simulate a missing key
+ * regardless of environment variables.
  */
 function getApiKey(): string {
-  return _apiKeyOverride ?? GEMINI_API_KEY
+  if (_apiKeyOverrideActive) {
+    return _apiKeyOverride ?? ''
+  }
+  return GEMINI_API_KEY
 }
 
 export interface GeminiRequest {

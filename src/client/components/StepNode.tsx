@@ -7,7 +7,7 @@ export const STATUS_CLASSES: Record<StepRunStatus, string> = {
   running: 'bg-blue-600 text-white border-blue-400 animate-pulse',
   completed: 'bg-green-600 text-white border-green-400',
   failed: 'bg-red-600 text-white border-red-400',
-  skipped: 'bg-gray-500 text-gray-300 border-gray-400',
+  skipped: 'bg-yellow-500 text-gray-900 border-yellow-400',
   queued: 'bg-yellow-500 text-gray-900 border-yellow-400',
   cancelled: 'bg-gray-500 text-white border-gray-400',
   partial: 'bg-orange-500 text-white border-orange-400',

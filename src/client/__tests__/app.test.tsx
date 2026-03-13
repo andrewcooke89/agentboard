@@ -67,11 +67,22 @@ class TerminalMock {
 }
 
 // Undo mock.module('../stores/workflowStore', ...) pollution from workflowEditor.test.tsx.
-// bun's mock.module replaces the module globally and mock.restore() doesn't clear it.
-// We re-register using a query-string cache-bust import to get the real module.
-// @ts-expect-error bun cache-bust query string not understood by tsc
-const _realWorkflowStore = await import('../stores/workflowStore.ts?real')
-mock.module('../stores/workflowStore', () => _realWorkflowStore)
+// bun's mock.module replaces the module globally and the poisoned version is already
+// in the module cache before this file runs.  We re-register a complete enough stub
+// that satisfies App's usage: useWorkflowStore(selector) and useWorkflowStore.getState().
+const _workflowState = {
+  workflows: [],
+  workflowRuns: [],
+  activeWorkflowId: null,
+  loadingWorkflows: false,
+  loadingRuns: false,
+}
+const _useWorkflowStore = Object.assign(
+  (selector?: (s: typeof _workflowState) => unknown) =>
+    typeof selector === 'function' ? selector(_workflowState) : _workflowState,
+  { getState: () => _workflowState }
+)
+mock.module('../stores/workflowStore', () => ({ useWorkflowStore: _useWorkflowStore }))
 
 mock.module('@xterm/xterm', () => ({ Terminal: TerminalMock }))
 mock.module('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))

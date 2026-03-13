@@ -11,6 +11,8 @@ import WorkflowDetail from './components/WorkflowDetail'
 import WorkflowEditor from './components/WorkflowEditor'
 import WorkflowPanel from './components/WorkflowPanel'
 import { CronManager } from './components/cron/CronManager'
+import { CronAiDrawer } from './components/cron/CronAiDrawer'
+import { CronAiTerminal } from './components/cron/CronAiTerminal'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastViewport, toastManager } from './components/Toast'
 import { useSessionStore } from './stores/sessionStore'
@@ -36,6 +38,7 @@ import PoolStatusIndicator from './components/PoolStatusIndicator'
 import PendingReviewDashboard from './components/PendingReviewDashboard'
 import { usePoolStore } from './stores/poolStore'
 import { useCronStore } from './stores/cronStore'
+import { useCronAiStore } from './stores/cronAiStore'
 
 interface ServerInfo {
   port: number
@@ -94,6 +97,10 @@ export default function App() {
   const soundOnPermission = useSettingsStore((state) => state.soundOnPermission)
   const soundOnIdle = useSettingsStore((state) => state.soundOnIdle)
   const notifyOnPermission = useSettingsStore((state) => state.notifyOnPermission)
+  const cronAiEnabled = useSettingsStore((state) => state.cronAiEnabled)
+  const toggleCronAiDrawer = useCronAiStore((s) => s.toggleDrawer)
+  const cronAiSessionWindowId = useCronAiStore((s) => s.sessionWindowId)
+  const cronAiSessionId = useCronAiStore((s) => s.sessionId)
 
   const showHistory = useHistoryStore((state) => state.showHistory)
   const setShowHistory = useHistoryStore((state) => state.setShowHistory)
@@ -486,6 +493,63 @@ export default function App() {
       if (message.type === 'cron-notification') {
         useCronStore.getState().handleCronNotification(message.jobId, message.event, message.message, message.severity)
       }
+      // CronAI messages
+      if (message.type === 'cron-ai-proposal') {
+        useCronAiStore.getState().handleCronAiProposal(message.proposal)
+      }
+      if (message.type === 'cron-ai-session-status') {
+        useCronAiStore.getState().handleCronAiSessionStatus(message.status)
+        if (message.windowId !== undefined) {
+          useCronAiStore.getState().setSessionWindowId(message.windowId)
+        }
+        if (message.sessionId !== undefined) {
+          useCronAiStore.getState().setSessionId(message.sessionId)
+        } else if (message.status === 'offline' || message.status === 'starting') {
+          useCronAiStore.getState().setSessionId(null)
+        }
+      }
+      if (message.type === 'cron-ai-mcp-status') {
+        useCronAiStore.getState().handleCronAiMcpStatus(message.connected)
+      }
+      if (message.type === 'cron-ai-navigate') {
+        const { action, payload } = message as { action: string; payload?: Record<string, unknown> }
+        const cronState = useCronStore.getState()
+        switch (action) {
+          case 'select_job': {
+            const jobId = payload?.jobId as string | undefined
+            if (jobId) cronState.setSelectedJob(jobId)
+            // Scroll job into view
+            if (jobId && typeof document !== 'undefined') {
+              const el = document.querySelector(`[data-job-id="${jobId}"]`)
+              if (el) el.scrollIntoView({ behavior: 'smooth' })
+            }
+            break
+          }
+          case 'switch_tab': {
+            const tab = payload?.tab as string | undefined
+            if (tab) cronState.setActiveTab(tab)
+            break
+          }
+          case 'show_timeline': {
+            useCronStore.setState({ timelineVisible: true })
+            const range = payload?.range as string | undefined
+            if (range) cronState.setTimelineRange(range)
+            break
+          }
+          case 'filter': {
+            const mode = payload?.mode as string | undefined
+            const source = payload?.source as string | undefined
+            const tags = payload?.tags as string[] | undefined
+            if (mode) cronState.setFilterMode(mode)
+            if (source !== undefined) cronState.setFilterSource(source)
+            if (tags) cronState.setFilterTags(tags)
+            break
+          }
+          default:
+            // Unknown action - silently ignore
+            break
+        }
+      }
 
       // Phase 15: Step paused (REQ-32)
       if (message.type === 'step_paused') {
@@ -676,6 +740,20 @@ export default function App() {
         event.preventDefault()
         setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')
         return
+      }
+
+      // Toggle CronAI drawer: Cmd+Shift+A (Mac) / Ctrl+Shift+A (non-Mac)
+      if (event.shiftKey && code === 'KeyA' && !event.altKey) {
+        const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+        const modifierMatch = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+        if (modifierMatch) {
+          const { cronAiEnabled } = useSettingsStore.getState()
+          if (cronAiEnabled) {
+            event.preventDefault()
+            useCronAiStore.getState().toggleDrawer()
+          }
+          return
+        }
       }
     }
 
@@ -984,10 +1062,36 @@ export default function App() {
         </div>
       )}
       {activeView === 'cron-manager' && (
-        <div className="flex-1 overflow-hidden bg-[var(--bg-base)]">
-          <ErrorBoundary>
-            <CronManager />
-          </ErrorBoundary>
+        <div className="flex-1 overflow-hidden bg-[var(--bg-base)] flex flex-col">
+          {cronAiEnabled && (
+            <div className="flex items-center justify-end px-3 py-1.5 border-b border-white/10 bg-[var(--bg-primary)] shrink-0">
+              <button
+                onClick={toggleCronAiDrawer}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 transition-colors"
+                title="Toggle AI assistant (Ctrl+Shift+A)"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path d="M15.98 1.804a1 1 0 0 0-1.96 0l-.24 1.192a1 1 0 0 1-.784.785l-1.192.238a1 1 0 0 0 0 1.962l1.192.238a1 1 0 0 1 .785.785l.238 1.192a1 1 0 0 0 1.962 0l.238-1.192a1 1 0 0 1 .785-.785l1.192-.238a1 1 0 0 0 0-1.962l-1.192-.238a1 1 0 0 1-.785-.785l-.238-1.192ZM6.949 5.684a1 1 0 0 0-1.898 0l-.683 2.051a1 1 0 0 1-.633.633l-2.051.683a1 1 0 0 0 0 1.898l2.051.684a1 1 0 0 1 .633.632l.683 2.051a1 1 0 0 0 1.898 0l.683-2.051a1 1 0 0 1 .633-.633l2.051-.683a1 1 0 0 0 0-1.898l-2.051-.683a1 1 0 0 1-.633-.633L6.95 5.684ZM13.949 13.684a1 1 0 0 0-1.898 0l-.184.551a1 1 0 0 1-.632.633l-.551.183a1 1 0 0 0 0 1.898l.551.183a1 1 0 0 1 .633.633l.183.551a1 1 0 0 0 1.898 0l.184-.551a1 1 0 0 1 .632-.633l.551-.183a1 1 0 0 0 0-1.898l-.551-.184a1 1 0 0 1-.633-.632l-.183-.551Z" />
+                </svg>
+                AI
+              </button>
+            </div>
+          )}
+          <div className="flex-1 overflow-hidden">
+            <ErrorBoundary>
+              <CronManager />
+            </ErrorBoundary>
+          </div>
+          {cronAiEnabled && (
+            <CronAiDrawer sendMessage={sendMessage} subscribe={subscribe}>
+              <CronAiTerminal
+                sessionId={cronAiSessionId}
+                tmuxTarget={cronAiSessionWindowId}
+                sendMessage={sendMessage}
+                subscribe={subscribe}
+              />
+            </CronAiDrawer>
+          )}
         </div>
       )}
 

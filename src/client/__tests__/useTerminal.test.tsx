@@ -179,7 +179,7 @@ function createContainerMock() {
 function TerminalHarness(props: {
   sessionId: string | null
   tmuxTarget?: string | null
-  sendMessage: (message: any) => void
+  sendMessage: (message: any) => boolean
   subscribe: (listener: (message: ServerMessage) => void) => () => void
   theme: ITheme
   fontSize: number
@@ -299,7 +299,7 @@ describe('useTerminal', () => {
         <TerminalHarness
           sessionId="session-1"
           tmuxTarget="agentboard:@1"
-          sendMessage={(message) => sendCalls.push(message)}
+          sendMessage={(message) => { sendCalls.push(message); return true }}
           subscribe={(listener) => {
             listeners.push(listener)
             return () => {}
@@ -371,7 +371,7 @@ describe('useTerminal', () => {
         <TerminalHarness
           sessionId="session-1"
           tmuxTarget="agentboard:@1"
-          sendMessage={(message) => sendCalls.push(message)}
+          sendMessage={(message) => { sendCalls.push(message); return true }}
           subscribe={(listener) => {
             listeners.push(listener)
             return () => {}
@@ -405,7 +405,7 @@ describe('useTerminal', () => {
         <TerminalHarness
           sessionId="session-1"
           tmuxTarget="agentboard:@1"
-          sendMessage={(message) => sendCalls.push(message)}
+          sendMessage={(message) => { sendCalls.push(message); return true }}
           subscribe={() => () => {}}
           theme={{ background: '#000' }}
           fontSize={12}
@@ -423,7 +423,7 @@ describe('useTerminal', () => {
         <TerminalHarness
           sessionId="session-2"
           tmuxTarget="agentboard:@2"
-          sendMessage={(message) => sendCalls.push(message)}
+          sendMessage={(message) => { sendCalls.push(message); return true }}
           subscribe={() => () => {}}
           theme={{ background: '#000' }}
           fontSize={12}

@@ -184,7 +184,7 @@ export default function ParallelGroupNode({ step, isSelected, onSelect, allSteps
 
         {/* Progress summary */}
         <span className="text-xs font-medium opacity-90 shrink-0">
-          {total === 0 ? 'No steps' : `${completed}/${total} complete`}
+          {`${completed}/${total} complete`}
         </span>
       </button>
 
@@ -226,7 +226,7 @@ export default function ParallelGroupNode({ step, isSelected, onSelect, allSteps
                 {/* Dependency info */}
                 {hasDependency && childStatus === 'pending' && (
                   <span className="text-[10px] opacity-70 italic shrink-0 flex items-center gap-1" title={`Depends on: ${dependsOn.join(', ')}`}>
-                    <span>(depends_on:</span>
+                    <span>depends_on: </span>
                     {dependsOn.map((depName, depIdx) => {
                       const depStep = allSteps.find(s => s.name === depName)
                       const depStatus = depStep?.status || 'unknown'
@@ -253,7 +253,7 @@ export default function ParallelGroupNode({ step, isSelected, onSelect, allSteps
                         </span>
                       )
                     })}
-                    <span>)</span>
+                    <span />
                   </span>
                 )}
               </div>

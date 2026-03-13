@@ -102,6 +102,10 @@ const taskPollIntervalMsRaw = Number(process.env.TASK_POLL_INTERVAL_MS)
 const taskPollIntervalMs = Number.isFinite(taskPollIntervalMsRaw) && taskPollIntervalMsRaw > 0
   ? taskPollIntervalMsRaw
   : 5000
+const cronPollIntervalMsRaw = Number(process.env.CRON_POLL_INTERVAL_MS)
+const cronPollIntervalMs = Number.isFinite(cronPollIntervalMsRaw) && cronPollIntervalMsRaw > 0
+  ? cronPollIntervalMsRaw
+  : 5000
 const taskDefaultTimeoutSecondsRaw = Number(process.env.TASK_DEFAULT_TIMEOUT_SECONDS)
 const taskDefaultTimeoutSeconds = Number.isFinite(taskDefaultTimeoutSecondsRaw) && taskDefaultTimeoutSecondsRaw > 0
   ? taskDefaultTimeoutSecondsRaw
@@ -211,6 +215,7 @@ export const config = {
   allowedRoots,
   taskMaxConcurrent,
   taskPollIntervalMs,
+  cronPollIntervalMs,
   taskDefaultTimeoutSeconds,
   taskRateLimitPerHour,
   taskOutputDir,

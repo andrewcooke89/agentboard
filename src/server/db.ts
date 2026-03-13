@@ -101,6 +101,7 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   migrateIsPinnedColumn(db)
   migrateLastResumeErrorColumn(db)
   initCronTables(db)
+  migrateCronJobPrefsLastSeenAt(db)
 
   const insertStmt = db.prepare(
     `INSERT INTO agent_sessions
@@ -629,6 +630,14 @@ export function initCronTables(db: SQLiteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_cron_run_history_job_id ON cron_run_history(job_id);
     CREATE INDEX IF NOT EXISTS idx_cron_run_history_timestamp ON cron_run_history(timestamp);
   `)
+}
+
+function migrateCronJobPrefsLastSeenAt(db: SQLiteDatabase): void {
+  const columns = getColumnNames(db, 'cron_job_prefs')
+  if (columns.length === 0 || columns.includes('last_seen_at')) {
+    return
+  }
+  db.exec("ALTER TABLE cron_job_prefs ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))")
 }
 
 export function upsertJobPrefs(

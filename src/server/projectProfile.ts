@@ -9,7 +9,7 @@
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import yaml from 'js-yaml'
-import type { ModelRoutingConfig, ReviewRoutingConfig, DraftSwarmConfig, ComplexityLevel } from '../shared/types'
+import type { ModelRoutingConfig, ReviewRoutingConfig, DraftSwarmConfig, ComplexityLevel, TestContext } from '../shared/types'
 
 /**
  * Load project_profile.yaml and flatten nested objects to dot-notation keys.
@@ -197,12 +197,37 @@ export function extractDraftSwarmConfig(profile: Record<string, unknown>): Draft
 }
 
 /**
+ * Extract test_context configuration from project profile.
+ * Used by wu-orchestrator to inject deterministic test constraints into prompts.
+ */
+export function extractTestContext(profile: Record<string, unknown>): TestContext | null {
+  const ctx = profile.test_context
+  if (!ctx || typeof ctx !== 'object') {
+    return null
+  }
+
+  const c = ctx as Record<string, unknown>
+
+  return {
+    runner: typeof c.runner === 'string' ? c.runner : 'bun test',
+    import_style: typeof c.import_style === 'string'
+      ? c.import_style
+      : "import { describe, test, expect } from 'bun:test'",
+    file_pattern: typeof c.file_pattern === 'string' ? c.file_pattern : 'src/**/__tests__/*.test.ts',
+    constraints: Array.isArray(c.constraints) ? (c.constraints as string[]) : [],
+    mock_patterns: Array.isArray(c.mock_patterns) ? (c.mock_patterns as string[]) : [],
+    reference_tests: Array.isArray(c.reference_tests) ? (c.reference_tests as string[]) : [],
+  }
+}
+
+/**
  * Load all Phase 25 routing configurations at once.
  */
 export function loadRoutingConfigs(projectPath: string): {
   modelRouting: ModelRoutingConfig | null
   reviewRouting: ReviewRoutingConfig | null
   draftSwarm: DraftSwarmConfig | null
+  testContext: TestContext | null
 } {
   const profile = loadProjectProfileRaw(projectPath)
 
@@ -210,6 +235,7 @@ export function loadRoutingConfigs(projectPath: string): {
     modelRouting: extractModelRoutingConfig(profile),
     reviewRouting: extractReviewRoutingConfig(profile),
     draftSwarm: extractDraftSwarmConfig(profile),
+    testContext: extractTestContext(profile),
   }
 }
 

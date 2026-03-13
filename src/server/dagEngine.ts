@@ -2134,7 +2134,10 @@ export function createDAGEngine(
           const constitutionSections = stepDef.constitution_sections ?? []
           const strict = stepDef.strict ?? false
 
-          const report = validateSpec(specPath, schemaPath, constitutionSections, strict)
+          const constitutionPath = stepDef.constitution_path
+            ? resolveTemplateVars(String(stepDef.constitution_path), run)
+            : undefined
+          const report = validateSpec(specPath, schemaPath, constitutionSections, strict, constitutionPath)
 
           // Write report to output dir
           const reportPath = path.join(getChildOutputDir(run, stepState), `${stepDef.name}_report.json`)
@@ -2569,6 +2572,49 @@ export function createDAGEngine(
       })
       processSignal(run, stepDef, stepState, synthetic)
       return
+    }
+
+    // Check if tmux window is still alive (task.status === 'running' but tmux died)
+    if (task.status === 'running' && task.tmuxWindow) {
+      const sessionName = task.tmuxWindow.includes(':') ? task.tmuxWindow.split(':')[0] : task.tmuxWindow
+      const expectedName = task.tmuxWindow.includes(':') ? task.tmuxWindow.split(':').pop()! : task.tmuxWindow
+      const tmuxResult = Bun.spawnSync(
+        ['tmux', 'list-windows', '-t', sessionName, '-F', '#{window_name}'],
+        { stdout: 'pipe', stderr: 'pipe' },
+      )
+      const tmuxAlive =
+        tmuxResult.exitCode === 0 &&
+        tmuxResult.stdout.toString().trim().split('\n').includes(expectedName)
+
+      if (!tmuxAlive) {
+        taskStore.updateTask(task.id, { status: 'failed', error: 'tmux_window_disappeared' })
+
+        workflowStore.insertSignal({
+          id: `${run.id}_${stepState.name}_tmux_died_${Date.now()}`,
+          run_id: run.id,
+          step_name: stepState.name,
+          signal_type: 'error',
+          signal_file_path: '',
+          resolution: null,
+          resolution_file_path: null,
+          resolved_at: null,
+          synthetic: 1,
+        })
+
+        stepState.lastSignalType = 'error'
+        stepState.verifiedCompletion = false
+        stepState.status = 'failed'
+        stepState.errorMessage = 'tmux window disappeared'
+        stepState.completedAt = new Date().toISOString()
+        releasePoolSlotIfHeld(stepState, run)
+        saveAndBroadcast(run)
+        ctx.logger.warn('dag_tmux_window_disappeared', {
+          runId: run.id,
+          step: sanitizeForLog(stepState.name),
+          tmuxWindow: task.tmuxWindow,
+        })
+        return
+      }
     }
 
     // Check signal timeout (REQ-21/REQ-26)

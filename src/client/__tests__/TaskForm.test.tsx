@@ -18,7 +18,7 @@ function renderForm(overrides: Record<string, unknown> = {}) {
   const props = {
     templates: [],
     defaultProjectPath: '/test/path',
-    sendMessage: () => {},
+    sendMessage: () => true as boolean,
     onClose: () => {},
     ...overrides,
   }

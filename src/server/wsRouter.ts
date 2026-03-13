@@ -50,6 +50,14 @@ export interface WsHandlers {
   onCronJobHistory?: (ws: ServerWebSocket<WSData>, jobId: string, limit: number, before?: string) => void
   onCronClientConnect?: (ws: ServerWebSocket<WSData>) => void
   onCronClientDisconnect?: (ws: ServerWebSocket<WSData>) => void
+  // Cron AI Orchestrator handlers (WU-004)
+  onCronAiContextUpdate?: (ws: ServerWebSocket<WSData>, context: import('../shared/types').UiContext) => void
+  onCronAiProposalResponse?: (ws: ServerWebSocket<WSData>, id: string, approved: boolean, feedback?: string) => void
+  onCronAiDrawerOpen?: (ws: ServerWebSocket<WSData>) => void
+  onCronAiDrawerClose?: (ws: ServerWebSocket<WSData>) => void
+  onCronAiNewConversation?: (ws: ServerWebSocket<WSData>) => void
+  onCronAiMcpRegister?: (ws: ServerWebSocket<WSData>) => void
+  onCronAiNavigate?: (ws: ServerWebSocket<WSData>, action: string, payload: Record<string, unknown>) => void
 }
 
 export function broadcast(
@@ -227,6 +235,28 @@ export function handleMessage(
       return
     case 'cron-job-history':
       handlers.onCronJobHistory?.(ws, message.jobId, message.limit, message.before)
+      return
+    // Cron AI Orchestrator messages (WU-004)
+    case 'cron-ai-context-update':
+      handlers.onCronAiContextUpdate?.(ws, message.context)
+      return
+    case 'cron-ai-proposal-response':
+      handlers.onCronAiProposalResponse?.(ws, message.id, message.approved, message.feedback)
+      return
+    case 'cron-ai-drawer-open':
+      handlers.onCronAiDrawerOpen?.(ws)
+      return
+    case 'cron-ai-drawer-close':
+      handlers.onCronAiDrawerClose?.(ws)
+      return
+    case 'cron-ai-new-conversation':
+      handlers.onCronAiNewConversation?.(ws)
+      return
+    case 'cron-ai-mcp-register':
+      handlers.onCronAiMcpRegister?.(ws)
+      return
+    case 'cron-ai-navigate':
+      handlers.onCronAiNavigate?.(ws, message.action, message.payload)
       return
     default:
       sendFn(ws, { type: 'error', message: 'Unknown message type' })
