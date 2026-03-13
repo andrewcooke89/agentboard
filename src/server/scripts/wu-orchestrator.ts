@@ -20,6 +20,14 @@ import path from 'node:path'
 import yaml from 'js-yaml'
 import { parseManifest, topologicalSort } from '../perWorkUnitEngine'
 import type { WorkUnit } from '../perWorkUnitEngine'
+import { loadProjectProfileRaw, extractTestContext, extractModelRoutingConfig } from '../projectProfile'
+import { loadModelRoutingConfig, shouldEscalate, getEscalatedModel, getEnvForModel } from '../modelEnvLoader'
+import type { TestContext } from '../../shared/types'
+
+// ─── Crash Signal State ──────────────────────────────────────────────────────
+
+let signalWritten = false
+let signalDir = ''
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -56,11 +64,12 @@ interface TaskResult {
 
 interface WUResult {
   id: string
-  status: 'pass' | 'fail' | 'skipped'
+  status: 'pass' | 'fail' | 'skipped' | 'needs_human'
   testTaskId: string | null
   implTaskId: string | null
   retries: number
   message: string
+  escalatedTo?: string
 }
 
 interface VerifyResult {
@@ -115,9 +124,14 @@ function parseArgs(): Config {
 
   config.tier = config.tier ?? '2'
   config.testDir = config.testDir ?? config.projectPath
-  config.testCommand = config.testCommand ?? 'bun test'
+  const fw = config.framework ?? ''
+  if (!config.testCommand) {
+    if (fw.includes('vitest')) config.testCommand = 'npx vitest run'
+    else if (fw.includes('jest')) config.testCommand = 'npx jest'
+    else config.testCommand = 'bun test'
+  }
   config.language = config.language ?? 'typescript'
-  config.framework = config.framework ?? ''
+  config.framework = fw
   config.model = config.model ?? 'glm'
   config.runId = config.runId ?? ''
   return config as Config
@@ -281,6 +295,69 @@ async function pollUntilDone(
   return { status: 'failed', exitCode: null, outputPath: null }
 }
 
+// ─── Rate Limit Detection ──────────────────────────────────────────────────
+
+const RATE_LIMIT_PATTERNS = [
+  /rate.?limit/i,
+  /too many requests/i,
+  /429/i,
+  /throttl/i,
+]
+
+function isRateLimitFailure(outputPath: string | null): boolean {
+  if (!outputPath) return false
+  try {
+    const content = fs.readFileSync(outputPath, 'utf-8')
+    const tail = content.slice(-2000)
+    return RATE_LIMIT_PATTERNS.some(p => p.test(tail))
+  } catch {
+    return false
+  }
+}
+
+async function sleepWithLog(label: string, ms: number): Promise<void> {
+  console.log(`[${label}] Rate limited — waiting ${Math.round(ms / 1000)}s before retry...`)
+  await Bun.sleep(ms)
+}
+
+// ─── Per-WU Git Commit ──────────────────────────────────────────────────────
+
+function commitWU(
+  projectPath: string,
+  wuId: string,
+  scope: string,
+  files: string[],
+): { success: boolean; message: string } {
+  try {
+    const add = Bun.spawnSync(['git', 'add', '-A'], { cwd: projectPath })
+    if (add.exitCode !== 0) {
+      return { success: false, message: `git add failed: ${add.stderr.toString()}` }
+    }
+
+    const status = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: projectPath })
+    if (!status.stdout.toString().trim()) {
+      return { success: true, message: 'Nothing to commit (no changes)' }
+    }
+
+    const subject = `feat(${wuId}): ${scope}`
+    const body = files.length > 0
+      ? `\nFiles:\n${files.map(f => `  - ${f}`).join('\n')}`
+      : ''
+
+    const commit = Bun.spawnSync(
+      ['git', 'commit', '-m', `${subject}${body}`],
+      { cwd: projectPath },
+    )
+    if (commit.exitCode !== 0) {
+      return { success: false, message: `git commit failed: ${commit.stderr.toString()}` }
+    }
+
+    return { success: true, message: `Committed: ${subject}` }
+  } catch (err) {
+    return { success: false, message: `commitWU error: ${err}` }
+  }
+}
+
 // ─── Work Unit File ─────────────────────────────────────────────────────────
 
 function readWorkUnitFile(outputDir: string, wuId: string): string {
@@ -301,15 +378,53 @@ function buildTestPrompt(
   projectPath: string,
   language: string,
   framework: string,
+  testContext?: TestContext | null,
 ): string {
+  // Build environment constraints section from test context
+  let envConstraints = ''
+  if (testContext) {
+    const lines: string[] = [
+      '',
+      '## Environment Constraints (MANDATORY)',
+      `- Test runner: ${testContext.runner}`,
+      `- Import: \`${testContext.import_style}\``,
+      `- File location: ${testContext.file_pattern}`,
+    ]
+    for (const c of testContext.constraints) {
+      lines.push(`- ${c}`)
+    }
+
+    if (testContext.mock_patterns.length > 0) {
+      lines.push('', '## Mock Patterns (MANDATORY)')
+      for (const m of testContext.mock_patterns) {
+        lines.push(`- ${m}`)
+      }
+    }
+
+    if (testContext.reference_tests.length > 0) {
+      lines.push('', '## Reference Tests (follow these patterns)')
+      for (const r of testContext.reference_tests) {
+        lines.push(`- ${r}`)
+      }
+    }
+
+    envConstraints = lines.join('\n')
+  }
+
+  const importLine = testContext?.import_style
+    ?? (framework.includes('vitest') ? "import { describe, test, expect } from 'vitest'"
+      : framework.includes('jest') ? "import { describe, test, expect } from '@jest/globals'"
+      : "import { describe, test, expect } from 'bun:test'")
+
   return `You are a test writer for a ${framework ? `${framework} ` : ''}${language} project.
 
 ## Rules
 - Write tests ONLY. Never write implementation code.
 - Place test files adjacent to the files they test, using __tests__/ directory convention.
-- Use \`import { describe, test, expect } from 'bun:test'\`
+- Use \`${importLine}\`
 - Tests MUST fail initially (they test functionality not yet implemented).
 - Cover happy path, error cases, and edge cases from the acceptance criteria.
+${envConstraints}
 
 ## Work Unit: ${wu.id}
 Scope: ${wu.scope}
@@ -367,9 +482,12 @@ function writeResultYaml(outputDir: string, results: WUResult[]): void {
   const passed = results.filter(r => r.status === 'pass').length
   const failed = results.filter(r => r.status === 'fail').length
   const skipped = results.filter(r => r.status === 'skipped').length
+  const needsHuman = results.filter(r => r.status === 'needs_human').length
 
   let verdict: string
-  if (failed === 0) {
+  if (needsHuman > 0) {
+    verdict = 'needs_human'
+  } else if (failed === 0) {
     verdict = 'pass'
   } else if (passed > 0) {
     verdict = 'partial'
@@ -387,12 +505,14 @@ function writeResultYaml(outputDir: string, results: WUResult[]): void {
       impl_task_id: r.implTaskId,
       retries: r.retries,
       message: r.message,
+      escalated_to: r.escalatedTo ?? null,
     })),
     statistics: {
       total: results.length,
       passed,
       failed,
       skipped,
+      needs_human: needsHuman,
     },
   }
 
@@ -404,6 +524,30 @@ function writeResultYaml(outputDir: string, results: WUResult[]): void {
     'utf-8',
   )
   console.log(`[report] Wrote implementation-report.yaml (verdict=${verdict})`)
+
+  // Write human_action_required.yaml when WUs need human attention
+  if (needsHuman > 0) {
+    const humanReport = {
+      generated_at: new Date().toISOString(),
+      summary: `${needsHuman} work unit(s) require human intervention`,
+      work_units: results
+        .filter(r => r.status === 'needs_human')
+        .map(r => ({
+          id: r.id,
+          message: r.message,
+          retries: r.retries,
+          escalated_to: r.escalatedTo ?? null,
+          test_task_id: r.testTaskId,
+          impl_task_id: r.implTaskId,
+        })),
+    }
+    fs.writeFileSync(
+      path.join(dir, 'human_action_required.yaml'),
+      yaml.dump(humanReport, { lineWidth: 120, noRefs: true }),
+      'utf-8',
+    )
+    console.log(`[report] Wrote human_action_required.yaml (${needsHuman} WU(s))`)
+  }
 }
 
 function writeSignalFile(outputDir: string, verdict: string, runId: string): void {
@@ -427,6 +571,7 @@ function writeSignalFile(outputDir: string, verdict: string, runId: string): voi
   const finalPath = path.join(dir, 'implement_completed.yaml')
   fs.writeFileSync(tmpPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
   fs.renameSync(tmpPath, finalPath)
+  signalWritten = true
   console.log(`[signal] Wrote implement_completed.yaml (signal_type=${signal.signal_type})`)
 }
 
@@ -434,6 +579,30 @@ function writeSignalFile(outputDir: string, verdict: string, runId: string): voi
 
 async function main(): Promise<void> {
   const config = parseArgs()
+  signalDir = path.join(config.outputDir, 'signals')
+
+  // Load project profile for test context and model routing
+  const profile = loadProjectProfileRaw(config.projectPath)
+  const testContext = extractTestContext(profile)
+  const routingConfig = extractModelRoutingConfig(profile)
+  if (routingConfig) {
+    // Populate the modelEnvLoader cache so shouldEscalate/getEscalatedModel work
+    const flatProfile: Record<string, string> = {}
+    flatProfile['model_routing.enabled'] = String(routingConfig.enabled)
+    flatProfile['model_routing.default_model'] = routingConfig.default_model
+    if (routingConfig.escalation) {
+      for (let i = 0; i < routingConfig.escalation.length; i++) {
+        flatProfile[`model_routing.escalation.${i}.from`] = routingConfig.escalation[i].from
+        flatProfile[`model_routing.escalation.${i}.to`] = routingConfig.escalation[i].to
+        flatProfile[`model_routing.escalation.${i}.condition`] = routingConfig.escalation[i].condition
+      }
+    }
+    loadModelRoutingConfig(flatProfile)
+    console.log(`[config] Model routing loaded (escalation rules: ${routingConfig.escalation?.length ?? 0})`)
+  }
+  if (testContext) {
+    console.log(`[config] Test context loaded (${testContext.constraints.length} constraints, ${testContext.reference_tests.length} reference tests)`)
+  }
 
   console.log('=== WU Orchestrator ===')
   console.log(`  manifest:     ${config.manifest}`)
@@ -491,6 +660,8 @@ async function main(): Promise<void> {
   // 5. Process each WU in sorted order
   const results: WUResult[] = []
   const MAX_IMPL_RETRIES = 2
+  const MAX_RATE_LIMIT_RETRIES = 5
+  const RATE_LIMIT_BASE_DELAY_MS = 30_000 // 30s, doubles each retry (30s, 60s, 120s, 240s, 480s)
 
   for (const wu of sorted) {
     console.log(`=== WU ${wu.id}: ${wu.scope} ===`)
@@ -509,37 +680,53 @@ async function main(): Promise<void> {
       continue
     }
 
-    // ── Step A: Test Writer ──────────────────────────────────────────────
-    console.log(`[${wu.id}] Creating test-writer task...`)
-    let testTaskId: string
-    try {
-      const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
-      testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt, 3600, config.model)
-      console.log(`[${wu.id}] Test task created: ${testTaskId}`)
-    } catch (err) {
-      console.error(`[${wu.id}] Failed to create test task: ${err}`)
-      results.push({
-        id: wu.id,
-        status: 'fail',
-        testTaskId: null,
-        implTaskId: null,
-        retries: 0,
-        message: `Test task creation failed: ${err}`,
-      })
-      continue
+    // ── Step A: Test Writer (with rate-limit retry) ───────────────────────
+    let testTaskId: string | null = null
+    let testPassed = false
+
+    for (let rlAttempt = 0; rlAttempt <= MAX_RATE_LIMIT_RETRIES; rlAttempt++) {
+      if (rlAttempt > 0) {
+        const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, rlAttempt - 1)
+        await sleepWithLog(wu.id, delay)
+      }
+
+      console.log(`[${wu.id}] Creating test-writer task${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt}/${MAX_RATE_LIMIT_RETRIES})` : ''}...`)
+      try {
+        const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework, testContext)
+        testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt, 3600, config.model)
+        console.log(`[${wu.id}] Test task created: ${testTaskId}`)
+      } catch (err) {
+        console.error(`[${wu.id}] Failed to create test task: ${err}`)
+        continue
+      }
+
+      console.log(`[${wu.id}] Waiting for test-writer task to complete...`)
+      const testResult = await pollUntilDone(config.apiUrl, testTaskId)
+      if (testResult.status === 'completed') {
+        testPassed = true
+        break
+      }
+
+      // Check if failure was due to rate limiting
+      if (testResult.status === 'failed' && isRateLimitFailure(testResult.outputPath)) {
+        console.warn(`[${wu.id}] Test task rate-limited: ${testTaskId}`)
+        continue // retry with backoff
+      }
+
+      // Non-rate-limit failure — don't retry
+      console.error(`[${wu.id}] Test task ${testResult.status}: ${testTaskId}`)
+      break
     }
 
-    console.log(`[${wu.id}] Waiting for test-writer task to complete...`)
-    const testResult = await pollUntilDone(config.apiUrl, testTaskId)
-    if (testResult.status !== 'completed') {
-      console.error(`[${wu.id}] Test task ${testResult.status}: ${testTaskId}`)
+    if (!testPassed) {
+      console.error(`[${wu.id}] Test-writer failed after ${MAX_RATE_LIMIT_RETRIES + 1} attempts`)
       results.push({
         id: wu.id,
         status: 'fail',
         testTaskId,
         implTaskId: null,
         retries: 0,
-        message: `Test task ${testResult.status}`,
+        message: 'Test task failed (rate limit exhausted)',
       })
       continue
     }
@@ -565,24 +752,45 @@ async function main(): Promise<void> {
         retries = attempt
       }
 
-      // Create implementor task
-      console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})...`)
-      try {
-        const implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
-        implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
-        console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
-      } catch (err) {
-        console.error(`[${wu.id}] Failed to create impl task: ${err}`)
-        greenMessage = `Impl task creation failed: ${err}`
-        continue
-      }
+      // Create implementor task (with rate-limit retry)
+      let implCompleted = false
+      for (let rlAttempt = 0; rlAttempt <= MAX_RATE_LIMIT_RETRIES; rlAttempt++) {
+        if (rlAttempt > 0) {
+          const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, rlAttempt - 1)
+          await sleepWithLog(wu.id, delay)
+        }
 
-      console.log(`[${wu.id}] Waiting for implementor task to complete...`)
-      const implResult = await pollUntilDone(config.apiUrl, implTaskId)
-      if (implResult.status !== 'completed') {
+        console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
+        try {
+          const implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+          implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
+          console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
+        } catch (err) {
+          console.error(`[${wu.id}] Failed to create impl task: ${err}`)
+          greenMessage = `Impl task creation failed: ${err}`
+          continue
+        }
+
+        console.log(`[${wu.id}] Waiting for implementor task to complete...`)
+        const implResult = await pollUntilDone(config.apiUrl, implTaskId)
+        if (implResult.status === 'completed') {
+          implCompleted = true
+          break
+        }
+
+        if (implResult.status === 'failed' && isRateLimitFailure(implResult.outputPath)) {
+          console.warn(`[${wu.id}] Impl task rate-limited: ${implTaskId}`)
+          continue // retry with backoff
+        }
+
         console.error(`[${wu.id}] Impl task ${implResult.status}: ${implTaskId}`)
         greenMessage = `Impl task ${implResult.status}`
-        continue
+        break
+      }
+
+      if (!implCompleted) {
+        greenMessage = greenMessage || 'Impl task failed (rate limit exhausted)'
+        continue // next impl retry attempt
       }
       console.log(`[${wu.id}] Implementor task completed`)
 
@@ -608,12 +816,90 @@ async function main(): Promise<void> {
         retries,
         message: greenMessage,
       })
+      // Commit passing WU
+      const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
+      console.log(`[${wu.id}] ${commitResult.message}`)
+
       // Update baseline to incorporate new tests
       console.log(`[${wu.id}] Updating baseline...`)
       baseline = await captureTestBaseline(config.testDir, config.testCommand)
       console.log(
         `[${wu.id}] New baseline: ${baseline.totalTests} tests, ${baseline.passing} pass, ${baseline.failing} fail`,
       )
+    } else if (shouldEscalate(config.model, retries + 1)) {
+      // ── Escalation: GLM exhausted retries, try with a stronger model ────
+      const escalatedModel = getEscalatedModel(config.model)
+      if (escalatedModel && escalatedModel !== 'human') {
+        console.log(`[${wu.id}] Escalating from '${config.model}' to '${escalatedModel}'...`)
+
+        const escalationPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+          + `\n\n## Escalation Context\nPrevious ${retries + 1} attempt(s) with '${config.model}' failed.\nLast error: ${greenMessage}\nFix the implementation to make all tests pass.`
+
+        let escalationPassed = false
+        let escalationTaskId: string | null = null
+        try {
+          escalationTaskId = await createTask(config.apiUrl, config.projectPath, escalationPrompt, 3600, escalatedModel)
+          console.log(`[${wu.id}] Escalation task created: ${escalationTaskId}`)
+
+          const escResult = await pollUntilDone(config.apiUrl, escalationTaskId)
+          if (escResult.status === 'completed') {
+            console.log(`[${wu.id}] Escalation task completed, verifying GREEN...`)
+            const escGreen = await verifyGreen(config.testDir, config.testCommand, baseline)
+            console.log(`[${wu.id}] ${escGreen.message}`)
+            if (escGreen.pass) {
+              escalationPassed = true
+              greenMessage = escGreen.message
+            } else {
+              greenMessage = escGreen.message
+            }
+          } else {
+            greenMessage = `Escalation task ${escResult.status}`
+          }
+        } catch (err) {
+          greenMessage = `Escalation failed: ${err}`
+        }
+
+        if (escalationPassed) {
+          console.log(`[${wu.id}] PASS (after escalation to ${escalatedModel})`)
+          results.push({
+            id: wu.id,
+            status: 'pass',
+            testTaskId,
+            implTaskId: escalationTaskId,
+            retries: retries + 1,
+            message: greenMessage,
+            escalatedTo: escalatedModel,
+          })
+          // Commit passing WU (escalation)
+          const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
+          console.log(`[${wu.id}] ${commitResult.message}`)
+          console.log(`[${wu.id}] Updating baseline...`)
+          baseline = await captureTestBaseline(config.testDir, config.testCommand)
+        } else {
+          console.error(`[${wu.id}] NEEDS_HUMAN: escalation to '${escalatedModel}' also failed`)
+          results.push({
+            id: wu.id,
+            status: 'needs_human',
+            testTaskId,
+            implTaskId: escalationTaskId ?? implTaskId,
+            retries: retries + 1,
+            message: greenMessage,
+            escalatedTo: escalatedModel,
+          })
+        }
+      } else {
+        // Escalation target is 'human' or no escalation path
+        console.error(`[${wu.id}] NEEDS_HUMAN: no automated escalation path remaining`)
+        results.push({
+          id: wu.id,
+          status: 'needs_human',
+          testTaskId,
+          implTaskId,
+          retries,
+          message: greenMessage,
+          escalatedTo: 'human',
+        })
+      }
     } else {
       console.error(`[${wu.id}] FAIL after ${retries + 1} attempt(s): ${greenMessage}`)
       results.push({
@@ -633,9 +919,12 @@ async function main(): Promise<void> {
   const passed = results.filter(r => r.status === 'pass').length
   const failed = results.filter(r => r.status === 'fail').length
   const skipped = results.filter(r => r.status === 'skipped').length
+  const needsHuman = results.filter(r => r.status === 'needs_human').length
 
   let verdict: string
-  if (failed === 0) {
+  if (needsHuman > 0) {
+    verdict = 'needs_human'
+  } else if (failed === 0) {
     verdict = 'pass'
   } else if (passed > 0) {
     verdict = 'partial'
@@ -647,15 +936,37 @@ async function main(): Promise<void> {
   writeSignalFile(config.outputDir, verdict, config.runId)
 
   console.log('=== Summary ===')
-  console.log(`  Total: ${results.length}  Passed: ${passed}  Failed: ${failed}  Skipped: ${skipped}`)
+  console.log(`  Total: ${results.length}  Passed: ${passed}  Failed: ${failed}  Skipped: ${skipped}  Needs Human: ${needsHuman}`)
   console.log(`  Verdict: ${verdict}`)
 
-  if (failed > 0) {
+  if (failed > 0 || needsHuman > 0) {
     process.exit(1)
   }
 }
 
 // ─── Entry ──────────────────────────────────────────────────────────────────
+
+process.on('SIGTERM', () => process.exit(130))
+process.on('SIGINT', () => process.exit(130))
+process.on('exit', (code) => {
+  if (code !== 0 && !signalWritten && signalDir) {
+    try {
+      fs.mkdirSync(signalDir, { recursive: true })
+      const signal = {
+        version: 1,
+        signal_type: 'error',
+        timestamp: new Date().toISOString(),
+        agent: 'wu-orchestrator',
+        step_name: 'implement',
+        message: `Orchestrator crashed with exit code ${code}`,
+      }
+      const finalPath = path.join(signalDir, 'implement_completed.yaml')
+      fs.writeFileSync(finalPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
+    } catch {
+      // best-effort
+    }
+  }
+})
 
 main().catch((err) => {
   console.error(`[fatal] ${err}`)
