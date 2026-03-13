@@ -358,6 +358,44 @@ function commitWU(
   }
 }
 
+// ─── Shift-Left Lint + Typecheck ───────────────────────────────────────────
+
+function shiftLeftLint(
+  projectPath: string,
+  wuId: string,
+): { pass: boolean; autoFixed: boolean; message: string } {
+  let autoFixed = false
+
+  // Step 1: Auto-fix what we can (oxlint --fix)
+  Bun.spawnSync(['oxlint', '--fix', '.'], { cwd: projectPath })
+  // Check if files were modified regardless of exit code (partial fixes are common)
+  const status = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: projectPath })
+  if (status.stdout.toString().trim()) {
+    autoFixed = true
+    console.log(`[${wuId}] Auto-fixed lint issues`)
+  }
+
+  // Step 2: Check for remaining lint errors
+  // oxlint writes diagnostics to stdout, not stderr
+  const lint = Bun.spawnSync(['oxlint', '.'], { cwd: projectPath })
+  if (lint.exitCode !== 0) {
+    const stdout = lint.stdout.toString().trim()
+    const stderr = lint.stderr.toString().trim()
+    const output = (stdout || stderr).slice(-1000)
+    return { pass: false, autoFixed, message: `Lint failed: ${output}` }
+  }
+
+  // Step 3: Typecheck
+  // tsc writes errors to stdout
+  const tsc = Bun.spawnSync(['tsc', '--noEmit'], { cwd: projectPath })
+  if (tsc.exitCode !== 0) {
+    const output = (tsc.stdout.toString().trim() || tsc.stderr.toString().trim()).slice(0, 2000)
+    return { pass: false, autoFixed, message: `Typecheck failed: ${output}` }
+  }
+
+  return { pass: true, autoFixed, message: autoFixed ? 'Lint clean (after auto-fix)' : 'Lint clean' }
+}
+
 // ─── Work Unit File ─────────────────────────────────────────────────────────
 
 function readWorkUnitFile(outputDir: string, wuId: string): string {
@@ -762,7 +800,10 @@ async function main(): Promise<void> {
 
         console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
         try {
-          const implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+          let implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+          if (attempt > 0 && greenMessage) {
+            implPrompt += `\n\n## Retry Context\nPrevious attempt failed:\n${greenMessage}\nFix the implementation to make all tests pass.`
+          }
           implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
           console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
         } catch (err) {
@@ -793,6 +834,15 @@ async function main(): Promise<void> {
         continue // next impl retry attempt
       }
       console.log(`[${wu.id}] Implementor task completed`)
+
+      // Shift-left: auto-fix lint + typecheck before running tests
+      console.log(`[${wu.id}] Running shift-left lint + typecheck...`)
+      const lintResult = shiftLeftLint(config.projectPath, wu.id)
+      console.log(`[${wu.id}] ${lintResult.message}`)
+      if (!lintResult.pass) {
+        greenMessage = lintResult.message
+        continue // skip expensive test suite, go to next impl retry
+      }
 
       // Verify GREEN
       console.log(`[${wu.id}] Verifying GREEN (no new failures expected)...`)
@@ -843,14 +893,22 @@ async function main(): Promise<void> {
 
           const escResult = await pollUntilDone(config.apiUrl, escalationTaskId)
           if (escResult.status === 'completed') {
-            console.log(`[${wu.id}] Escalation task completed, verifying GREEN...`)
-            const escGreen = await verifyGreen(config.testDir, config.testCommand, baseline)
-            console.log(`[${wu.id}] ${escGreen.message}`)
-            if (escGreen.pass) {
-              escalationPassed = true
-              greenMessage = escGreen.message
+            // Shift-left: auto-fix lint + typecheck before running tests
+            console.log(`[${wu.id}] Running shift-left lint + typecheck (escalation)...`)
+            const escLintResult = shiftLeftLint(config.projectPath, wu.id)
+            console.log(`[${wu.id}] ${escLintResult.message}`)
+            if (!escLintResult.pass) {
+              greenMessage = escLintResult.message
             } else {
-              greenMessage = escGreen.message
+              console.log(`[${wu.id}] Escalation task completed, verifying GREEN...`)
+              const escGreen = await verifyGreen(config.testDir, config.testCommand, baseline)
+              console.log(`[${wu.id}] ${escGreen.message}`)
+              if (escGreen.pass) {
+                escalationPassed = true
+                greenMessage = escGreen.message
+              } else {
+                greenMessage = escGreen.message
+              }
             }
           } else {
             greenMessage = `Escalation task ${escResult.status}`

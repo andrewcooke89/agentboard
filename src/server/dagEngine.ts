@@ -2587,7 +2587,7 @@ export function createDAGEngine(
         tmuxResult.stdout.toString().trim().split('\n').includes(expectedName)
 
       if (!tmuxAlive) {
-        taskStore.updateTask(task.id, { status: 'failed', error: 'tmux_window_disappeared' })
+        taskStore.updateTask(task.id, { status: 'failed', errorMessage: 'tmux_window_disappeared' })
 
         workflowStore.insertSignal({
           id: `${run.id}_${stepState.name}_tmux_died_${Date.now()}`,
