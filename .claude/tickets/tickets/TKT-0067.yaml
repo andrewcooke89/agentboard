@@ -1,10 +1,10 @@
 id: TKT-0067
 version: 1
 created_at: 2026-03-16T04:47:27.278Z
-updated_at: 2026-03-16T04:47:27.278Z
+updated_at: 2026-03-16T06:14:32.922Z
 category: style
 severity: medium
-status: open
+status: resolved
 source:
   file: /home/andrew-cooke/tools/agentboard/src/client/components/cron/CronAiDrawer.tsx
   line_start: 8
@@ -22,11 +22,17 @@ related_tickets: []
 tags:
   - nightly
   - oxlint
-notes: []
+notes:
+  - timestamp: 2026-03-16T06:14:32.921Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'DRAWER_MAX_
+      [TKT-0067]"
 resolution:
-  status: null
-  resolved_at: null
-  resolved_by: null
+  status: fixed
+  resolved_at: 2026-03-16T06:14:32.921Z
+  resolved_by: minion-fix
   pr_url: null
   commit_sha: null
-  resolution_notes: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Identifier 'DRAWER_MAX_ [TKT-0067]"

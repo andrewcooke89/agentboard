@@ -98,7 +98,6 @@ import {
   fetchFromAgentboard,
   createMcpServer,
   getRegisteredToolNames,
-  getToolSchema,
   listJobs,
   listJobsByGroup,
   searchJobs,
