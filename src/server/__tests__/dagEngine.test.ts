@@ -791,7 +791,7 @@ describe('dagEngine', () => {
       ])
 
       dagEngine.tick(run, parsed)
-      const freshRun = workflowStore.getRun(run.id)!
+      const _freshRun = workflowStore.getRun(run.id)!
 
       const tasks = taskStore.listTasks()
       const task = tasks.find(t => t.projectPath === '/tmp/test')
