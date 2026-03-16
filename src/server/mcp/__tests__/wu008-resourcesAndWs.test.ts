@@ -123,6 +123,7 @@ function queueSuccess(body: unknown, status = 200) {
   fetchResponseQueue.push({ ok: status >= 200 && status < 300, status, body })
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function queueNetworkError() {
   fetchResponseQueue.push({ error: new TypeError('fetch failed') })
 }

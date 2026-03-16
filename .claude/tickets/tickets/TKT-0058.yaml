@@ -1,10 +1,10 @@
 id: TKT-0058
 version: 1
 created_at: 2026-03-16T04:47:27.276Z
-updated_at: 2026-03-16T04:47:27.276Z
+updated_at: 2026-03-16T06:41:58.735Z
 category: style
 severity: medium
-status: open
+status: resolved
 source:
   file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/health-gaps-regression.test.ts
   line_start: 13
@@ -21,11 +21,17 @@ related_tickets: []
 tags:
   - nightly
   - oxlint
-notes: []
+notes:
+  - timestamp: 2026-03-16T06:41:58.734Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im
+      [TKT-0058]"
 resolution:
-  status: null
-  resolved_at: null
-  resolved_by: null
+  status: fixed
+  resolved_at: 2026-03-16T06:41:58.734Z
+  resolved_by: minion-fix
   pr_url: null
   commit_sha: null
-  resolution_notes: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Identifier 'mock' is im [TKT-0058]"
