@@ -3,7 +3,7 @@
 // getDurationTrends, analyzeScheduleLoad, getUiContext, getAvailableSessions.
 // Covers AC-006-1 through AC-006-6 plus error handling and edge cases.
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { describe, it, expect, afterEach, mock } from 'bun:test'
 import type {
   CronJob,
   CronJobDetail,
