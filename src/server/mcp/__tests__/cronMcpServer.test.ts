@@ -2,7 +2,7 @@
 // Tests fetchFromAgentboard HTTP client, 7 read tools, auth headers, retry logic,
 // structured error handling, and MCP tool registration.
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { describe, it, expect, afterEach, mock } from 'bun:test'
 import type { CronJob, CronJobDetail, JobRunRecord } from '@shared/types'
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
