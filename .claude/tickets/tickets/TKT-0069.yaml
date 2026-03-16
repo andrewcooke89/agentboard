@@ -1,0 +1,32 @@
+id: TKT-0069
+version: 1
+created_at: 2026-03-16T04:47:27.278Z
+updated_at: 2026-03-16T04:47:27.278Z
+category: style
+severity: medium
+status: open
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/__tests__/wu008-resourcesAndWs.test.ts
+  line_start: 126
+  code_snippet: function queueNetworkError() {
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Function
+  'queueNetworkError' is declared but never used."
+description: "eslint(no-unused-vars): Function 'queueNetworkError' is declared
+  but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null

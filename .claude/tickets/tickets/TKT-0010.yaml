@@ -1,10 +1,10 @@
 id: TKT-0010
 version: 1
 created_at: 2026-02-04T07:36:53.025Z
-updated_at: 2026-02-04T07:36:53.025Z
+updated_at: 2026-03-16T04:47:27.072Z
 category: error-handling
 severity: low
-status: open
+status: resolved
 source:
   file: src/server/handlers/workflowWsHandlers.ts
   line_start: 43
@@ -42,11 +42,14 @@ tags:
   - websocket
   - ux
   - ERR-003
-notes: []
+notes:
+  - timestamp: 2026-03-16T04:47:27.072Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
 resolution:
-  status: null
-  resolved_at: null
-  resolved_by: null
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.072Z
+  resolved_by: sweep
   pr_url: null
   commit_sha: null
-  resolution_notes: null
+  resolution_notes: source code modified since ticket creation

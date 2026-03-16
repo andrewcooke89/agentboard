@@ -1,0 +1,79 @@
+id: TKT-0083
+version: 1
+created_at: 2026-03-16T05:02:19.582Z
+updated_at: 2026-03-16T05:02:19.582Z
+category: testing
+severity: high
+status: open
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/isolated/indexHandlers.test.ts
+  line_start: 1
+  code_snippet: ""
+related_locations: []
+title: "[test-fail] 22 failing tests in indexHandlers.test.ts"
+description: >-
+  22 tests failing in indexHandlers.test.ts:
+
+  - server fetch handlers > handles paste-image requests with and without files
+
+  - server message handlers > websocket open sends sessions and registry
+  broadcasts
+
+  - server message handlers > handles invalid payloads and unknown types
+
+  - server message handlers > refreshes sessions and creates new sessions
+
+  - server message handlers > returns errors for kill and rename when sessions
+  are missing
+
+  - server message handlers > handles kill and rename success paths
+
+  - server message handlers > attaches terminals and forwards input/output
+
+  - server message handlers > validates tmux target on terminal attach
+
+  - server message handlers > handles copy-mode commands for active session
+
+  - server message handlers > pins and unpins sessions with validation
+
+  - server message handlers > validates session resume errors
+
+  - server message handlers > resumes sessions and broadcasts activation
+
+  - server message handlers > websocket close disposes all terminals
+
+  - server signal handlers > SIGINT and SIGTERM cleanup terminals and exit
+
+  - server fetch handlers > server-info returns tailscale ip when available
+
+  - server fetch handlers > returns no response for successful websocket
+  upgrades
+
+  - server fetch handlers > returns upgrade failure for websocket requests
+
+  - server fetch handlers > handles paste-image requests with and without files
+
+  - server fetch handlers > returns 500 when paste-image upload fails
+
+  - server fetch handlers > returns session preview for existing logs
+
+  - server fetch handlers > returns 404 when session preview log is missing
+
+  - server startup side effects > prunes unattached websocket sessions on
+  startup
+suggestion: Fix the 22 failing test(s) in indexHandlers.test.ts
+auto_fixable: false
+effort: medium
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - bun-test
+notes: []
+resolution:
+  status: null
+  resolved_at: null
+  resolved_by: null
+  pr_url: null
+  commit_sha: null
+  resolution_notes: null
