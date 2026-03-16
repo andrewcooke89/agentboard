@@ -991,7 +991,7 @@ export class CronManager {
     if (isSystemd) {
       const scopeArgs = job.source === 'user-systemd' ? ['--user'] : []
       const timerUnit = `${job.name}.timer`
-      const serviceUnit = `${job.name}.service`
+      const _serviceUnit = `${job.name}.service`
 
       if (job.requiresSudo) {
         await this.runWithSudo(['systemctl', ...scopeArgs, 'stop', timerUnit], sudoCredential)
