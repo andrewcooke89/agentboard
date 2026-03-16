@@ -245,7 +245,7 @@ function extractCode(output: string): string | null {
 
 // ─── Git Helpers ──────────────────────────────────────────────────────────────
 
-function gitCurrentBranch(projectPath: string): string {
+function _gitCurrentBranch(projectPath: string): string {
   const result = Bun.spawnSync(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: projectPath })
   const branch = result.stdout.toString().trim()
   if (result.exitCode !== 0 || !branch) return 'main'
