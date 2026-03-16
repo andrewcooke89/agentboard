@@ -79,7 +79,18 @@ export function registerHttpRoutes(app: Hono, ctx: ServerContext, tlsEnabled: bo
     return next()
   })
 
-  app.get('/api/health', (c) => c.json({ ok: true }))
+  app.get('/api/health', (c) => {
+    const tmuxSession = process.env.TMUX_SESSION || 'agentboard'
+    const tmuxResult = Bun.spawnSync(['tmux', 'has-session', '-t', tmuxSession], { timeout: 1000 })
+    const tmux = tmuxResult.exitCode === 0
+
+    return c.json({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      tmux,
+    })
+  })
 
   // Auth check endpoint - validates the token and returns auth status
   app.get('/api/auth-check', (c) => {

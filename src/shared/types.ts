@@ -918,3 +918,13 @@ export interface DurationTrendData {
   average: number
   trend: string
 }
+
+/**
+ * Response shape for GET /api/health endpoint
+ */
+export interface HealthResponse {
+  status: 'ok'
+  uptime: number
+  timestamp: string
+  tmux: boolean
+}

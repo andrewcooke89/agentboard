@@ -83,8 +83,8 @@ if (!tmuxAvailable) {
     test('health endpoint responds', async () => {
       const response = await fetch(`http://localhost:${port}/api/health`)
       expect(response.ok).toBe(true)
-      const payload = (await response.json()) as { ok: boolean }
-      expect(payload.ok).toBe(true)
+      const payload = (await response.json()) as { status: string }
+      expect(payload.status).toBe('ok')
     })
 
     test('sessions endpoint returns tmux windows', async () => {
