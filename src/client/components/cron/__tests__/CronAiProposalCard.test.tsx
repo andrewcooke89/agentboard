@@ -121,6 +121,7 @@ function findTextContent(
   })[0]
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function findAllTextContent(
   root: TestRenderer.ReactTestInstance,
   text: string,
