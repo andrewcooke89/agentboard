@@ -1,7 +1,7 @@
 // WU-012: CronManager + App Integration Tests
 // Tests for AI toggle button, keyboard shortcuts, WS message handlers, and context sync
 
-import { afterEach, beforeEach, describe, expect, test, mock, jest } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { ServerMessage, CronJob, CronAiProposal } from '@shared/types'
 
