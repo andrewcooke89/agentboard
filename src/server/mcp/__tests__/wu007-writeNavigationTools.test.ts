@@ -13,7 +13,7 @@
 // we test both the success case (with mocked WS) and failure case (disconnected WS).
 // Tests MUST fail against stub implementation.
 
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
 import type { ProposalResult, CronAiProposalOperation } from '@shared/types'
 
 // ─── Fetch Mock Infrastructure ────────────────────────────────────────────────
