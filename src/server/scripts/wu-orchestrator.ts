@@ -21,7 +21,7 @@ import yaml from 'js-yaml'
 import { parseManifest, topologicalSort } from '../perWorkUnitEngine'
 import type { WorkUnit } from '../perWorkUnitEngine'
 import { loadProjectProfileRaw, extractTestContext, extractModelRoutingConfig } from '../projectProfile'
-import { loadModelRoutingConfig, shouldEscalate, getEscalatedModel, getEnvForModel } from '../modelEnvLoader'
+import { loadModelRoutingConfig, shouldEscalate, getEscalatedModel } from '../modelEnvLoader'
 import type { TestContext } from '../../shared/types'
 
 // ─── Crash Signal State ──────────────────────────────────────────────────────
