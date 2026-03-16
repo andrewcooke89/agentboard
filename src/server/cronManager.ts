@@ -8,7 +8,6 @@ import type { Database as SQLiteDatabase } from 'bun:sqlite'
 import { deleteOrphanedPrefs, pruneRunHistory as pruneDbRunHistory, getRunHistory } from './db'
 import type {
   CronJob,
-  CronJobDetail,
   JobRunRecord,
   CronCreateConfig,
   SystemdCreateConfig,
