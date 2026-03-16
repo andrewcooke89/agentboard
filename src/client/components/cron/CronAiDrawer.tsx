@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useCronAiStore, DRAWER_MAX_WIDTH } from '../../stores/cronAiStore'
+import { useCronAiStore } from '../../stores/cronAiStore'
 import { useCronStore } from '../../stores/cronStore'
 import { CronAiHeader } from './CronAiHeader'
 import { CronAiStatusBar } from './CronAiStatusBar'
