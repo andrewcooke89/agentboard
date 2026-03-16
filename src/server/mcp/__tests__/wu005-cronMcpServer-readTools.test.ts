@@ -788,7 +788,7 @@ describe('WU-005: MCP Server Core & Read Tools', () => {
     it('handles empty string query in search', async () => {
       queueSuccess([])
 
-      const result = await searchJobs('')
+      const _result = await searchJobs('')
 
       expect(capturedFetches.length).toBeGreaterThanOrEqual(1)
       expect(capturedFetches[0].url).toContain('/api/cron-ai/jobs/search')
