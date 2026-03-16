@@ -172,7 +172,7 @@ describe('CronAiDrawer', () => {
     })
 
     // AnimatePresence should render no motion.div children
-    const tree = renderer!.toJSON()
+    const _tree = renderer!.toJSON()
     // When closed, there should be no visible drawer content
     const terminals = renderer!.root.findAll((el) => el.props['data-testid'] === 'terminal')
     expect(terminals).toHaveLength(0)
