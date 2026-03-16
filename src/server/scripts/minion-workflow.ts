@@ -257,7 +257,7 @@ function gitCreateBranch(projectPath: string, branchName: string): boolean {
   return result.exitCode === 0
 }
 
-function gitCheckout(projectPath: string, branch: string): boolean {
+function _gitCheckout(projectPath: string, branch: string): boolean {
   const result = Bun.spawnSync(['git', 'checkout', branch], { cwd: projectPath })
   return result.exitCode === 0
 }
