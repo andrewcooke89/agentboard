@@ -1233,7 +1233,7 @@ export class CronManager {
 
   /** Reject commands with newlines and null bytes */
   private validateCronCommand(command: string): void {
-    if (/[\n\r\0]/.test(command)) {
+    if (/[\n\r\x00]/.test(command)) {
       throw new Error('Command contains invalid characters (newline/carriage return/null byte)')
     }
     if (!command.trim()) {
