@@ -82,9 +82,6 @@ function queueSuccess(body: unknown, status = 200) {
   fetchResponseQueue.push({ ok: status >= 200 && status < 300, status, body })
 }
 
-function queueNetworkError() {
-  fetchResponseQueue.push({ error: new TypeError('fetch failed') })
-}
 
 // ─── Module Under Test ──────────────────────────────────────────────────────
 
