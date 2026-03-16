@@ -47,20 +47,6 @@ function makeCronJob(overrides: Partial<CronJob> = {}): CronJob {
   }
 }
 
-function makeJobDetail(overrides: Partial<CronJobDetail> = {}): CronJobDetail {
-  return {
-    ...makeCronJob(),
-    scriptContent: '#!/bin/bash\necho backup',
-    scriptLanguage: 'bash',
-    timerConfig: null,
-    serviceConfig: null,
-    crontabLine: '0 * * * * /usr/bin/backup.sh',
-    runHistory: [],
-    recentLogs: [],
-    ...overrides,
-  }
-}
-
 function makeUiContext(overrides: Partial<UiContext> = {}): UiContext {
   return {
     selectedJobId: null,
