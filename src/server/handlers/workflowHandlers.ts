@@ -985,7 +985,7 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
         return {
           ...run,
           steps_state: run.steps_state.map(
-            ({ resultContent, reviewFeedback, reviewIterations, detectedSignals, childSteps, ...rest }: StepRunState) => rest
+            ({ resultContent: _resultContent, reviewFeedback: _reviewFeedback, reviewIterations: _reviewIterations, detectedSignals: _detectedSignals, childSteps: _childSteps, ...rest }: StepRunState) => rest
           ),
         }
       }
