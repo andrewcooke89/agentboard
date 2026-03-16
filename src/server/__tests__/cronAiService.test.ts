@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach, mock, afterEach } from 'bun:test'
 import { CronAiService, type CronAiServiceConfig, type CronAiServiceDeps } from '../cronAiService'
 import type {
   CronJob,
-  CronJobDetail,
   JobRunRecord,
   UiContext,
   CronAiProposal,
