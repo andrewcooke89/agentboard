@@ -15,6 +15,7 @@
  */
 
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import yaml from 'js-yaml'
 import { FileStorage } from '/home/andrew-cooke/tools/mcp-servers/ticket-system/src/storage/file-storage'
@@ -245,6 +246,62 @@ async function fixTicket(
   return { ticket, commitMsg: `- ${ticket.id}: ${ticket.title}` }
 }
 
+// ─── Workflow Routing for Complex Tickets ───────────────────────────────────
+
+function generateBriefYaml(ticket: Ticket): string {
+  const briefDir = path.join(os.homedir(), '.agentboard', 'minion-briefs')
+  fs.mkdirSync(briefDir, { recursive: true })
+  const briefPath = path.join(briefDir, `from-ticket-${ticket.id}.yaml`)
+
+  const sourceFiles = ticket.source.file ? [ticket.source.file] : []
+  const brief = {
+    title: ticket.title,
+    description: ticket.description,
+    target_files: sourceFiles,
+    ticket_id: ticket.id,
+    category: ticket.category,
+    effort: ticket.effort,
+  }
+
+  fs.writeFileSync(briefPath, yaml.dump(brief))
+  return briefPath
+}
+
+async function fixViaWorkflow(
+  ticket: Ticket,
+  project: ProjectConfig,
+  args: CliArgs,
+  storage: FileStorage,
+  tag: string,
+): Promise<FixResult | null> {
+  console.log(`${tag} [${ticket.id}] Routing to minion-workflow: ${ticket.title}`)
+
+  const briefPath = generateBriefYaml(ticket)
+  const scriptDir = path.dirname(new URL(import.meta.url).pathname)
+  const workflowScript = path.join(scriptDir, 'minion-workflow.ts')
+
+  console.log(`${tag} [${ticket.id}] Brief: ${briefPath}`)
+  console.log(`${tag} [${ticket.id}] Spawning minion-workflow...`)
+
+  const result = Bun.spawnSync(
+    ['bun', 'run', workflowScript, '--brief', briefPath, '--project', project.path, '--api-url', args.apiUrl],
+    { cwd: project.path, stdout: 'pipe', stderr: 'pipe', timeout: 3_600_000_000_000 },
+  )
+
+  const stderr = new TextDecoder().decode(result.stderr)
+
+  if (result.exitCode === 0) {
+    console.log(`${tag} [${ticket.id}] Workflow completed successfully`)
+    storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-workflow', reason: 'Fixed via TDD workflow' })
+    return { ticket, commitMsg: `- ${ticket.id}: ${ticket.title} (via workflow)` }
+  }
+
+  console.error(`${tag} [${ticket.id}] Workflow failed (exit=${result.exitCode})`)
+  if (stderr) console.error(`${tag} [${ticket.id}] stderr: ${stderr.slice(0, 500)}`)
+  storage.transitionTicket(ticket.id, 'validated', { reason: `minion-workflow failed (exit=${result.exitCode})` })
+  return null
+}
+
 // ─── Per-Project Processing ──────────────────────────────────────────────────
 
 async function processProject(
@@ -331,7 +388,11 @@ async function processProject(
       const prCommitMessages: string[] = []
 
       for (const ticket of prTickets) {
-        const result = await fixTicket(ticket, project, args, storage, tag)
+        // Route medium bun-test tickets to the TDD workflow pipeline
+        const useWorkflow = ticket.effort === 'medium' && ticket.tags?.includes('bun-test')
+        const result = useWorkflow
+          ? await fixViaWorkflow(ticket, project, args, storage, tag)
+          : await fixTicket(ticket, project, args, storage, tag)
         if (result) {
           prCommitMessages.push(result.commitMsg)
           fixed++

@@ -238,13 +238,109 @@ function parseCargoJson(stdout: string): Finding[] {
   return findings
 }
 
+/**
+ * Parse bun test output for failing tests.
+ * Groups failures by test file and extracts error messages.
+ */
+function parseBunTest(output: string, projectPath: string): Finding[] {
+  const findings: Finding[] = []
+  const lines = output.split('\n')
+
+  let currentFile = ''
+  const errorBuffer: string[] = []
+
+  for (const line of lines) {
+    // File header: "src/server/__tests__/file.test.ts:"
+    const fileMatch = line.match(/^(src\/.+\.test\.tsx?):$/)
+    if (fileMatch) {
+      currentFile = path.join(projectPath, fileMatch[1])
+      errorBuffer.length = 0
+      continue
+    }
+
+    // Collect error lines (SyntaxError, TypeError, expect failures, etc.)
+    if (/^(SyntaxError|TypeError|Error|ReferenceError|expect\()/.test(line)) {
+      errorBuffer.push(line.trim())
+      continue
+    }
+
+    // Failing test: "(fail) suite > test name [Xms]" or "(fail) suite > test name"
+    const failMatch = line.match(/^\(fail\)\s+(.+?)(?:\s+\[\d+\.\d+ms\])?$/)
+    if (failMatch) {
+      const testName = failMatch[1].trim()
+      const errorMsg = errorBuffer.length > 0
+        ? errorBuffer[0]
+        : 'Test failed'
+
+      findings.push({
+        file: currentFile || 'unknown',
+        line_start: 1,  // bun test doesn't report line numbers; 1 satisfies Zod > 0
+        message: `${testName}: ${errorMsg}`,
+        code: testName,
+        severity: 'error',
+      })
+
+      errorBuffer.length = 0
+      continue
+    }
+  }
+
+  return findings
+}
+
+/**
+ * Run bun test directly against test directories with piped output.
+ * The test-runner script uses stdout:'inherit' which doesn't pipe to us,
+ * so we invoke bun test directly on the test dirs.
+ */
+function runBunTestDetector(project: ProjectConfig): Finding[] {
+  const testDirs = [
+    'src/server/__tests__/',
+    'src/server/__tests__/isolated/',
+    'src/client/__tests__/',
+  ]
+
+  const allFindings: Finding[] = []
+
+  for (const dir of testDirs) {
+    const absDir = path.join(project.path, dir)
+    if (!fs.existsSync(absDir)) continue
+
+    console.log(`  [run] bun-test: bun test ${dir}`)
+    const result = Bun.spawnSync(['bun', 'test', dir], {
+      cwd: project.path,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: 120_000_000_000, // 120s in nanoseconds
+    })
+
+    const stdout = new TextDecoder().decode(result.stdout)
+    const stderr = new TextDecoder().decode(result.stderr)
+    const combined = stdout + (stderr ? '\n' + stderr : '')
+
+    const findings = parseBunTest(combined, project.path)
+    allFindings.push(...findings)
+  }
+
+  return allFindings
+}
+
 // ─── Detector Runner ──────────────────────────────────────────────────────────
 
 function runDetector(
   detector: string,
   project: ProjectConfig
 ): Finding[] {
-  const cmdStr = detector === 'oxlint' || detector === 'clippy'
+  // bun-test runs directly against test dirs (not through test-runner which uses stdout:inherit)
+  if (detector === 'bun-test') {
+    if (!project.test_cmd) {
+      console.log(`  [skip] No test_cmd configured for bun-test detector`)
+      return []
+    }
+    return runBunTestDetector(project)
+  }
+
+  const cmdStr = (detector === 'oxlint' || detector === 'clippy')
     ? project.lint_cmd
     : project.typecheck_cmd
 
@@ -264,6 +360,7 @@ function runDetector(
     cwd: project.path,
     stdout: 'pipe',
     stderr: 'pipe',
+    timeout: 120_000_000_000, // 120s in nanoseconds
   })
 
   const stdout = new TextDecoder().decode(result.stdout)
@@ -363,6 +460,7 @@ function sweepStaleTickets(storage: FileStorage, projectPath: string, tag: strin
 
 function findingToCategory(detector: string): TicketCategory {
   if (detector === 'oxlint' || detector === 'clippy') return 'style'
+  if (detector === 'bun-test') return 'testing'
   return 'error-handling'
 }
 
@@ -396,6 +494,83 @@ async function processProject(project: ProjectConfig, skipSweep: boolean): Promi
     totalFindings += findings.length
 
     const category = findingToCategory(detector)
+
+    // For bun-test: group failures by file and create one ticket per file
+    // This avoids 21 tickets for the same root cause (e.g. missing mock export)
+    if (detector === 'bun-test' && findings.length > 0) {
+      const byFile = new Map<string, Finding[]>()
+      for (const f of findings) {
+        const arr = byFile.get(f.file) ?? []
+        arr.push(f)
+        byFile.set(f.file, arr)
+      }
+
+      for (const [file, fileFindings] of byFile) {
+        // Use first error as representative
+        const first = fileFindings[0]
+        const allSameError = fileFindings.every(f => f.message.includes(first.message.split(':')[1]?.trim() ?? ''))
+
+        // Same root cause → one ticket for all failures (workflow can fix them together)
+        // Different root causes → chunk into groups of 5 so each workflow has a focused scope
+        const MAX_PER_TICKET = 5
+        const chunks: Finding[][] = allSameError
+          ? [fileFindings]
+          : Array.from({ length: Math.ceil(fileFindings.length / MAX_PER_TICKET) }, (_, i) =>
+              fileFindings.slice(i * MAX_PER_TICKET, (i + 1) * MAX_PER_TICKET))
+
+        for (const chunk of chunks) {
+          const count = chunk.length
+          const chunkFirst = chunk[0]
+
+          const rawTitle = count === 1
+            ? `[test-fail] ${chunkFirst.message}`
+            : `[test-fail] ${count} failing tests in ${path.basename(file)}`
+          const title = rawTitle.length > 120 ? rawTitle.slice(0, 117) + '...' : rawTitle
+
+          const description = count === 1
+            ? chunkFirst.message
+            : `${count} tests failing in ${path.basename(file)}:\n${chunk.map(f => `- ${f.code}`).join('\n')}` +
+              (allSameError ? `\n\nAll failures share the same root cause: ${chunkFirst.message.split(':').slice(1).join(':').trim()}` : '')
+
+          // Dedup against existing tickets by file + category
+          const dupResult = checkDuplicate(
+            file, 1, undefined, category, undefined,
+            existingTickets, storage.getConfig()
+          )
+          if (dupResult.is_duplicate) {
+            totalDupes += count
+            continue
+          }
+
+          const effort = count > 3 ? 'medium' : 'small'
+
+          const ticket = storage.createTicket({
+            category,
+            severity: 'high',
+            status: 'open',
+            source: {
+              file,
+              line_start: 1,
+              code_snippet: '',
+            },
+            related_locations: [],
+            title,
+            description,
+            suggestion: `Fix the ${count} failing test(s) in ${path.basename(file)}`,
+            auto_fixable: false,
+            effort,
+            found_by: 'minion-detect',
+            related_tickets: [],
+            tags: ['nightly', 'bun-test'],
+            notes: [],
+          })
+
+          existingTickets.push(ticket)
+          totalCreated++
+        }
+      }
+      continue
+    }
 
     for (const finding of findings) {
       const dupResult = checkDuplicate(

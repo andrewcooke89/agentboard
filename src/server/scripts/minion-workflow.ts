@@ -637,7 +637,7 @@ ${testFileErrors}
   const testRun = Bun.spawnSync(['bun', 'test', ...testPaths], { cwd: workCard.project })
   workCard.gates.tests_fail_expected = testRun.exitCode !== 0
   if (!workCard.gates.tests_fail_expected) {
-    console.warn(`${tag} WARNING: tests passed before implementation — something may be wrong`)
+    console.warn(`${tag} WARN: tests already pass before implementation — may be modifying existing code or tests are too loose`)
   } else {
     console.log(`${tag} Tests fail as expected (no implementation yet)`)
   }
@@ -1311,7 +1311,8 @@ async function main(): Promise<void> {
   console.log(`[minion-workflow] Work card: ${path.join(runDir(workCard.run_id), 'work-card.yaml')}`)
   console.log(`[minion-workflow] Gates:`)
   for (const [gate, val] of Object.entries(workCard.gates)) {
-    console.log(`  ${gate}: ${val === null ? 'n/a' : val ? 'PASS' : 'FAIL'}`)
+    const label = val === null ? 'n/a' : val ? 'PASS' : gate === 'tests_fail_expected' ? 'WARN' : 'FAIL'
+    console.log(`  ${gate}: ${label}`)
   }
 }
 

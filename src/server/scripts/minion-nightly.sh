@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# Cron doesn't inherit user PATH — add bun and local bin
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:/usr/local/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="/home/andrew-cooke/tools/agentboard"
 API_URL="http://localhost:4040"
