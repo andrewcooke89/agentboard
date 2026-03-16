@@ -177,20 +177,6 @@ function findByProp(root: ReactTestInstance, prop: string, value: unknown): Reac
   return results
 }
 
-/** Find container div (the one useTerminal attaches to) */
-function findTerminalContainer(root: ReactTestInstance): ReactTestInstance | undefined {
-  // The container div should use the containerRef from useTerminal
-  try {
-    return root.findAll(node => {
-      try {
-        return node.type === 'div' && node.props.ref === mockContainerRef
-      } catch { return false }
-    })[0]
-  } catch {
-    return undefined
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /*  Tests                                                              */
 /* ------------------------------------------------------------------ */
