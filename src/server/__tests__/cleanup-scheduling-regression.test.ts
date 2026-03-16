@@ -29,9 +29,6 @@ describe('BUG-3 & BUG-4: Cleanup/prune ineffective due to deferred setDb()', () 
     const cronManagerMatch = src.match(/const\s+cronManager\s*=\s*new\s+CronManager\s*\(\s*\)/)
     expect(cronManagerMatch).not.toBeNull()
 
-    // Find where setDb is called
-    const setDbCalls = src.match(/cronManager\.setDb\s*\(/g) || []
-
     // After fix: setDb should be called immediately after CronManager instantiation
     // (not just inside startPollingLifecycle)
 
