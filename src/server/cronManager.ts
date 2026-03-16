@@ -1232,6 +1232,7 @@ export class CronManager {
 
   /** Reject commands with newlines and null bytes */
   private validateCronCommand(command: string): void {
+    // eslint-disable-next-line no-control-regex
     if (/[\n\r\x00]/.test(command)) {
       throw new Error('Command contains invalid characters (newline/carriage return/null byte)')
     }
