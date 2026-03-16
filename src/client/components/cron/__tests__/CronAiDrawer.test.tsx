@@ -68,7 +68,7 @@ function setupDom() {
     removeEventListener: () => {},
     innerWidth: 1024,
     innerHeight: 768,
-    matchMedia: (query: string) => ({
+    matchMedia: (_query: string) => ({
       matches: false,
       addEventListener: () => {},
       removeEventListener: () => {},
