@@ -753,7 +753,7 @@ describe('dagEngine', () => {
         ])
 
         dagEngine.tick(run, parsed)
-        const freshRun = workflowStore.getRun(run.id)!
+        const _freshRun = workflowStore.getRun(run.id)!
 
         // Task should be created
         const tasks = taskStore.listTasks()
