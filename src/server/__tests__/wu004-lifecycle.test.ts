@@ -6,7 +6,7 @@
 // CronAiService wiring. They read the actual source file to check for
 // integration points, failing until WU-004 adds the wiring.
 
-import { describe, it, expect, mock } from 'bun:test'
+import { describe, it, expect } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
