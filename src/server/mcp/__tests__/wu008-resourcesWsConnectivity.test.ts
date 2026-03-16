@@ -199,7 +199,7 @@ describe('WU-008: MCP Server Resources & WS Connectivity', () => {
       // When the WS client receives { type: 'cron-ai-context-update', context: {...} },
       // getContextResource() should return the new context.
       // This test will fail until connectWebSocket processes incoming messages.
-      const ctx = makeUiContext({ selectedJobId: 'job-99', activeTab: 'logs' })
+      const _ctx = makeUiContext({ selectedJobId: 'job-99', activeTab: 'logs' })
 
       // The WS handler should process this message and update localContextCache.
       // We simulate by checking that after a push, getContextResource reflects the update.

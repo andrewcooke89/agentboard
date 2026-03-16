@@ -1,10 +1,10 @@
 id: TKT-0055
 version: 1
 created_at: 2026-03-16T04:47:27.276Z
-updated_at: 2026-03-16T04:47:27.276Z
+updated_at: 2026-03-16T06:33:27.169Z
 category: style
 severity: medium
-status: open
+status: validated
 source:
   file: /home/andrew-cooke/tools/agentboard/src/client/components/cron/__tests__/CronAiTerminal.test.tsx
   line_start: 199
@@ -22,7 +22,10 @@ related_tickets: []
 tags:
   - nightly
   - oxlint
-notes: []
+notes:
+  - timestamp: 2026-03-16T06:33:27.168Z
+    author: system
+    content: "Status changed to validated: minion-fix: Typecheck failed"
 resolution:
   status: null
   resolved_at: null
