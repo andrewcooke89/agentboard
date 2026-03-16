@@ -501,7 +501,7 @@ export function createCronHandlers(
 
     // Build a minimal detail update with the refreshed logs
     const prefs = getJobPrefs(ctx.db.db, jobId)
-    const [runHistory] = await Promise.all([historyService.getRunHistory(jobId, 20)])
+    const runHistory = await historyService.getRunHistory(jobId, 20)
 
     let scriptContent: string | null = null
     if (job.scriptPath) {
