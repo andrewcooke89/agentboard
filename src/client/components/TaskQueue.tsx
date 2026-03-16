@@ -17,7 +17,7 @@ interface TaskQueueProps {
 }
 
 export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask, onNavigateToWorkflow }: TaskQueueProps) {
-  const prefersReducedMotion = useReducedMotion()
+  const _prefersReducedMotion = useReducedMotion()
   const tasks = useTaskStore((s) => s.tasks)
   const templates = useTaskStore((s) => s.templates)
   const stats = useTaskStore((s) => s.stats)
