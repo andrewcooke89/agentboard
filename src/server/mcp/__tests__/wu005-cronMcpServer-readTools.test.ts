@@ -13,7 +13,7 @@
 // Each test asserts the URL, method, headers, and response handling.
 // Tests MUST fail against the current stub implementation (throw 'Not implemented').
 
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import type { CronJob, CronJobDetail, JobRunRecord } from '@shared/types'
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
