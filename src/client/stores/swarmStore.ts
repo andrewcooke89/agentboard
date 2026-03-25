@@ -117,6 +117,23 @@ function getAutoSelectedGroupId(
   return groups.find(isActiveGroup)?.groupId ?? null
 }
 
+function getValidSelectedWoId(
+  groups: SwarmGroupState[],
+  selectedGroupId: string | null,
+  selectedWoId: string | null
+): string | null {
+  if (!selectedGroupId || !selectedWoId) {
+    return null
+  }
+
+  const selectedGroup = groups.find((group) => group.groupId === selectedGroupId)
+  if (!selectedGroup) {
+    return null
+  }
+
+  return selectedGroup.wos[selectedWoId] ? selectedWoId : null
+}
+
 function applySwarmEvent(group: SwarmGroupState, event: SwarmEvent): SwarmGroupState {
   const nextGroup = cloneGroup(group)
 
@@ -252,7 +269,18 @@ export const useSwarmStore = create<SwarmStore>()(
         return group.wos[get().selectedWoId ?? ''] ?? null
       },
 
-      setGroups: (groups) => set({ groups }),
+      setGroups: (groups) => {
+        const nextGroups = groups.map(cloneGroup)
+        set((state) => {
+          const selectedGroupId = getAutoSelectedGroupId(nextGroups, state.selectedGroupId)
+          return {
+            groups: nextGroups,
+            selectedGroupId,
+            selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
+            eventLog: selectedGroupId === state.selectedGroupId ? state.eventLog : [],
+          }
+        })
+      },
 
       selectGroup: (groupId) => {
         const selectedGroupId = getValidSelectedGroupId(get().groups, groupId)
@@ -282,17 +310,17 @@ export const useSwarmStore = create<SwarmStore>()(
           }
 
           const selectedGroupId = getAutoSelectedGroupId(groups, state.selectedGroupId)
-          const selectedGroup = groups.find((group) => group.groupId === selectedGroupId) ?? null
-          const selectedWoId =
-            selectedGroup && state.selectedWoId && selectedGroup.wos[state.selectedWoId]
-              ? state.selectedWoId
-              : null
+          const selectedWoId = getValidSelectedWoId(groups, selectedGroupId, state.selectedWoId)
+          const eventLog =
+            selectedGroupId === event.groupId
+              ? [...state.eventLog, event].slice(-200)
+              : state.eventLog
 
           return {
             groups,
             selectedGroupId,
             selectedWoId,
-            eventLog: [...state.eventLog.slice(-199), event],
+            eventLog,
           }
         })
       },
@@ -301,8 +329,12 @@ export const useSwarmStore = create<SwarmStore>()(
         const nextGroups = groups.map(cloneGroup)
         set((state) => ({
           groups: nextGroups,
-          selectedGroupId: getValidSelectedGroupId(nextGroups, state.selectedGroupId),
-          selectedWoId: null,
+          selectedGroupId: getAutoSelectedGroupId(nextGroups, state.selectedGroupId),
+          selectedWoId: getValidSelectedWoId(
+            nextGroups,
+            getAutoSelectedGroupId(nextGroups, state.selectedGroupId),
+            state.selectedWoId
+          ),
           eventLog: [],
         }))
       },
