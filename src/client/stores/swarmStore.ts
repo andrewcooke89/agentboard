@@ -111,10 +111,22 @@ function getAutoSelectedGroupId(
 ): string | null {
   const validSelectedGroupId = getValidSelectedGroupId(groups, selectedGroupId)
   if (validSelectedGroupId) {
+    const selectedGroup = groups.find((group) => group.groupId === validSelectedGroupId)
+    if (selectedGroup && isActiveGroup(selectedGroup)) {
+      return validSelectedGroupId
+    }
+  }
+
+  const firstActiveGroupId = groups.find(isActiveGroup)?.groupId
+  if (firstActiveGroupId) {
+    return firstActiveGroupId
+  }
+
+  if (validSelectedGroupId) {
     return validSelectedGroupId
   }
 
-  return groups.find(isActiveGroup)?.groupId ?? null
+  return groups[0]?.groupId ?? null
 }
 
 function getValidSelectedWoId(
@@ -311,10 +323,13 @@ export const useSwarmStore = create<SwarmStore>()(
 
           const selectedGroupId = getAutoSelectedGroupId(groups, state.selectedGroupId)
           const selectedWoId = getValidSelectedWoId(groups, selectedGroupId, state.selectedWoId)
+          const selectedGroupChanged = selectedGroupId !== state.selectedGroupId
           const eventLog =
             selectedGroupId === event.groupId
-              ? [...state.eventLog, event].slice(-200)
-              : state.eventLog
+              ? [...(selectedGroupChanged ? [] : state.eventLog), event].slice(-200)
+              : selectedGroupChanged
+                ? []
+                : state.eventLog
 
           return {
             groups,
