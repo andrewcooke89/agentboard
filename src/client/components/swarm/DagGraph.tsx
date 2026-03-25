@@ -37,6 +37,7 @@ interface LayoutResult {
   width: number
   height: number
   viewBox: string
+  hasCycle: boolean
 }
 
 function truncateLabel(value: string): string {
@@ -47,7 +48,10 @@ function truncateLabel(value: string): string {
   return `${value.slice(0, MAX_LABEL_LENGTH - 1)}…`
 }
 
-function topologicalOrder(nodeIds: string[], edges: Array<{ from: string; to: string }>): string[] {
+function topologicalOrder(
+  nodeIds: string[],
+  edges: Array<{ from: string; to: string }>
+): { ordered: string[]; hasCycle: boolean } {
   const adjacency = new Map<string, string[]>()
   const inDegree = new Map<string, number>()
 
@@ -83,11 +87,11 @@ function topologicalOrder(nodeIds: string[], edges: Array<{ from: string; to: st
   }
 
   if (ordered.length === nodeIds.length) {
-    return ordered
+    return { ordered, hasCycle: false }
   }
 
   const remaining = nodeIds.filter((nodeId) => !ordered.includes(nodeId)).sort()
-  return [...ordered, ...remaining]
+  return { ordered: [...ordered, ...remaining], hasCycle: true }
 }
 
 function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: string; to: string }>): LayoutResult {
@@ -99,12 +103,13 @@ function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: s
       width: 0,
       height: 0,
       viewBox: '0 0 0 0',
+      hasCycle: false,
     }
   }
 
   const nodeIdSet = new Set(nodeIds)
   const validEdges = edges.filter((edge) => nodeIdSet.has(edge.from) && nodeIdSet.has(edge.to))
-  const ordered = topologicalOrder(nodeIds, validEdges)
+  const { ordered, hasCycle } = topologicalOrder(nodeIds, validEdges)
   const incoming = new Map<string, string[]>()
 
   for (const nodeId of nodeIds) {
@@ -134,10 +139,17 @@ function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: s
     layers.set(layer, layerNodes)
   }
 
+  for (const layerNodes of layers.values()) {
+    layerNodes.sort((left, right) => left.localeCompare(right))
+  }
+
   const tallestLayerSize = Math.max(...Array.from(layers.values(), (layerNodes) => layerNodes.length))
   const contentHeight = NODE_HEIGHT + Math.max(0, tallestLayerSize - 1) * VERTICAL_SPACING
   const nodes: PositionedNode[] = []
-  let maxX = 0
+  let minX = 0
+  let minY = 0
+  let maxX = NODE_WIDTH
+  let maxY = NODE_HEIGHT
 
   for (const [layer, layerNodes] of Array.from(layers.entries()).sort((a, b) => a[0] - b[0])) {
     const layerHeight = NODE_HEIGHT + Math.max(0, layerNodes.length - 1) * VERTICAL_SPACING
@@ -147,18 +159,22 @@ function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: s
       const x = layer * HORIZONTAL_SPACING
       const y = verticalOffset + index * VERTICAL_SPACING
       nodes.push({ woId, x, y, layer })
-      maxX = Math.max(maxX, x)
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x + NODE_WIDTH)
+      maxY = Math.max(maxY, y + NODE_HEIGHT)
     })
   }
 
-  const width = maxX + NODE_WIDTH + PADDING * 2
-  const height = contentHeight + PADDING * 2
+  const width = maxX - minX + PADDING * 2
+  const height = Math.max(contentHeight, maxY - minY) + PADDING * 2
 
   return {
     nodes,
     width,
     height,
-    viewBox: `${-PADDING} ${-PADDING} ${width} ${height}`,
+    viewBox: `${minX - PADDING} ${minY - PADDING} ${width} ${height}`,
+    hasCycle,
   }
 }
 
@@ -208,20 +224,6 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
         aria-label="Swarm work order dependency graph"
         style={{ display: 'block', minWidth: layout.width, minHeight: layout.height }}
       >
-        <style>
-          {`
-            @keyframes dagGraphPulse {
-              0% { opacity: 0.85; }
-              50% { opacity: 1; }
-              100% { opacity: 0.85; }
-            }
-
-            .dag-graph-pulse {
-              animation: dagGraphPulse 2s ease-in-out infinite;
-            }
-          `}
-        </style>
-
         <defs>
           <marker
             id="dag-graph-arrow"
@@ -254,6 +256,7 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
               stroke={stroke}
               strokeWidth={2}
               markerEnd="url(#dag-graph-arrow)"
+              style={{ transition: 'stroke 160ms ease' }}
             />
           )
         })}
@@ -279,7 +282,7 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
                 fill={fill}
                 stroke={isSelected ? '#ffffff' : 'transparent'}
                 strokeWidth={isSelected ? 2 : 0}
-                className={wo.status === 'running' ? 'dag-graph-pulse' : undefined}
+                style={wo.status === 'running' ? { animation: 'pulse 1.5s ease-in-out infinite' } : undefined}
               />
               <text
                 x={NODE_WIDTH / 2}
@@ -294,10 +297,10 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
               </text>
               {tier > 0 && (
                 <>
-                  <circle cx={NODE_WIDTH - 12} cy={12} r={10} fill="#111827" stroke="#ffffff" strokeWidth={1} />
+                  <circle cx={NODE_WIDTH - 14} cy={14} r={9} fill="#111827" stroke="#ffffff" strokeWidth={1} />
                   <text
-                    x={NODE_WIDTH - 12}
-                    y={12}
+                    x={NODE_WIDTH - 14}
+                    y={14}
                     fill="#ffffff"
                     fontSize="10"
                     fontWeight="700"
@@ -312,6 +315,11 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
             </g>
           )
         })}
+        {layout.hasCycle && (
+          <text x={0} y={-10} fill="#f59e0b" fontSize="11" textAnchor="start">
+            Dependency cycle detected. Layout may be approximate.
+          </text>
+        )}
       </svg>
     </div>
   )

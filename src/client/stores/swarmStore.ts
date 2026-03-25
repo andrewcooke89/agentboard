@@ -1,11 +1,11 @@
+// swarmStore.ts - Zustand store for swarm state
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import type {
   SwarmGroupState,
   SwarmEvent,
   SwarmWoState,
-  WoStatus,
-} from '../../shared/swarmTypes'
+} from '@shared/swarmTypes'
 import { safeStorage } from '../utils/storage'
 import { authFetch } from '../utils/api'
 
@@ -225,7 +225,7 @@ function applySwarmEvent(group: SwarmGroupState, event: SwarmEvent): SwarmGroupS
       const current = nextGroup.wos[event.woId] ?? createInitialWoState(event.woId)
       nextGroup.wos[event.woId] = {
         ...current,
-        status: 'escalated' as WoStatus,
+        status: 'escalated',
         model: event.toModel,
         escalationTier: event.toTier,
         errorHistory: [
@@ -327,14 +327,11 @@ export const useSwarmStore = create<SwarmStore>()(
 
       handleSwarmState: (groups) => {
         const nextGroups = groups.map(cloneGroup)
+        const selectedGroupId = getAutoSelectedGroupId(nextGroups, get().selectedGroupId)
         set((state) => ({
           groups: nextGroups,
-          selectedGroupId: getAutoSelectedGroupId(nextGroups, state.selectedGroupId),
-          selectedWoId: getValidSelectedWoId(
-            nextGroups,
-            getAutoSelectedGroupId(nextGroups, state.selectedGroupId),
-            state.selectedWoId
-          ),
+          selectedGroupId,
+          selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
           eventLog: [],
         }))
       },
@@ -355,7 +352,7 @@ export const useSwarmStore = create<SwarmStore>()(
       },
     }),
     {
-      name: 'swarm',
+      name: 'agentboard-swarm',
       storage: createJSONStorage(() => safeStorage),
       partialize: (state) => ({
         selectedGroupId: state.selectedGroupId,
