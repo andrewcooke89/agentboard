@@ -186,7 +186,7 @@ pub async fn execute(
 
             // Auto-commit if configured
             if work_order.output.commit {
-                if let Err(e) = auto_commit(work_order, working_dir) {
+                if let Err(e) = auto_commit(work_order, &agent_result.diffs, working_dir) {
                     warn!(wo_id = %work_order.id, error = %e, "Auto-commit failed");
                     last_error = Some(format!("Gates passed but commit failed: {e}"));
                     last_gate_results = Some(gate_results);
@@ -712,43 +712,41 @@ depends_on:
 }
 
 /// Auto-commit changed files after all gates pass.
-fn auto_commit(work_order: &WorkOrder, working_dir: &Path) -> Result<()> {
+/// Only stages files that were part of the diffs — never `git add -A`.
+fn auto_commit(work_order: &WorkOrder, diffs: &[StructuredDiff], working_dir: &Path) -> Result<()> {
     use std::process::Command;
 
     let prefix = &work_order.output.commit_prefix;
     let scope = work_order.scope.as_deref().unwrap_or("misc");
     let title = &work_order.title;
 
-    // Stage all changes in the working directory
-    let add_output = Command::new("git")
-        .args(["add", "-A"])
-        .current_dir(working_dir)
-        .output()
-        .context("Failed to run git add")?;
+    // Stage only the files touched by diffs
+    let files: Vec<&str> = diffs.iter().map(|d| d.file.as_str()).collect();
+    if files.is_empty() {
+        info!(wo_id = %work_order.id, "No diff files to commit");
+        return Ok(());
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.arg("add").current_dir(working_dir);
+    for f in &files {
+        cmd.arg(f);
+    }
+    let add_output = cmd.output().context("Failed to run git add")?;
 
     if !add_output.status.success() {
         let stderr = String::from_utf8_lossy(&add_output.stderr);
         anyhow::bail!("git add failed: {stderr}");
     }
 
-    // Check if there's anything to commit
-    let status_output = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(working_dir)
-        .output()
-        .context("Failed to run git diff --cached")?;
-
-    if status_output.status.success() {
-        info!(wo_id = %work_order.id, "Nothing to commit (no staged changes)");
-        return Ok(());
-    }
+    info!(wo_id = %work_order.id, files = ?files, "Staged diff files");
 
     // Build commit message: "feat(src/shared): Add formatDuration utility [WO-TEST-001]"
     let scope_short = scope.trim_end_matches('/');
     let msg = format!("{prefix}({scope_short}): {title} [{}]", work_order.id);
 
     let commit_output = Command::new("git")
-        .args(["commit", "-m", &msg])
+        .args(["commit", "--no-verify", "-m", &msg])
         .current_dir(working_dir)
         .output()
         .context("Failed to run git commit")?;

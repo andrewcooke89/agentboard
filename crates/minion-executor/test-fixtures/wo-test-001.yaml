@@ -61,5 +61,5 @@ isolation:
   base: HEAD
 
 output:
-  commit: false
+  commit: true
   commit_prefix: "feat"
