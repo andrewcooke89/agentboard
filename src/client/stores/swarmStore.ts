@@ -277,7 +277,7 @@ export const useSwarmStore = create<SwarmStore>()(
             groups: nextGroups,
             selectedGroupId,
             selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
-            eventLog: selectedGroupId === state.selectedGroupId ? state.eventLog : [],
+            eventLog: [],
           }
         })
       },
@@ -326,14 +326,16 @@ export const useSwarmStore = create<SwarmStore>()(
       },
 
       handleSwarmState: (groups) => {
-        const nextGroups = groups.map(cloneGroup)
-        const selectedGroupId = getAutoSelectedGroupId(nextGroups, get().selectedGroupId)
-        set((state) => ({
-          groups: nextGroups,
-          selectedGroupId,
-          selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
-          eventLog: [],
-        }))
+        set((state) => {
+          const nextGroups = groups.map(cloneGroup)
+          const selectedGroupId = getAutoSelectedGroupId(nextGroups, state.selectedGroupId)
+          return {
+            groups: nextGroups,
+            selectedGroupId,
+            selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
+            eventLog: [],
+          }
+        })
       },
 
       fetchGroups: async () => {
