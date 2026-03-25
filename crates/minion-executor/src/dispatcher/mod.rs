@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::config::Config;
+use crate::event_reporter::{
+    DependencyEdge, EventReporter, SwarmEvent, TokenUsageSummary,
+};
 use crate::executor::ExecutionResult;
 use crate::wo::WorkOrder;
 
@@ -84,6 +87,8 @@ pub async fn dispatch_group(
     work_orders: Vec<WorkOrder>,
     working_dir: &Path,
 ) -> Result<GroupResult> {
+    let reporter = EventReporter::new(config.agentboard_url.as_deref());
+
     // Build a routing executor that delegates to API, Codex, or CC based on WO model.
     let codex_executor = config.resolve_codex_binary().map(|binary| {
         crate::codex_executor::CodexExecutor::new(binary, config.codex_max_concurrent)
@@ -99,6 +104,7 @@ pub async fn dispatch_group(
         work_orders,
         working_dir,
         executor,
+        reporter,
     )
     .await
 }
@@ -110,6 +116,7 @@ pub async fn dispatch_group_with_executor<E: Executor + Clone>(
     work_orders: Vec<WorkOrder>,
     working_dir: &Path,
     executor: E,
+    reporter: EventReporter,
 ) -> Result<GroupResult> {
     if work_orders.is_empty() {
         bail!("No work orders to dispatch");
@@ -146,8 +153,26 @@ pub async fn dispatch_group_with_executor<E: Executor + Clone>(
     }
     let state_store = StateStore::open(&dispatcher_config.db_path)?;
 
+    reporter
+        .report(SwarmEvent::GroupStarted {
+            group_id: group_id.clone(),
+            timestamp: EventReporter::now_iso(),
+            total_wos: work_orders.len(),
+            wo_ids: work_orders.iter().map(|wo| wo.id.clone()).collect(),
+            edges: work_orders
+                .iter()
+                .flat_map(|wo| {
+                    wo.depends_on.iter().map(move |dep| DependencyEdge {
+                        from: dep.clone(),
+                        to: wo.id.clone(),
+                    })
+                })
+                .collect(),
+        })
+        .await;
+
     // Run the scheduler.
-    scheduler::run_dispatch_loop(
+    let result = scheduler::run_dispatch_loop(
         config,
         dispatcher_config,
         &work_orders,
@@ -155,6 +180,54 @@ pub async fn dispatch_group_with_executor<E: Executor + Clone>(
         &state_store,
         working_dir,
         executor,
+        reporter.clone(),
     )
-    .await
+    .await?;
+
+    let (input_tokens, output_tokens) = result
+        .wo_results
+        .iter()
+        .filter_map(|wo| wo.execution_result.as_ref())
+        .fold((0u32, 0u32), |(input_acc, output_acc), execution_result| {
+            (
+                input_acc + execution_result.token_usage.input_tokens,
+                output_acc + execution_result.token_usage.output_tokens,
+            )
+        });
+
+    reporter
+        .report(SwarmEvent::GroupCompleted {
+            group_id: result.group_id.clone(),
+            timestamp: EventReporter::now_iso(),
+            status: group_status_label(result.status),
+            total_duration_seconds: result.total_duration_seconds,
+            completed_wos: result
+                .wo_results
+                .iter()
+                .filter(|wo| matches!(wo.status, WoStatus::Completed))
+                .count() as u32,
+            failed_wos: result
+                .wo_results
+                .iter()
+                .filter(|wo| matches!(wo.status, WoStatus::Failed))
+                .count() as u32,
+            total_tokens: TokenUsageSummary {
+                input_tokens,
+                output_tokens,
+            },
+        })
+        .await;
+
+    Ok(result)
+}
+
+fn group_status_label(status: GroupStatus) -> String {
+    match status {
+        GroupStatus::Pending => "pending",
+        GroupStatus::Running => "running",
+        GroupStatus::Completed => "completed",
+        GroupStatus::Failed => "failed",
+        GroupStatus::Aborted => "aborted",
+    }
+    .to_string()
 }

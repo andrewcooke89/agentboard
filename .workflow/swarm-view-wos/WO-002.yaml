@@ -85,8 +85,7 @@ intern_context:
   tools:
     - file_dependencies
 
-depends_on:
-  - WO-001
+depends_on: []
 prefer_after: []
 
 gates:

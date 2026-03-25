@@ -15,6 +15,10 @@ use tokio::sync::{mpsc, Semaphore};
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::event_reporter::{
+    ErrorHistoryEntrySummary, EventReporter, GateEntry, GateResultSummary, SwarmEvent,
+    TokenUsageSummary,
+};
 use crate::executor::ExecutionResult;
 use crate::wo::WorkOrder;
 
@@ -145,6 +149,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
     state_store: &StateStore,
     working_dir: &Path,
     executor: E,
+    event_reporter: EventReporter,
 ) -> Result<GroupResult> {
     let start = Instant::now();
     let group_id = work_orders[0].group_id.clone();
@@ -187,6 +192,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
         state_store.mark_ready(wo_id)?;
         spawn_executor(
             wo_id,
+            &group_id,
             &wo_map,
             config,
             working_dir,
@@ -196,7 +202,9 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
             state_store,
             &mut running,
             &model_overrides,
-        )?;
+            &event_reporter,
+        )
+        .await?;
     }
 
     // Main event loop: react to completions/failures until done.
@@ -212,6 +220,21 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                 running.remove(&wo_id);
                 state_store.mark_completed(&wo_id, &result)?;
                 completed.insert(wo_id.clone());
+
+                event_reporter
+                    .report(SwarmEvent::WoCompleted {
+                        group_id: group_id.clone(),
+                        timestamp: EventReporter::now_iso(),
+                        wo_id: wo_id.clone(),
+                        token_usage: TokenUsageSummary {
+                            input_tokens: result.token_usage.input_tokens,
+                            output_tokens: result.token_usage.output_tokens,
+                        },
+                        gate_results: summarize_gate_results(&result),
+                        files_changed: result.diffs.iter().map(|d| d.file.clone()).collect(),
+                        duration_seconds: 0.0,
+                    })
+                    .await;
 
                 info!(wo_id = %wo_id, "WO completed successfully");
 
@@ -232,6 +255,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                     state_store.mark_ready(wo_id)?;
                     spawn_executor(
                         wo_id,
+                        &group_id,
                         &wo_map,
                         config,
                         working_dir,
@@ -241,7 +265,9 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         state_store,
                         &mut running,
                         &model_overrides,
-                    )?;
+                        &event_reporter,
+                    )
+                    .await?;
                 }
             }
 
@@ -261,9 +287,22 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                 let current_attempt = state_store.get_wo_state(&wo_id)
                     .map(|s| s.attempt).unwrap_or(0);
 
+                event_reporter
+                    .report(SwarmEvent::WoFailed {
+                        group_id: group_id.clone(),
+                        timestamp: EventReporter::now_iso(),
+                        wo_id: wo_id.clone(),
+                        error: error_msg.clone(),
+                        gate_detail: gate_detail.clone(),
+                        model: current_model.clone(),
+                        attempt: current_attempt,
+                        tier: current_tier,
+                    })
+                    .await;
+
                 let history_entry = super::state::ErrorHistoryEntry {
                     tier: current_tier,
-                    model: current_model,
+                    model: current_model.clone(),
                     attempt: current_attempt,
                     error: error_msg.clone(),
                     gate_detail,
@@ -288,12 +327,35 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                             state_store.set_escalation_tier(&wo_id, (cc_chain_idx + 1) as u32)?;
                             state_store.reset_attempts(&wo_id, cc_tier.max_retries)?;
                             model_overrides.insert(wo_id.clone(), "opus-cc".to_string());
+                            event_reporter
+                                .report(SwarmEvent::WoEscalated {
+                                    group_id: group_id.clone(),
+                                    timestamp: EventReporter::now_iso(),
+                                    wo_id: wo_id.clone(),
+                                    from_tier: current_tier,
+                                    to_tier: (cc_chain_idx + 1) as u32,
+                                    to_model: "opus-cc".to_string(),
+                                    error_history: state_store
+                                        .get_error_history(&wo_id)?
+                                        .into_iter()
+                                        .map(|e| ErrorHistoryEntrySummary {
+                                            tier: e.tier,
+                                            model: e.model,
+                                            attempt: e.attempt,
+                                            error: e.error,
+                                            gate_detail: e.gate_detail,
+                                        })
+                                        .collect(),
+                                })
+                                .await;
                             state_store.mark_ready(&wo_id)?;
                             spawn_executor(
-                                &wo_id, &wo_map, config, working_dir, &executor,
+                                &wo_id, &group_id, &wo_map, config, working_dir, &executor,
                                 &semaphore, &tx, state_store, &mut running,
                                 &model_overrides,
-                            )?;
+                                &event_reporter,
+                            )
+                            .await?;
                             continue;
                         }
                     }
@@ -307,17 +369,20 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                     info!(wo_id = %wo_id, "WO failed, retrying at same tier");
                     state_store.mark_ready(&wo_id)?;
                     spawn_executor(
-                        &wo_id, &wo_map, config, working_dir, &executor,
+                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
                         &semaphore, &tx, state_store, &mut running,
                         &model_overrides,
-                    )?;
+                        &event_reporter,
+                    )
+                    .await?;
                 } else if !aborted {
                     // Retries exhausted at current tier -- try escalation.
                     if try_escalate(
-                        &wo_id, &wo_map, config, working_dir, &executor,
+                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
                         &semaphore, &tx, state_store, &mut running,
-                        &mut model_overrides, current_tier,
-                    )? {
+                        &mut model_overrides, current_tier, &event_reporter,
+                    )
+                    .await? {
                         // Escalation succeeded, WO re-spawned at next tier.
                     } else {
                         // All tiers exhausted or escalation disabled -- permanent failure.
@@ -342,9 +407,22 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                 let current_attempt = state_store.get_wo_state(&wo_id)
                     .map(|s| s.attempt).unwrap_or(0);
 
+                event_reporter
+                    .report(SwarmEvent::WoFailed {
+                        group_id: group_id.clone(),
+                        timestamp: EventReporter::now_iso(),
+                        wo_id: wo_id.clone(),
+                        error: error.clone(),
+                        gate_detail: None,
+                        model: current_model.clone(),
+                        attempt: current_attempt,
+                        tier: current_tier,
+                    })
+                    .await;
+
                 let history_entry = super::state::ErrorHistoryEntry {
                     tier: current_tier,
-                    model: current_model,
+                    model: current_model.clone(),
                     attempt: current_attempt,
                     error: error.clone(),
                     gate_detail: None,
@@ -357,16 +435,19 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                     info!(wo_id = %wo_id, "WO executor error, retrying");
                     state_store.mark_ready(&wo_id)?;
                     spawn_executor(
-                        &wo_id, &wo_map, config, working_dir, &executor,
+                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
                         &semaphore, &tx, state_store, &mut running,
                         &model_overrides,
-                    )?;
+                        &event_reporter,
+                    )
+                    .await?;
                 } else if !aborted {
                     if try_escalate(
-                        &wo_id, &wo_map, config, working_dir, &executor,
+                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
                         &semaphore, &tx, state_store, &mut running,
-                        &mut model_overrides, current_tier,
-                    )? {
+                        &mut model_overrides, current_tier, &event_reporter,
+                    )
+                    .await? {
                         // Escalated.
                     } else {
                         warn!(wo_id = %wo_id, "WO permanently failed (executor error)");
@@ -425,8 +506,9 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
 /// Returns `true` if escalation succeeded and the WO was re-spawned,
 /// `false` if escalation is disabled or all tiers are exhausted.
 #[allow(clippy::too_many_arguments)]
-fn try_escalate<E: Executor + Clone>(
+async fn try_escalate<E: Executor + Clone>(
     wo_id: &str,
+    group_id: &str,
     wo_map: &HashMap<String, WorkOrder>,
     config: &Config,
     working_dir: &Path,
@@ -437,6 +519,7 @@ fn try_escalate<E: Executor + Clone>(
     running: &mut HashSet<String>,
     model_overrides: &mut HashMap<String, String>,
     current_tier: u32,
+    event_reporter: &EventReporter,
 ) -> Result<bool> {
     let wo = &wo_map[wo_id];
     if !wo.escalation.enabled {
@@ -464,12 +547,35 @@ fn try_escalate<E: Executor + Clone>(
     state_store.set_escalation_tier(wo_id, new_escalation_tier)?;
     state_store.reset_attempts(wo_id, tier.max_retries)?;
     model_overrides.insert(wo_id.to_string(), tier.model.clone());
+    event_reporter
+        .report(SwarmEvent::WoEscalated {
+            group_id: group_id.to_string(),
+            timestamp: EventReporter::now_iso(),
+            wo_id: wo_id.to_string(),
+            from_tier: current_tier,
+            to_tier: new_escalation_tier,
+            to_model: tier.model.clone(),
+            error_history: state_store
+                .get_error_history(wo_id)?
+                .into_iter()
+                .map(|e| ErrorHistoryEntrySummary {
+                    tier: e.tier,
+                    model: e.model,
+                    attempt: e.attempt,
+                    error: e.error,
+                    gate_detail: e.gate_detail,
+                })
+                .collect(),
+        })
+        .await;
     state_store.mark_ready(wo_id)?;
     spawn_executor(
-        wo_id, wo_map, config, working_dir, executor,
+        wo_id, group_id, wo_map, config, working_dir, executor,
         semaphore, tx, state_store, running,
         model_overrides,
-    )?;
+        event_reporter,
+    )
+    .await?;
     Ok(true)
 }
 
@@ -488,8 +594,9 @@ fn check_abort(
 
 /// Spawn a single executor task, gated by the semaphore.
 #[allow(clippy::too_many_arguments)]
-fn spawn_executor<E: Executor + Clone>(
+async fn spawn_executor<E: Executor + Clone>(
     wo_id: &str,
+    group_id: &str,
     wo_map: &HashMap<String, WorkOrder>,
     config: &Config,
     working_dir: &Path,
@@ -499,6 +606,7 @@ fn spawn_executor<E: Executor + Clone>(
     state_store: &StateStore,
     running: &mut HashSet<String>,
     model_overrides: &HashMap<String, String>,
+    event_reporter: &EventReporter,
 ) -> Result<()> {
     let mut wo = wo_map[wo_id].clone();
 
@@ -513,11 +621,29 @@ fn spawn_executor<E: Executor + Clone>(
     let semaphore = Arc::clone(semaphore);
     let tx = tx.clone();
     let wo_id_owned = wo_id.to_string();
+    let group_id_owned = group_id.to_string();
+    let effective_model = effective_model(&config, &wo);
+    let current_tier = state_store.get_escalation_tier(wo_id).unwrap_or(0);
+    let current_attempt = state_store.get_wo_state(wo_id).map(|s| s.attempt).unwrap_or(0);
+    let reporter = event_reporter.clone();
 
     state_store.mark_running(wo_id)?;
     running.insert(wo_id.to_string());
 
     info!(wo_id = %wo_id, model = %wo.execution.model, "Spawning executor task");
+
+    reporter
+        .report(SwarmEvent::WoStatusChanged {
+            group_id: group_id_owned.clone(),
+            timestamp: EventReporter::now_iso(),
+            wo_id: wo_id_owned.clone(),
+            old_status: "ready".to_string(),
+            new_status: "running".to_string(),
+            model: effective_model,
+            attempt: current_attempt,
+            tier: current_tier,
+        })
+        .await;
 
     tokio::spawn(async move {
         // Acquire concurrency slot.
@@ -542,6 +668,29 @@ fn spawn_executor<E: Executor + Clone>(
     });
 
     Ok(())
+}
+
+fn effective_model(config: &Config, work_order: &WorkOrder) -> String {
+    if work_order.execution.model.is_empty() {
+        config.default_model.clone()
+    } else {
+        work_order.execution.model.clone()
+    }
+}
+
+fn summarize_gate_results(result: &ExecutionResult) -> Option<GateResultSummary> {
+    result.gate_results.as_ref().map(|gr| GateResultSummary {
+        all_passed: gr.all_passed,
+        gates: gr
+            .gates
+            .iter()
+            .map(|g| GateEntry {
+                name: g.name.clone(),
+                passed: g.passed,
+                output: g.output.clone(),
+            })
+            .collect(),
+    })
 }
 
 // -- Tests -------------------------------------------------------------------
