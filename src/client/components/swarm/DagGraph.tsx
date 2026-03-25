@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { SwarmWoState, WoStatus } from '@shared/swarmTypes'
+import type { SwarmWoState, WoStatus } from '../../../shared/swarmTypes'
 
 export interface DagGraphProps {
   wos: Record<string, SwarmWoState>
@@ -15,6 +15,7 @@ const VERTICAL_SPACING = 70
 const PADDING = 32
 const CURVE_OFFSET = 60
 const MAX_LABEL_LENGTH = 18
+const SVG_BACKGROUND = '#0f172a'
 
 const STATUS_COLORS: Record<WoStatus, string> = {
   pending: '#374151',
@@ -34,6 +35,7 @@ interface PositionedNode {
 
 interface LayoutResult {
   nodes: PositionedNode[]
+  validEdges: Array<{ from: string; to: string }>
   width: number
   height: number
   viewBox: string
@@ -45,7 +47,7 @@ function truncateLabel(value: string): string {
     return value
   }
 
-  return `${value.slice(0, MAX_LABEL_LENGTH - 1)}…`
+  return `${value.slice(0, MAX_LABEL_LENGTH - 1)}...`
 }
 
 function topologicalOrder(
@@ -100,6 +102,7 @@ function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: s
   if (nodeIds.length === 0) {
     return {
       nodes: [],
+      validEdges: [],
       width: 0,
       height: 0,
       viewBox: '0 0 0 0',
@@ -139,41 +142,35 @@ function computeLayout(wos: Record<string, SwarmWoState>, edges: Array<{ from: s
     layers.set(layer, layerNodes)
   }
 
-  for (const layerNodes of layers.values()) {
-    layerNodes.sort((left, right) => left.localeCompare(right))
-  }
-
   const tallestLayerSize = Math.max(...Array.from(layers.values(), (layerNodes) => layerNodes.length))
-  const contentHeight = NODE_HEIGHT + Math.max(0, tallestLayerSize - 1) * VERTICAL_SPACING
+  const tallestLayerHeight = NODE_HEIGHT + Math.max(0, tallestLayerSize - 1) * VERTICAL_SPACING
   const nodes: PositionedNode[] = []
-  let minX = 0
-  let minY = 0
-  let maxX = NODE_WIDTH
-  let maxY = NODE_HEIGHT
 
-  for (const [layer, layerNodes] of Array.from(layers.entries()).sort((a, b) => a[0] - b[0])) {
+  for (const [layer, layerNodes] of Array.from(layers.entries()).sort((left, right) => left[0] - right[0])) {
+    layerNodes.sort((left, right) => left.localeCompare(right))
     const layerHeight = NODE_HEIGHT + Math.max(0, layerNodes.length - 1) * VERTICAL_SPACING
-    const verticalOffset = (contentHeight - layerHeight) / 2
+    const verticalOffset = (tallestLayerHeight - layerHeight) / 2
 
     layerNodes.forEach((woId, index) => {
-      const x = layer * HORIZONTAL_SPACING
-      const y = verticalOffset + index * VERTICAL_SPACING
-      nodes.push({ woId, x, y, layer })
-      minX = Math.min(minX, x)
-      minY = Math.min(minY, y)
-      maxX = Math.max(maxX, x + NODE_WIDTH)
-      maxY = Math.max(maxY, y + NODE_HEIGHT)
+      nodes.push({
+        woId,
+        layer,
+        x: layer * HORIZONTAL_SPACING,
+        y: verticalOffset + index * VERTICAL_SPACING,
+      })
     })
   }
 
-  const width = maxX - minX + PADDING * 2
-  const height = Math.max(contentHeight, maxY - minY) + PADDING * 2
+  const maxLayer = Math.max(...nodes.map((node) => node.layer))
+  const width = maxLayer * HORIZONTAL_SPACING + NODE_WIDTH + PADDING * 2
+  const height = tallestLayerHeight + PADDING * 2
 
   return {
     nodes,
+    validEdges,
     width,
     height,
-    viewBox: `${minX - PADDING} ${minY - PADDING} ${width} ${height}`,
+    viewBox: `${-PADDING} ${-PADDING} ${width} ${height}`,
     hasCycle,
   }
 }
@@ -183,11 +180,12 @@ function buildEdgePath(from: PositionedNode, to: PositionedNode): string {
   const startY = from.y + NODE_HEIGHT / 2
   const endX = to.x
   const endY = to.y + NODE_HEIGHT / 2
+  const controlOffset = Math.min(CURVE_OFFSET, Math.max((endX - startX) / 2, 20))
 
-  return `M ${startX} ${startY} C ${startX + CURVE_OFFSET} ${startY} ${endX - CURVE_OFFSET} ${endY} ${endX} ${endY}`
+  return `M ${startX} ${startY} C ${startX + controlOffset} ${startY} ${endX - controlOffset} ${endY} ${endX} ${endY}`
 }
 
-function edgeColor(sourceStatus: WoStatus | undefined, targetStatus: WoStatus | undefined): string {
+function getEdgeColor(sourceStatus: WoStatus | undefined, targetStatus: WoStatus | undefined): string {
   if (sourceStatus === 'completed' && targetStatus === 'completed') {
     return '#166534'
   }
@@ -208,21 +206,21 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
 
   if (layout.nodes.length === 0) {
     return (
-      <div className="flex h-full w-full items-center justify-center overflow-auto text-sm text-gray-500" role="status">
+      <div className="flex h-full min-h-[320px] w-full items-center justify-center overflow-auto rounded-lg border border-white/10 bg-[#1a1a2e] text-sm text-gray-500">
         No active swarm
       </div>
     )
   }
 
   return (
-    <div className="w-full h-full overflow-auto">
+    <div className="h-full w-full overflow-auto rounded-lg border border-white/10 bg-[#1a1a2e]">
       <svg
         width={layout.width}
         height={layout.height}
         viewBox={layout.viewBox}
         role="img"
         aria-label="Swarm work order dependency graph"
-        style={{ display: 'block', minWidth: layout.width, minHeight: layout.height }}
+        style={{ display: 'block', minWidth: layout.width, minHeight: layout.height, background: SVG_BACKGROUND }}
       >
         <defs>
           <marker
@@ -232,13 +230,22 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
             refY="5"
             markerWidth="6"
             markerHeight="6"
-            orient="auto-start-reverse"
+            orient="auto"
           >
             <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
           </marker>
         </defs>
+        <style>
+          {`
+            @keyframes dagNodePulse {
+              0% { opacity: 0.88; }
+              50% { opacity: 1; }
+              100% { opacity: 0.88; }
+            }
+          `}
+        </style>
 
-        {edges.map((edge) => {
+        {layout.validEdges.map((edge) => {
           const source = positionedNodes.get(edge.from)
           const target = positionedNodes.get(edge.to)
 
@@ -246,7 +253,7 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
             return null
           }
 
-          const stroke = edgeColor(wos[edge.from]?.status, wos[edge.to]?.status)
+          const stroke = getEdgeColor(wos[edge.from]?.status, wos[edge.to]?.status)
 
           return (
             <path
@@ -256,7 +263,7 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
               stroke={stroke}
               strokeWidth={2}
               markerEnd="url(#dag-graph-arrow)"
-              style={{ transition: 'stroke 160ms ease' }}
+              opacity={0.95}
             />
           )
         })}
@@ -265,7 +272,6 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
           const wo = wos[node.woId]
           const isSelected = selectedWoId === node.woId
           const tier = wo.escalationTier
-          const fill = STATUS_COLORS[wo.status]
 
           return (
             <g
@@ -279,25 +285,26 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
                 width={NODE_WIDTH}
                 height={NODE_HEIGHT}
                 rx={8}
-                fill={fill}
-                stroke={isSelected ? '#ffffff' : 'transparent'}
-                strokeWidth={isSelected ? 2 : 0}
-                style={wo.status === 'running' ? { animation: 'pulse 1.5s ease-in-out infinite' } : undefined}
+                fill={STATUS_COLORS[wo.status]}
+                stroke={isSelected ? '#ffffff' : 'rgba(255,255,255,0.12)'}
+                strokeWidth={isSelected ? 2 : 1}
+                style={wo.status === 'running' ? { animation: 'dagNodePulse 1.5s ease-in-out infinite' } : undefined}
               />
               <text
                 x={NODE_WIDTH / 2}
                 y={NODE_HEIGHT / 2}
                 fill="#ffffff"
                 fontSize="12"
+                fontFamily="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace"
                 textAnchor="middle"
                 dominantBaseline="middle"
                 pointerEvents="none"
               >
                 {truncateLabel(node.woId)}
               </text>
-              {tier > 0 && (
+              {tier > 0 ? (
                 <>
-                  <circle cx={NODE_WIDTH - 14} cy={14} r={9} fill="#111827" stroke="#ffffff" strokeWidth={1} />
+                  <circle cx={NODE_WIDTH - 14} cy={14} r={9} fill="#0b1220" stroke="#ffffff" strokeWidth={1} />
                   <text
                     x={NODE_WIDTH - 14}
                     y={14}
@@ -311,15 +318,16 @@ export default function DagGraph({ wos, edges, selectedWoId, onSelectWo }: DagGr
                     {tier}
                   </text>
                 </>
-              )}
+              ) : null}
             </g>
           )
         })}
-        {layout.hasCycle && (
+
+        {layout.hasCycle ? (
           <text x={0} y={-10} fill="#f59e0b" fontSize="11" textAnchor="start">
             Dependency cycle detected. Layout may be approximate.
           </text>
-        )}
+        ) : null}
       </svg>
     </div>
   )
