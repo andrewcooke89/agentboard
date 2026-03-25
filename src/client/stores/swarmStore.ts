@@ -9,6 +9,8 @@ import type {
 import { safeStorage } from '../utils/storage'
 import { authFetch } from '../utils/api'
 
+const MAX_EVENT_LOG_SIZE = 200
+
 interface SwarmStore {
   groups: SwarmGroupState[]
   selectedGroupId: string | null
@@ -144,6 +146,22 @@ function getValidSelectedWoId(
   }
 
   return selectedGroup.wos[selectedWoId] ? selectedWoId : null
+}
+
+function buildReplacementState(
+  groups: SwarmGroupState[],
+  selectedGroupId: string | null,
+  selectedWoId: string | null
+) {
+  const nextGroups = groups.map(cloneGroup)
+  const nextSelectedGroupId = getAutoSelectedGroupId(nextGroups, selectedGroupId)
+
+  return {
+    groups: nextGroups,
+    selectedGroupId: nextSelectedGroupId,
+    selectedWoId: getValidSelectedWoId(nextGroups, nextSelectedGroupId, selectedWoId),
+    eventLog: [] as SwarmEvent[],
+  }
 }
 
 function applySwarmEvent(group: SwarmGroupState, event: SwarmEvent): SwarmGroupState {
@@ -282,16 +300,7 @@ export const useSwarmStore = create<SwarmStore>()(
       },
 
       setGroups: (groups) => {
-        const nextGroups = groups.map(cloneGroup)
-        set((state) => {
-          const selectedGroupId = getAutoSelectedGroupId(nextGroups, state.selectedGroupId)
-          return {
-            groups: nextGroups,
-            selectedGroupId,
-            selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
-            eventLog: [],
-          }
-        })
+        set((state) => buildReplacementState(groups, state.selectedGroupId, state.selectedWoId))
       },
 
       selectGroup: (groupId) => {
@@ -326,7 +335,7 @@ export const useSwarmStore = create<SwarmStore>()(
           const selectedGroupChanged = selectedGroupId !== state.selectedGroupId
           const eventLog =
             selectedGroupId === event.groupId
-              ? [...(selectedGroupChanged ? [] : state.eventLog), event].slice(-200)
+              ? [...(selectedGroupChanged ? [] : state.eventLog), event].slice(-MAX_EVENT_LOG_SIZE)
               : selectedGroupChanged
                 ? []
                 : state.eventLog
@@ -341,16 +350,7 @@ export const useSwarmStore = create<SwarmStore>()(
       },
 
       handleSwarmState: (groups) => {
-        set((state) => {
-          const nextGroups = groups.map(cloneGroup)
-          const selectedGroupId = getAutoSelectedGroupId(nextGroups, state.selectedGroupId)
-          return {
-            groups: nextGroups,
-            selectedGroupId,
-            selectedWoId: getValidSelectedWoId(nextGroups, selectedGroupId, state.selectedWoId),
-            eventLog: [],
-          }
-        })
+        set((state) => buildReplacementState(groups, state.selectedGroupId, state.selectedWoId))
       },
 
       fetchGroups: async () => {
