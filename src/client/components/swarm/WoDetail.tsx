@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useSwarmStore } from '../../stores/swarmStore'
-import type { ErrorHistoryEntry, GateResultSummary, SwarmWoState, WoStatus } from '../../../shared/swarmTypes'
+import type { ErrorHistoryEntry, GateResultSummary, SwarmWoState, WoStatus } from '@shared/swarmTypes'
 
 export interface WoDetailProps {
   wo: SwarmWoState | null
@@ -33,8 +33,13 @@ function formatDuration(seconds: number | null): string | null {
   }
 
   const totalSeconds = Math.max(0, Math.floor(seconds))
+  const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor(totalSeconds / 60)
   const remainingSeconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m ${remainingSeconds}s`
+  }
 
   if (minutes > 0) {
     return `${minutes}m ${remainingSeconds}s`
@@ -56,6 +61,11 @@ function buildTierLabel(wo: SwarmWoState): string {
   return `${wo.model || 'unknown'} (tier ${wo.escalationTier}${isEscalated ? ', escalated' : ''})`
 }
 
+function formatAttemptCounter(attempt: number, maxRetries: number): string {
+  const totalAttempts = Math.max(attempt, maxRetries + 1)
+  return `Attempt ${attempt}/${totalAttempts}`
+}
+
 function Section({
   title,
   open,
@@ -66,7 +76,7 @@ function Section({
   title: string
   open: boolean
   onToggle: () => void
-  children: React.ReactNode
+  children: ReactNode
   count?: number
 }) {
   return (
@@ -173,20 +183,20 @@ export default function WoDetail({ wo }: WoDetailProps) {
   const [showErrors, setShowErrors] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
 
-  const selectedGroup = useSwarmStore((state) =>
-    state.selectedGroupId ? state.groups.find((group) => group.groupId === state.selectedGroupId) ?? null : null
-  )
+  const groups = useSwarmStore((state) => state.groups)
 
   const dependencyStates = useMemo(() => {
     if (!wo) {
       return []
     }
 
+    const parentGroup = groups.find((group) => group.wos[wo.woId])
+
     return wo.dependsOn.map((dependencyId) => ({
       woId: dependencyId,
-      status: selectedGroup?.wos[dependencyId]?.status ?? 'pending',
+      status: parentGroup?.wos[dependencyId]?.status ?? 'pending',
     }))
-  }, [selectedGroup, wo])
+  }, [groups, wo])
 
   if (!wo) {
     return (
@@ -218,7 +228,7 @@ export default function WoDetail({ wo }: WoDetailProps) {
         </div>
         <div className="text-right text-[11px] text-gray-400">
           <div>{buildTierLabel(wo)}</div>
-          <div className="mt-1">Attempt {wo.attempt}/{Math.max(wo.maxRetries, wo.attempt)}</div>
+          <div className="mt-1">{formatAttemptCounter(wo.attempt, wo.maxRetries)}</div>
         </div>
       </div>
 

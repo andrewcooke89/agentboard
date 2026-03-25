@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { GroupStatus, SwarmGroupState, WoStatus } from '../../../shared/swarmTypes'
+import type { GroupStatus, SwarmGroupState, WoStatus } from '@shared/swarmTypes'
 
 export interface GroupProgressProps {
   group: SwarmGroupState | null
@@ -31,8 +31,13 @@ function formatTokens(value: number | null | undefined): string {
 
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m ${seconds}s`
+  }
 
   if (minutes > 0) {
     return `${minutes}m ${seconds}s`
@@ -112,7 +117,7 @@ export default function GroupProgress({ group }: GroupProgressProps) {
     group.startedAt && group.status === 'running'
       ? `Running for ${formatElapsed(now - new Date(group.startedAt).getTime())}`
       : group.totalDurationSeconds !== null
-        ? `Completed in ${formatElapsed(group.totalDurationSeconds * 1000)}`
+        ? `${group.status === 'completed' ? 'Completed' : 'Finished'} in ${formatElapsed(group.totalDurationSeconds * 1000)}`
         : null
 
   return (
@@ -135,16 +140,20 @@ export default function GroupProgress({ group }: GroupProgressProps) {
 
       <div className="mt-4">
         <div className="h-3 w-full overflow-hidden rounded-full bg-[#111827] ring-1 ring-white/5">
-          <div className="flex h-full w-full">
-            {progress?.segments.map((segment) => (
-              <div
-                key={segment.key}
-                className={segment.className}
-                style={{ width: `${(segment.count / Math.max(group.totalWos, 1)) * 100}%` }}
-                title={`${segment.key}: ${segment.count}`}
-              />
-            ))}
-          </div>
+          {group.totalWos > 0 ? (
+            <div className="flex h-full w-full">
+              {progress?.segments.map((segment) => (
+                <div
+                  key={segment.key}
+                  className={segment.className}
+                  style={{ width: `${(segment.count / group.totalWos) * 100}%` }}
+                  title={`${segment.key}: ${segment.count}`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="h-full w-full bg-gray-700/40" />
+          )}
         </div>
       </div>
 
