@@ -173,6 +173,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
     let mut completed: HashSet<String> = HashSet::new();
     let mut failed_permanent: HashSet<String> = HashSet::new();
     let mut running: HashSet<String> = HashSet::new();
+    let mut run_started_at: HashMap<String, Instant> = HashMap::new();
     let mut aborted = false;
 
     // Model overrides for escalated WOs.
@@ -203,6 +204,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
             &tx,
             state_store,
             &mut running,
+            &mut run_started_at,
             &model_overrides,
             &event_reporter,
         )
@@ -220,6 +222,10 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
         match event {
             DispatchEvent::Completed { wo_id, result } => {
                 running.remove(&wo_id);
+                let duration_seconds = run_started_at
+                    .remove(&wo_id)
+                    .map(|started_at| started_at.elapsed().as_secs_f64())
+                    .unwrap_or(0.0);
                 state_store.mark_completed(&wo_id, &result)?;
                 completed.insert(wo_id.clone());
 
@@ -234,7 +240,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         },
                         gate_results: summarize_gate_results(&result),
                         files_changed: result.diffs.iter().map(|d| d.file.clone()).collect(),
-                        duration_seconds: 0.0,
+                        duration_seconds,
                     })
                     .await;
 
@@ -270,6 +276,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         &tx,
                         state_store,
                         &mut running,
+                        &mut run_started_at,
                         &model_overrides,
                         &event_reporter,
                     )
@@ -279,6 +286,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
 
             DispatchEvent::Failed { wo_id, result } => {
                 running.remove(&wo_id);
+                run_started_at.remove(&wo_id);
 
                 let error_msg = result
                     .error
@@ -373,6 +381,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                                 &tx,
                                 state_store,
                                 &mut running,
+                                &mut run_started_at,
                                 &model_overrides,
                                 &event_reporter,
                             )
@@ -400,6 +409,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         &tx,
                         state_store,
                         &mut running,
+                        &mut run_started_at,
                         &model_overrides,
                         &event_reporter,
                     )
@@ -417,6 +427,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         &tx,
                         state_store,
                         &mut running,
+                        &mut run_started_at,
                         &mut model_overrides,
                         current_tier,
                         &event_reporter,
@@ -438,6 +449,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
 
             DispatchEvent::ExecutorError { wo_id, error } => {
                 running.remove(&wo_id);
+                run_started_at.remove(&wo_id);
 
                 // Record error history entry.
                 let current_tier = state_store.get_escalation_tier(&wo_id).unwrap_or(0);
@@ -488,6 +500,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         &tx,
                         state_store,
                         &mut running,
+                        &mut run_started_at,
                         &model_overrides,
                         &event_reporter,
                     )
@@ -504,6 +517,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         &tx,
                         state_store,
                         &mut running,
+                        &mut run_started_at,
                         &mut model_overrides,
                         current_tier,
                         &event_reporter,
@@ -579,6 +593,7 @@ async fn try_escalate<E: Executor + Clone>(
     tx: &mpsc::Sender<DispatchEvent>,
     state_store: &StateStore,
     running: &mut HashSet<String>,
+    run_started_at: &mut HashMap<String, Instant>,
     model_overrides: &mut HashMap<String, String>,
     current_tier: u32,
     event_reporter: &EventReporter,
@@ -642,6 +657,7 @@ async fn try_escalate<E: Executor + Clone>(
         tx,
         state_store,
         running,
+        run_started_at,
         model_overrides,
         event_reporter,
     )
@@ -671,6 +687,7 @@ async fn spawn_executor<E: Executor + Clone>(
     tx: &mpsc::Sender<DispatchEvent>,
     state_store: &StateStore,
     running: &mut HashSet<String>,
+    run_started_at: &mut HashMap<String, Instant>,
     model_overrides: &HashMap<String, String>,
     event_reporter: &EventReporter,
 ) -> Result<()> {
@@ -698,6 +715,7 @@ async fn spawn_executor<E: Executor + Clone>(
 
     state_store.mark_running(wo_id)?;
     running.insert(wo_id.to_string());
+    run_started_at.insert(wo_id.to_string(), Instant::now());
 
     info!(wo_id = %wo_id, model = %wo.execution.model, "Spawning executor task");
 
