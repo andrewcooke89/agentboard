@@ -126,8 +126,7 @@ intern_context:
     - file_dependencies
     - find_references
 
-depends_on:
-  - WO-PREP-001
+depends_on: []
 prefer_after: []
 
 gates:
@@ -142,7 +141,7 @@ gates:
 
 execution:
   mode: unattended
-  model: ""
+  model: codex
   max_retries: 2
   timeout_minutes: 10
 

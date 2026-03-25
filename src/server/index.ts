@@ -19,6 +19,8 @@ import type { ServerContext, WSData } from './serverContext'
 import { checkPortAvailable, getTailscaleIp, pruneOrphanedWsSessions, createConnectionId } from './startup'
 import { registerHttpRoutes } from './httpRoutes'
 import { registerWoRoutes } from './woRoutes'
+import { SwarmManager } from './SwarmManager'
+import { registerSwarmRoutes } from './swarmRoutes'
 import { broadcast as broadcastToSockets, send as sendToSocket, handleMessage, wireRegistryEvents } from './wsRouter'
 import { createTerminalHandlers } from './handlers/terminalHandlers'
 import { createSessionHandlers } from './handlers/sessionHandlers'
@@ -43,6 +45,7 @@ import { CronHistoryService } from './cronHistoryService'
 import { CronLogService } from './cronLogService'
 import { createCronHandlers } from './handlers/cronHandlers'
 import { CronAiService } from './cronAiService'
+import type { SwarmEvent, SwarmGroupState } from '../shared/swarmTypes'
 
 // --- Startup checks ---
 checkPortAvailable(config.port, logger)
@@ -62,6 +65,7 @@ const sessionManager = new SessionManager(undefined, {
   displayNameExists: (name, excludeSessionId) => db.displayNameExists(name, excludeSessionId),
 })
 const registry = new SessionRegistry()
+const swarmManager = SwarmManager.getInstance()
 const sockets = new Set<ServerWebSocket<WSData>>()
 
 // Lock map for Enter-key lastUserMessage capture: tmuxWindow -> expiry timestamp
@@ -138,6 +142,32 @@ function broadcast(msg: import('../shared/types').ServerMessage) {
 
 function send(ws: ServerWebSocket<WSData>, msg: import('../shared/types').ServerMessage) {
   sendToSocket(ws, msg)
+}
+
+function broadcastSwarmEvent(event: SwarmEvent) {
+  const payload = JSON.stringify({ type: 'swarm-update', event })
+  for (const socket of sockets) {
+    socket.send(payload)
+  }
+}
+
+function sendSwarmState(ws: ServerWebSocket<WSData>, groups: SwarmGroupState[]) {
+  ws.send(JSON.stringify({ type: 'swarm-state', groups }))
+}
+
+function sendInitialWsState(ws: ServerWebSocket<WSData>) {
+  send(ws, { type: 'sessions', sessions: registry.getAll() })
+  const agentSessions = registry.getAgentSessions()
+  send(ws, {
+    type: 'agent-sessions',
+    active: agentSessions.active,
+    inactive: agentSessions.inactive,
+  })
+  send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
+  send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
+  sendSwarmState(ws, swarmManager.getGroups())
+  terminalHandlers.initializePersistentTerminal(ws)
+  cronHandlers.onClientConnect(ws)
 }
 
 // TaskWorker and WorkflowEngine are created after ctx, assigned below
@@ -342,10 +372,14 @@ cronCleanupInterval = setInterval(() => {
 const tlsEnabled = !!(config.tlsCert && config.tlsKey)
 registerHttpRoutes(app, ctx, tlsEnabled, historyService, sessionPoolInstance)
 registerWoRoutes(app)
+registerSwarmRoutes(app, swarmManager)
 app.use('/*', serveStatic({ root: './dist/client' }))
 
 // --- Registry event wiring ---
 wireRegistryEvents(registry, broadcast)
+const unsubscribeSwarmEvents = swarmManager.onEvent((event) => {
+  broadcastSwarmEvent(event)
+})
 
 // --- Startup state logging ---
 const startupActiveSessions = db.getActiveSessions()
@@ -514,17 +548,7 @@ Bun.serve<WSData>({
       // If no auth configured (dev mode), send initial data immediately
       // Otherwise, wait for auth message before sending session data
       if (!config.authToken) {
-        send(ws, { type: 'sessions', sessions: registry.getAll() })
-        const agentSessions = registry.getAgentSessions()
-        send(ws, {
-          type: 'agent-sessions',
-          active: agentSessions.active,
-          inactive: agentSessions.inactive,
-        })
-        send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
-        send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
-        terminalHandlers.initializePersistentTerminal(ws)
-        cronHandlers.onClientConnect(ws)
+        sendInitialWsState(ws)
       }
     },
     message(ws, message) {
@@ -532,17 +556,7 @@ Bun.serve<WSData>({
       handleMessage(ws, message, wsHandlers, send, config.authToken)
       // If this message just authenticated the connection, send initial data now
       if (!wasAuthenticated && ws.data.authenticated) {
-        send(ws, { type: 'sessions', sessions: registry.getAll() })
-        const agentSessions = registry.getAgentSessions()
-        send(ws, {
-          type: 'agent-sessions',
-          active: agentSessions.active,
-          inactive: agentSessions.inactive,
-        })
-        send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
-        send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
-        terminalHandlers.initializePersistentTerminal(ws)
-        cronHandlers.onClientConnect(ws)
+        sendInitialWsState(ws)
       }
     },
     close(ws) {
@@ -568,6 +582,7 @@ logger.info('server_started', {
 function cleanupAllTerminals() {
   // Kill AI session before shutdown (WU-004, REQ-70)
   cronAiService.killAiSession().catch(() => {})
+  unsubscribeSwarmEvents()
 
   // Stop workflow engine and file watcher
   if (workflowEngineInstance) workflowEngineInstance.stop()

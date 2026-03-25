@@ -149,8 +149,7 @@ intern_context:
     - find_references
     - call_graph
 
-depends_on:
-  - WO-PREP-002
+depends_on: []
 prefer_after: []
 
 gates:
@@ -165,7 +164,7 @@ gates:
 
 execution:
   mode: unattended
-  model: ""
+  model: codex
   max_retries: 2
   timeout_minutes: 12
 

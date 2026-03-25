@@ -166,7 +166,7 @@ gates:
 
 execution:
   mode: unattended
-  model: ""
+  model: codex
   max_retries: 2
   timeout_minutes: 10
 
