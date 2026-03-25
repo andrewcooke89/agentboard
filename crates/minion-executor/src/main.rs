@@ -102,7 +102,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
 
     let cli = Cli::parse();
 
@@ -115,7 +117,18 @@ async fn main() -> Result<()> {
             apply_diffs,
             codex_binary,
             agentboard_url,
-        } => run_single(work_order, config, working_dir, dry_run, apply_diffs, codex_binary, agentboard_url).await,
+        } => {
+            run_single(
+                work_order,
+                config,
+                working_dir,
+                dry_run,
+                apply_diffs,
+                codex_binary,
+                agentboard_url,
+            )
+            .await
+        }
 
         Commands::Dispatch {
             wos,
@@ -126,7 +139,19 @@ async fn main() -> Result<()> {
             max_failures,
             codex_binary,
             agentboard_url,
-        } => run_dispatch(wos, config, working_dir, concurrency, db, max_failures, codex_binary, agentboard_url).await,
+        } => {
+            run_dispatch(
+                wos,
+                config,
+                working_dir,
+                concurrency,
+                db,
+                max_failures,
+                codex_binary,
+                agentboard_url,
+            )
+            .await
+        }
     }
 }
 
@@ -241,7 +266,8 @@ async fn run_dispatch(
         max_group_failures: max_failures,
     };
 
-    let result = dispatcher::dispatch_group(&cfg, &dispatcher_config, work_orders, &working_dir).await?;
+    let result =
+        dispatcher::dispatch_group(&cfg, &dispatcher_config, work_orders, &working_dir).await?;
 
     let output = serde_json::to_string_pretty(&result)?;
     println!("{output}");
@@ -283,12 +309,9 @@ fn load_work_orders(path: &std::path::Path) -> Result<Vec<wo::WorkOrder>> {
 
 /// Load config from a YAML file, falling back to defaults.
 fn load_config(path: Option<&std::path::Path>) -> Result<config::Config> {
-    let config_path = path
-        .map(|p| p.to_path_buf())
-        .or_else(|| {
-            dirs_next::home_dir()
-                .map(|h| h.join(".agentboard").join("minion-executor.yaml"))
-        });
+    let config_path = path.map(|p| p.to_path_buf()).or_else(|| {
+        dirs_next::home_dir().map(|h| h.join(".agentboard").join("minion-executor.yaml"))
+    });
 
     if let Some(ref p) = config_path {
         if p.exists() {

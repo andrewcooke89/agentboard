@@ -99,12 +99,10 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
     diff.validate()?;
 
     match diff.action {
-        DiffAction::Create => {
-            Ok(diff
-                .content
-                .clone()
-                .context("create action missing content")?)
-        }
+        DiffAction::Create => Ok(diff
+            .content
+            .clone()
+            .context("create action missing content")?),
         DiffAction::Replace => {
             let anchor = diff.anchor.as_ref().unwrap();
             let content = diff.content.as_ref().unwrap();
@@ -153,7 +151,7 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
             let line_end = file_content[anchor_end..]
                 .find('\n')
                 .map(|pos| anchor_end + pos + 1) // include the '\n'
-                .unwrap_or(file_content.len());   // anchor is on the last line
+                .unwrap_or(file_content.len()); // anchor is on the last line
 
             let mut result = String::with_capacity(file_content.len() + content.len() + 1);
             result.push_str(&file_content[..line_end]);
@@ -277,11 +275,7 @@ pub fn apply_diffs(diffs: &[StructuredDiff], working_dir: &Path) -> Result<Vec<A
                     success: false,
                     error: Some(error_msg.clone()),
                 });
-                anyhow::bail!(
-                    "diff application failed for '{}': {}",
-                    diff.file,
-                    error_msg
-                );
+                anyhow::bail!("diff application failed for '{}': {}", diff.file, error_msg);
             }
         }
     }
@@ -386,8 +380,14 @@ mod tests {
         let result = apply_diff_to_content(content, &diff).unwrap();
         let anchor_pos = result.find("// insert here").unwrap();
         let insert_pos = result.find("let x = 42;").unwrap();
-        assert!(insert_pos > anchor_pos, "inserted content should be after anchor");
-        assert!(result.contains("println!(\"hello\")"), "existing content preserved");
+        assert!(
+            insert_pos > anchor_pos,
+            "inserted content should be after anchor"
+        );
+        assert!(
+            result.contains("println!(\"hello\")"),
+            "existing content preserved"
+        );
     }
 
     #[test]

@@ -168,8 +168,7 @@ mod tests {
         registry.register(Box::new(StubTool { name: "tool_b" }));
         let defs = registry.tool_definitions();
         assert_eq!(defs.len(), 2);
-        let names: std::collections::HashSet<&str> =
-            defs.iter().map(|d| d.name.as_str()).collect();
+        let names: std::collections::HashSet<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains("tool_a"));
         assert!(names.contains("tool_b"));
         for def in &defs {

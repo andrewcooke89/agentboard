@@ -49,7 +49,11 @@ impl Tool for RunCommandTool {
     async fn execute(&self, input: serde_json::Value) -> Result<ToolOutput> {
         let command = match input["command"].as_str() {
             Some(c) => c.to_string(),
-            None => return Ok(ToolOutput::error("missing required field: command".to_string())),
+            None => {
+                return Ok(ToolOutput::error(
+                    "missing required field: command".to_string(),
+                ))
+            }
         };
 
         let mut cmd = tokio::process::Command::new("sh");

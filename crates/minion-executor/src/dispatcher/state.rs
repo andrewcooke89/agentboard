@@ -554,11 +554,7 @@ mod tests {
     fn test_init_and_read() {
         let store = StateStore::open_memory().unwrap();
         store
-            .init_group(
-                "grp-1",
-                &[("WO-1".into(), 2), ("WO-2".into(), 3)],
-                3,
-            )
+            .init_group("grp-1", &[("WO-1".into(), 2), ("WO-2".into(), 3)], 3)
             .unwrap();
 
         let gs = store.get_group_state("grp-1").unwrap();
@@ -577,9 +573,7 @@ mod tests {
     #[test]
     fn test_state_transitions() {
         let store = StateStore::open_memory().unwrap();
-        store
-            .init_group("grp-1", &[("WO-1".into(), 2)], 3)
-            .unwrap();
+        store.init_group("grp-1", &[("WO-1".into(), 2)], 3).unwrap();
 
         store.mark_ready("WO-1").unwrap();
         assert_eq!(store.get_wo_state("WO-1").unwrap().status, WoStatus::Ready);
@@ -604,9 +598,7 @@ mod tests {
     #[test]
     fn test_retry_tracking() {
         let store = StateStore::open_memory().unwrap();
-        store
-            .init_group("grp-1", &[("WO-1".into(), 2)], 3)
-            .unwrap();
+        store.init_group("grp-1", &[("WO-1".into(), 2)], 3).unwrap();
 
         // First failure — can retry.
         let can_retry = store.mark_failed("WO-1", "error 1").unwrap();

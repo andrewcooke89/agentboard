@@ -18,7 +18,7 @@ use crate::config::Config;
 use crate::context::{self, format_context, AssembledContext};
 use crate::diff::{DiffAction, StructuredDiff};
 use crate::dispatcher::scheduler::Executor;
-use crate::executor::{auto_commit_files, ExecutionResult, ToolCallLog, TokenUsage};
+use crate::executor::{auto_commit_files, ExecutionResult, TokenUsage, ToolCallLog};
 use crate::gates;
 use crate::mcp_client::McpClient;
 use crate::wo::WorkOrder;
@@ -103,7 +103,8 @@ impl Executor for CcExecutor {
         };
 
         // Build escalation prompt.
-        let prompt = build_escalation_prompt(work_order, &assembled_context, &config.gate_commands, None);
+        let prompt =
+            build_escalation_prompt(work_order, &assembled_context, &config.gate_commands, None);
 
         let timeout_minutes = if work_order.execution.timeout_minutes > 0 {
             work_order.execution.timeout_minutes as u64
@@ -158,7 +159,10 @@ impl Executor for CcExecutor {
                 // Best-effort cancel before bailing.
                 let _ = self
                     .http_client
-                    .post(format!("{}/api/tasks/{}/cancel", self.agentboard_url, task.id))
+                    .post(format!(
+                        "{}/api/tasks/{}/cancel",
+                        self.agentboard_url, task.id
+                    ))
                     .send()
                     .await;
                 bail!("CC task timed out after {}m", timeout_minutes);

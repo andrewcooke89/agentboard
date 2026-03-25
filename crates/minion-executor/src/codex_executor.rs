@@ -16,10 +16,10 @@ use tokio::time::{timeout, Duration};
 use tracing::{debug, info, warn};
 
 use crate::config::Config;
-use crate::context::{self, AssembledContext, format_context};
+use crate::context::{self, format_context, AssembledContext};
 use crate::diff::{DiffAction, StructuredDiff};
 use crate::dispatcher::scheduler::Executor;
-use crate::executor::{auto_commit_files, ExecutionResult, ToolCallLog, TokenUsage};
+use crate::executor::{auto_commit_files, ExecutionResult, TokenUsage, ToolCallLog};
 use crate::gates::{self, GateResults};
 use crate::mcp_client::McpClient;
 use crate::wo::WorkOrder;
@@ -239,10 +239,8 @@ impl Executor for CodexExecutor {
             }
         }
 
-        let success = last_error.is_none()
-            && last_gate_results
-                .as_ref()
-                .map_or(true, |gr| gr.all_passed);
+        let success =
+            last_error.is_none() && last_gate_results.as_ref().map_or(true, |gr| gr.all_passed);
 
         Ok(ExecutionResult {
             work_order_id: work_order.id.clone(),
@@ -271,10 +269,7 @@ fn build_codex_prompt(
     let mut prompt = String::new();
 
     prompt.push_str(&format!("## Task\n{}\n\n", work_order.title));
-    prompt.push_str(&format!(
-        "## Description\n{}\n\n",
-        work_order.description
-    ));
+    prompt.push_str(&format!("## Description\n{}\n\n", work_order.description));
 
     // Add assembled context
     let ctx = format_context(assembled_context);
@@ -415,10 +410,7 @@ fn parse_codex_events(stdout: &str) -> Vec<ToolCallLog> {
             continue;
         };
 
-        let event_type = value
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let event_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         match event_type {
             "function_call" => {
@@ -663,6 +655,9 @@ output:
         let dir = tempfile::tempdir().expect("tempdir");
         let changed = vec!["nonexistent.ts".to_string()];
         let diffs = synthesize_diffs(&changed, dir.path());
-        assert!(diffs.is_empty(), "missing file should produce no diff entry");
+        assert!(
+            diffs.is_empty(),
+            "missing file should produce no diff entry"
+        );
     }
 }

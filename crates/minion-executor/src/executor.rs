@@ -227,10 +227,8 @@ pub async fn execute(
         }
     }
 
-    let success = last_error.is_none()
-        && last_gate_results
-            .as_ref()
-            .map_or(true, |gr| gr.all_passed);
+    let success =
+        last_error.is_none() && last_gate_results.as_ref().map_or(true, |gr| gr.all_passed);
 
     Ok(ExecutionResult {
         work_order_id: work_order.id.clone(),
@@ -290,7 +288,10 @@ async fn run_agent_loop(
     }
 
     registry.register(Box::new(WriteFileTool::new(diff_collector.clone())));
-    registry.register(Box::new(DoneTool::new(done_flag.clone(), contract_violation.clone())));
+    registry.register(Box::new(DoneTool::new(
+        done_flag.clone(),
+        contract_violation.clone(),
+    )));
 
     // Build messages
     let system_prompt = build_system_prompt(work_order);
@@ -348,8 +349,8 @@ async fn run_agent_loop(
                         Err(e) => (format!("Tool error: {e}"), true),
                     };
 
-                    let input_summary = serde_json::to_string(input)
-                        .unwrap_or_else(|_| input.to_string());
+                    let input_summary =
+                        serde_json::to_string(input).unwrap_or_else(|_| input.to_string());
                     let summary = if input_summary.len() > 200 {
                         let mut end = 200;
                         while end > 0 && !input_summary.is_char_boundary(end) {

@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::config::Config;
-use crate::event_reporter::{
-    DependencyEdge, EventReporter, SwarmEvent, TokenUsageSummary,
-};
+use crate::event_reporter::{DependencyEdge, EventReporter, SwarmEvent, TokenUsageSummary};
 use crate::executor::ExecutionResult;
 use crate::wo::WorkOrder;
 
@@ -93,9 +91,10 @@ pub async fn dispatch_group(
     let codex_executor = config.resolve_codex_binary().map(|binary| {
         crate::codex_executor::CodexExecutor::new(binary, config.codex_max_concurrent)
     });
-    let cc_executor = config.agentboard_url.as_ref().map(|url| {
-        crate::cc_executor::CcExecutor::new(url.clone())
-    });
+    let cc_executor = config
+        .agentboard_url
+        .as_ref()
+        .map(|url| crate::cc_executor::CcExecutor::new(url.clone()));
     let executor = RoutingExecutor::new(RealExecutor, codex_executor, cc_executor);
 
     dispatch_group_with_executor(

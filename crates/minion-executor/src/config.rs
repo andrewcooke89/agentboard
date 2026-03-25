@@ -85,7 +85,8 @@ impl Config {
             }
         }
         // Check known installation path
-        let known = std::path::Path::new("/home/andrew-cooke/.nvm/versions/node/v24.13.0/bin/codex");
+        let known =
+            std::path::Path::new("/home/andrew-cooke/.nvm/versions/node/v24.13.0/bin/codex");
         if known.exists() {
             return Some(known.to_string_lossy().to_string());
         }
@@ -98,7 +99,8 @@ impl Config {
 
     fn default_mcp_server_binary() -> String {
         // Prefer the compiled binary at its known location; fall back to PATH.
-        let known = "/home/andrew-cooke/tools/mcp-servers/code-intelligence/target/release/code-intel";
+        let known =
+            "/home/andrew-cooke/tools/mcp-servers/code-intelligence/target/release/code-intel";
         if std::path::Path::new(known).exists() {
             known.to_string()
         } else {
@@ -140,7 +142,10 @@ mod tests {
     fn test_resolve_codex_binary_from_config() {
         let mut config = Config::default();
         config.codex_binary = Some("/usr/bin/codex".to_string());
-        assert_eq!(config.resolve_codex_binary(), Some("/usr/bin/codex".to_string()));
+        assert_eq!(
+            config.resolve_codex_binary(),
+            Some("/usr/bin/codex".to_string())
+        );
     }
 
     #[test]

@@ -60,9 +60,7 @@ impl Tool for DoneTool {
     }
 
     async fn execute(&self, input: serde_json::Value) -> Result<ToolOutput> {
-        let summary = input["summary"]
-            .as_str()
-            .unwrap_or("Task completed");
+        let summary = input["summary"].as_str().unwrap_or("Task completed");
 
         // If the agent flagged a contract violation, store it before setting done.
         if let Some(reason) = input["contract_violation"].as_str() {

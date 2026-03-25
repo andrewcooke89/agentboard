@@ -83,7 +83,11 @@ impl McpInner {
     ///
     /// Responses that don't match `expected_id` are logged and discarded; the loop
     /// continues until a matching one arrives or the timeout fires.
-    async fn call(&mut self, req: JsonRpcRequest, read_timeout: Duration) -> Result<serde_json::Value> {
+    async fn call(
+        &mut self,
+        req: JsonRpcRequest,
+        read_timeout: Duration,
+    ) -> Result<serde_json::Value> {
         let expected_id = req.id;
         let line = serde_json::to_string(&req).context("failed to serialize JSON-RPC request")?;
 
@@ -121,7 +125,10 @@ impl McpInner {
 
             // Skip non-JSON lines (e.g. tracing log output from the MCP server).
             if !trimmed.starts_with('{') {
-                debug!("skipping non-JSON line from MCP server: {}", &trimmed[..trimmed.len().min(120)]);
+                debug!(
+                    "skipping non-JSON line from MCP server: {}",
+                    &trimmed[..trimmed.len().min(120)]
+                );
                 continue;
             }
 
@@ -477,7 +484,8 @@ mod tests {
 
     #[test]
     fn test_jsonrpc_response_error_deserialization() {
-        let json = r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
+        let json =
+            r#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Method not found"}}"#;
         let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
         assert!(resp.result.is_none());
         let err = resp.error.unwrap();

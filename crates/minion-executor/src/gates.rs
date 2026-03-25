@@ -62,8 +62,7 @@ pub async fn run_gates(
 
     // Apply diffs to disk
     if !diffs.is_empty() {
-        crate::diff::apply_diffs(diffs, working_dir)
-            .context("Failed to apply diffs to disk")?;
+        crate::diff::apply_diffs(diffs, working_dir).context("Failed to apply diffs to disk")?;
         info!(count = diffs.len(), "Diffs applied to disk");
     }
 
@@ -105,7 +104,11 @@ pub async fn run_gates_in_place(
     }
 
     if gates.tests.run {
-        let test_cmd = build_test_command(&gate_commands.test, &gates.tests.scope, &gates.tests.specific);
+        let test_cmd = build_test_command(
+            &gate_commands.test,
+            &gates.tests.scope,
+            &gates.tests.specific,
+        );
         let r = run_gate("test", &test_cmd, working_dir, timeout).await;
         results.push(r);
     }
@@ -139,7 +142,10 @@ pub fn revert_diffs(diffs: &[StructuredDiff], working_dir: &Path) {
         }
         match cmd.output() {
             Ok(output) if output.status.success() => {
-                info!(count = tracked_files.len(), "Reverted tracked files via git checkout");
+                info!(
+                    count = tracked_files.len(),
+                    "Reverted tracked files via git checkout"
+                );
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -274,7 +280,11 @@ mod tests {
 
     #[test]
     fn test_build_test_command_specific() {
-        let cmd = build_test_command("bun test {scope}", "relevant", &["src/test1.ts".into(), "src/test2.ts".into()]);
+        let cmd = build_test_command(
+            "bun test {scope}",
+            "relevant",
+            &["src/test1.ts".into(), "src/test2.ts".into()],
+        );
         assert_eq!(cmd, "bun test src/test1.ts src/test2.ts");
     }
 
@@ -293,8 +303,16 @@ mod tests {
     #[test]
     fn test_build_gate_results_all_pass() {
         let results = vec![
-            GateResult { name: "typecheck".into(), passed: true, output: "ok".into() },
-            GateResult { name: "lint".into(), passed: true, output: "ok".into() },
+            GateResult {
+                name: "typecheck".into(),
+                passed: true,
+                output: "ok".into(),
+            },
+            GateResult {
+                name: "lint".into(),
+                passed: true,
+                output: "ok".into(),
+            },
         ];
         let gr = build_gate_results(results);
         assert!(gr.all_passed);
@@ -304,8 +322,16 @@ mod tests {
     #[test]
     fn test_build_gate_results_one_fails() {
         let results = vec![
-            GateResult { name: "typecheck".into(), passed: true, output: "ok".into() },
-            GateResult { name: "lint".into(), passed: false, output: "error: unused var".into() },
+            GateResult {
+                name: "typecheck".into(),
+                passed: true,
+                output: "ok".into(),
+            },
+            GateResult {
+                name: "lint".into(),
+                passed: false,
+                output: "error: unused var".into(),
+            },
         ];
         let gr = build_gate_results(results);
         assert!(!gr.all_passed);
@@ -315,7 +341,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_gate_success() {
-        let r = run_gate("test", "echo hello", Path::new("/tmp"), Duration::from_secs(5)).await;
+        let r = run_gate(
+            "test",
+            "echo hello",
+            Path::new("/tmp"),
+            Duration::from_secs(5),
+        )
+        .await;
         assert!(r.passed);
         assert!(r.output.contains("hello"));
     }
@@ -328,7 +360,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_run_gate_timeout() {
-        let r = run_gate("test", "sleep 10", Path::new("/tmp"), Duration::from_millis(100)).await;
+        let r = run_gate(
+            "test",
+            "sleep 10",
+            Path::new("/tmp"),
+            Duration::from_millis(100),
+        )
+        .await;
         assert!(!r.passed);
         assert!(r.output.contains("timed out"));
     }

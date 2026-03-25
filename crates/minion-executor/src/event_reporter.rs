@@ -8,7 +8,7 @@ use tracing::{debug, warn};
 /// Reports dispatch events to the agentboard swarm API.
 #[derive(Clone)]
 pub struct EventReporter {
-    http_client: reqwest::Client,
+    http_client: Option<reqwest::Client>,
     base_url: String,
     enabled: bool,
 }
@@ -141,13 +141,17 @@ pub struct ErrorHistoryEntrySummary {
 impl EventReporter {
     /// Create a new reporter. If base_url is None, reporting is disabled (no-op).
     pub fn new(base_url: Option<&str>) -> Self {
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .expect("failed to build event reporter HTTP client");
-
-        let normalized = base_url.unwrap_or_default().trim_end_matches('/').to_string();
+        let normalized = base_url
+            .unwrap_or_default()
+            .trim_end_matches('/')
+            .to_string();
         let enabled = !normalized.is_empty();
+        let http_client = enabled.then(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("failed to build event reporter HTTP client")
+        });
 
         Self {
             http_client,
@@ -168,8 +172,11 @@ impl EventReporter {
             return;
         }
 
+        let Some(http_client) = &self.http_client else {
+            return;
+        };
         let url = format!("{}/api/swarm/events", self.base_url);
-        match self.http_client.post(&url).json(&event).send().await {
+        match http_client.post(&url).json(&event).send().await {
             Ok(resp) if resp.status().is_success() => {
                 debug!("Swarm event reported successfully");
             }
@@ -263,7 +270,10 @@ mod tests {
         let parsed = chrono::DateTime::parse_from_rfc3339(&timestamp)
             .expect("timestamp should be valid RFC3339");
 
-        assert_eq!(parsed.to_rfc3339_opts(chrono::SecondsFormat::Millis, true), timestamp);
+        assert_eq!(
+            parsed.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            timestamp
+        );
         assert!(timestamp.ends_with('Z'));
     }
 }

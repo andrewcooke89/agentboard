@@ -37,9 +37,7 @@ impl DependencyGraph {
             // Validate all deps reference known WOs.
             for dep in &dep_set {
                 if !all_ids.contains(dep) {
-                    bail!(
-                        "Work order {id} depends on {dep}, which is not in the work order set"
-                    );
+                    bail!("Work order {id} depends on {dep}, which is not in the work order set");
                 }
             }
 
@@ -364,11 +362,7 @@ mod tests {
 
     #[test]
     fn test_ready_excludes_completed() {
-        let graph = DependencyGraph::build(&[
-            ("A".into(), vec![]),
-            ("B".into(), vec![]),
-        ])
-        .unwrap();
+        let graph = DependencyGraph::build(&[("A".into(), vec![]), ("B".into(), vec![])]).unwrap();
 
         let completed: HashSet<String> = ["A".into()].into();
         let ready = graph.ready_ids(&completed);

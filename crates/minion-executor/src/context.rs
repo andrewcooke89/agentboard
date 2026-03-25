@@ -90,14 +90,19 @@ pub async fn assemble_context(
     // 3. Get forward dependencies for scope
     let dependencies = if let Some(scope) = &work_order.scope {
         let abs_scope = resolve_path(scope, working_dir);
-        call_file_dependencies(mcp, &abs_scope, "forward").await.ok()
+        call_file_dependencies(mcp, &abs_scope, "forward")
+            .await
+            .ok()
     } else {
         None
     };
 
     // 4. For refactor/fix tasks, get reverse dependencies (who imports these files?)
     //    This ensures the model knows about all consumers it might break.
-    if matches!(work_order.task, crate::wo::TaskType::Refactor | crate::wo::TaskType::Fix) {
+    if matches!(
+        work_order.task,
+        crate::wo::TaskType::Refactor | crate::wo::TaskType::Fix
+    ) {
         for file_path in &all_files {
             let abs_path = resolve_path(file_path, working_dir);
             match call_file_dependencies(mcp, &abs_path, "reverse").await {
@@ -107,7 +112,10 @@ pub async fn assemble_context(
                     let consumer_paths = extract_file_paths_from_deps(&reverse_deps);
                     for consumer in consumer_paths {
                         // Skip if we already have this file
-                        if file_contents.iter().any(|fc| consumer.ends_with(&fc.path) || fc.path.ends_with(&consumer)) {
+                        if file_contents
+                            .iter()
+                            .any(|fc| consumer.ends_with(&fc.path) || fc.path.ends_with(&consumer))
+                        {
                             continue;
                         }
                         let abs_consumer = if consumer.starts_with('/') {
@@ -115,10 +123,13 @@ pub async fn assemble_context(
                         } else {
                             resolve_path(&consumer, working_dir)
                         };
-                        match call_intern_read_file(mcp, &abs_consumer, &work_order.description).await {
+                        match call_intern_read_file(mcp, &abs_consumer, &work_order.description)
+                            .await
+                        {
                             Ok(content) => {
                                 // Use relative path for display
-                                let rel_path = consumer.strip_prefix(&format!("{}/", working_dir.display()))
+                                let rel_path = consumer
+                                    .strip_prefix(&format!("{}/", working_dir.display()))
                                     .unwrap_or(&consumer);
                                 info!(path = %rel_path, "Added reverse dependency to context");
                                 file_contents.push(FileContext {
@@ -168,10 +179,7 @@ pub fn format_context(ctx: &AssembledContext) -> String {
     if !ctx.file_contents.is_empty() {
         parts.push("## File Contents\n".to_string());
         for fc in &ctx.file_contents {
-            parts.push(format!(
-                "### `{}`\n\n```\n{}\n```\n",
-                fc.path, fc.content
-            ));
+            parts.push(format!("### `{}`\n\n```\n{}\n```\n", fc.path, fc.content));
         }
     }
 

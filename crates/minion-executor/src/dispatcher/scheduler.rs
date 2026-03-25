@@ -110,7 +110,9 @@ impl Executor for RoutingExecutor {
                 ),
             }
         } else {
-            self.api_executor.execute(config, work_order, working_dir).await
+            self.api_executor
+                .execute(config, work_order, working_dir)
+                .await
         }
     }
 }
@@ -248,7 +250,11 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                 let newly_ready: Vec<String> = graph
                     .ready_ids(&all_done)
                     .into_iter()
-                    .filter(|id| !running.contains(id) && !completed.contains(id) && !failed_permanent.contains(id))
+                    .filter(|id| {
+                        !running.contains(id)
+                            && !completed.contains(id)
+                            && !failed_permanent.contains(id)
+                    })
                     .collect();
 
                 for wo_id in &newly_ready {
@@ -274,18 +280,25 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
             DispatchEvent::Failed { wo_id, result } => {
                 running.remove(&wo_id);
 
-                let error_msg = result.error.clone()
+                let error_msg = result
+                    .error
+                    .clone()
                     .unwrap_or_else(|| "Execution failed".to_string());
-                let gate_detail = result.gate_results.as_ref()
+                let gate_detail = result
+                    .gate_results
+                    .as_ref()
                     .and_then(|gr| gr.error_context.clone());
 
                 // Record error history entry.
                 let current_tier = state_store.get_escalation_tier(&wo_id).unwrap_or(0);
-                let current_model = model_overrides.get(&wo_id)
+                let current_model = model_overrides
+                    .get(&wo_id)
                     .cloned()
-                    .unwrap_or_else(|| wo_map[&wo_id].execution.model.clone());
-                let current_attempt = state_store.get_wo_state(&wo_id)
-                    .map(|s| s.attempt).unwrap_or(0);
+                    .unwrap_or_else(|| effective_model(config, &wo_map[&wo_id]));
+                let current_attempt = state_store
+                    .get_wo_state(&wo_id)
+                    .map(|s| s.attempt)
+                    .unwrap_or(0);
 
                 event_reporter
                     .report(SwarmEvent::WoFailed {
@@ -316,8 +329,8 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         let chain = wo.escalation.effective_chain();
                         // Find CC tier (model == "opus-cc").
                         // Chain index is 0-based, escalation_tier = chain_index + 1.
-                        if let Some((cc_chain_idx, cc_tier)) = chain.iter().enumerate()
-                            .find(|(_, t)| t.model == "opus-cc")
+                        if let Some((cc_chain_idx, cc_tier)) =
+                            chain.iter().enumerate().find(|(_, t)| t.model == "opus-cc")
                         {
                             info!(
                                 wo_id = %wo_id,
@@ -326,7 +339,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                             );
                             state_store.set_escalation_tier(&wo_id, (cc_chain_idx + 1) as u32)?;
                             state_store.reset_attempts(&wo_id, cc_tier.max_retries)?;
-                            model_overrides.insert(wo_id.clone(), "opus-cc".to_string());
+                            model_overrides.insert(wo_id.clone(), cc_tier.model.clone());
                             event_reporter
                                 .report(SwarmEvent::WoEscalated {
                                     group_id: group_id.clone(),
@@ -334,7 +347,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                                     wo_id: wo_id.clone(),
                                     from_tier: current_tier,
                                     to_tier: (cc_chain_idx + 1) as u32,
-                                    to_model: "opus-cc".to_string(),
+                                    to_model: cc_tier.model.clone(),
                                     error_history: state_store
                                         .get_error_history(&wo_id)?
                                         .into_iter()
@@ -350,8 +363,16 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                                 .await;
                             state_store.mark_ready(&wo_id)?;
                             spawn_executor(
-                                &wo_id, &group_id, &wo_map, config, working_dir, &executor,
-                                &semaphore, &tx, state_store, &mut running,
+                                &wo_id,
+                                &group_id,
+                                &wo_map,
+                                config,
+                                working_dir,
+                                &executor,
+                                &semaphore,
+                                &tx,
+                                state_store,
+                                &mut running,
                                 &model_overrides,
                                 &event_reporter,
                             )
@@ -369,8 +390,16 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                     info!(wo_id = %wo_id, "WO failed, retrying at same tier");
                     state_store.mark_ready(&wo_id)?;
                     spawn_executor(
-                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
-                        &semaphore, &tx, state_store, &mut running,
+                        &wo_id,
+                        &group_id,
+                        &wo_map,
+                        config,
+                        working_dir,
+                        &executor,
+                        &semaphore,
+                        &tx,
+                        state_store,
+                        &mut running,
                         &model_overrides,
                         &event_reporter,
                     )
@@ -378,11 +407,22 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                 } else if !aborted {
                     // Retries exhausted at current tier -- try escalation.
                     if try_escalate(
-                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
-                        &semaphore, &tx, state_store, &mut running,
-                        &mut model_overrides, current_tier, &event_reporter,
+                        &wo_id,
+                        &group_id,
+                        &wo_map,
+                        config,
+                        working_dir,
+                        &executor,
+                        &semaphore,
+                        &tx,
+                        state_store,
+                        &mut running,
+                        &mut model_overrides,
+                        current_tier,
+                        &event_reporter,
                     )
-                    .await? {
+                    .await?
+                    {
                         // Escalation succeeded, WO re-spawned at next tier.
                     } else {
                         // All tiers exhausted or escalation disabled -- permanent failure.
@@ -401,11 +441,14 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
 
                 // Record error history entry.
                 let current_tier = state_store.get_escalation_tier(&wo_id).unwrap_or(0);
-                let current_model = model_overrides.get(&wo_id)
+                let current_model = model_overrides
+                    .get(&wo_id)
                     .cloned()
-                    .unwrap_or_else(|| wo_map[&wo_id].execution.model.clone());
-                let current_attempt = state_store.get_wo_state(&wo_id)
-                    .map(|s| s.attempt).unwrap_or(0);
+                    .unwrap_or_else(|| effective_model(config, &wo_map[&wo_id]));
+                let current_attempt = state_store
+                    .get_wo_state(&wo_id)
+                    .map(|s| s.attempt)
+                    .unwrap_or(0);
 
                 event_reporter
                     .report(SwarmEvent::WoFailed {
@@ -435,19 +478,38 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                     info!(wo_id = %wo_id, "WO executor error, retrying");
                     state_store.mark_ready(&wo_id)?;
                     spawn_executor(
-                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
-                        &semaphore, &tx, state_store, &mut running,
+                        &wo_id,
+                        &group_id,
+                        &wo_map,
+                        config,
+                        working_dir,
+                        &executor,
+                        &semaphore,
+                        &tx,
+                        state_store,
+                        &mut running,
                         &model_overrides,
                         &event_reporter,
                     )
                     .await?;
                 } else if !aborted {
                     if try_escalate(
-                        &wo_id, &group_id, &wo_map, config, working_dir, &executor,
-                        &semaphore, &tx, state_store, &mut running,
-                        &mut model_overrides, current_tier, &event_reporter,
+                        &wo_id,
+                        &group_id,
+                        &wo_map,
+                        config,
+                        working_dir,
+                        &executor,
+                        &semaphore,
+                        &tx,
+                        state_store,
+                        &mut running,
+                        &mut model_overrides,
+                        current_tier,
+                        &event_reporter,
                     )
-                    .await? {
+                    .await?
+                    {
                         // Escalated.
                     } else {
                         warn!(wo_id = %wo_id, "WO permanently failed (executor error)");
@@ -570,8 +632,16 @@ async fn try_escalate<E: Executor + Clone>(
         .await;
     state_store.mark_ready(wo_id)?;
     spawn_executor(
-        wo_id, group_id, wo_map, config, working_dir, executor,
-        semaphore, tx, state_store, running,
+        wo_id,
+        group_id,
+        wo_map,
+        config,
+        working_dir,
+        executor,
+        semaphore,
+        tx,
+        state_store,
+        running,
         model_overrides,
         event_reporter,
     )
@@ -580,11 +650,7 @@ async fn try_escalate<E: Executor + Clone>(
 }
 
 /// Check if the group should abort due to too many permanent failures.
-fn check_abort(
-    group_id: &str,
-    state_store: &StateStore,
-    aborted: &mut bool,
-) -> Result<()> {
+fn check_abort(group_id: &str, state_store: &StateStore, aborted: &mut bool) -> Result<()> {
     if state_store.should_abort(group_id)? {
         warn!(group_id = %group_id, "Group abort threshold reached");
         *aborted = true;
@@ -624,7 +690,10 @@ async fn spawn_executor<E: Executor + Clone>(
     let group_id_owned = group_id.to_string();
     let effective_model = effective_model(&config, &wo);
     let current_tier = state_store.get_escalation_tier(wo_id).unwrap_or(0);
-    let current_attempt = state_store.get_wo_state(wo_id).map(|s| s.attempt).unwrap_or(0);
+    let current_attempt = state_store
+        .get_wo_state(wo_id)
+        .map(|s| s.attempt)
+        .unwrap_or(0);
     let reporter = event_reporter.clone();
 
     state_store.mark_running(wo_id)?;
@@ -687,7 +756,7 @@ fn summarize_gate_results(result: &ExecutionResult) -> Option<GateResultSummary>
             .map(|g| GateEntry {
                 name: g.name.clone(),
                 passed: g.passed,
-                output: g.output.clone(),
+                output: Some(g.output.clone()),
             })
             .collect(),
     })
@@ -901,8 +970,10 @@ execution:
         let wos = vec![make_wo("WO-1", "grp", vec![])];
         let executor = MockExecutor::new(vec![("WO-1", 10, true)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
         let config = test_config();
@@ -915,6 +986,7 @@ execution:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -940,8 +1012,10 @@ execution:
             ("WO-3", 50, true),
         ]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
         let config = test_config();
@@ -955,6 +1029,7 @@ execution:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -963,7 +1038,11 @@ execution:
         assert_eq!(result.status, super::super::state::GroupStatus::Completed);
         assert_eq!(result.wo_results.len(), 3);
         // Should run in parallel, so ~50ms not ~150ms.
-        assert!(elapsed < Duration::from_millis(200), "Expected parallel execution, took {:?}", elapsed);
+        assert!(
+            elapsed < Duration::from_millis(200),
+            "Expected parallel execution, took {:?}",
+            elapsed
+        );
     }
 
     #[tokio::test]
@@ -975,8 +1054,10 @@ execution:
         ];
         let executor = MockExecutor::new(vec![("WO-A", 20, true), ("WO-B", 20, true)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
         let config = test_config();
@@ -989,6 +1070,7 @@ execution:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1006,8 +1088,10 @@ execution:
         let wos = vec![make_wo("WO-1", "grp", vec![])];
         let executor = MockExecutor::new(vec![("WO-1", 10, false)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
         let config = test_config();
@@ -1020,6 +1104,7 @@ execution:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1057,8 +1142,10 @@ execution:
             ("WO-4", 10, true),
         ]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
         let config = test_config();
@@ -1074,6 +1161,7 @@ execution:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1101,13 +1189,12 @@ escalation:
       max_retries: 0
 "#;
         let wos = vec![serde_yaml::from_str::<WorkOrder>(yaml).unwrap()];
-        let executor = ModelAwareMockExecutor::new(vec![
-            ("glm-5", false),
-            ("codex", true),
-        ]);
+        let executor = ModelAwareMockExecutor::new(vec![("glm-5", false), ("codex", true)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
 
@@ -1119,6 +1206,7 @@ escalation:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1153,13 +1241,12 @@ escalation:
       max_retries: 0
 "#;
         let wos = vec![serde_yaml::from_str::<WorkOrder>(yaml).unwrap()];
-        let executor = ModelAwareMockExecutor::new(vec![
-            ("glm-5", false),
-            ("codex", false),
-        ]);
+        let executor = ModelAwareMockExecutor::new(vec![("glm-5", false), ("codex", false)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
 
@@ -1171,6 +1258,7 @@ escalation:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1211,8 +1299,10 @@ escalation:
         let wos = vec![serde_yaml::from_str::<WorkOrder>(yaml).unwrap()];
         let executor = ContractViolationMockExecutor;
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
 
@@ -1224,6 +1314,7 @@ escalation:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();
@@ -1262,8 +1353,10 @@ escalation:
         let wos = vec![serde_yaml::from_str::<WorkOrder>(yaml).unwrap()];
         let executor = ModelAwareMockExecutor::new(vec![("glm-5", false)]);
 
-        let graph_input: Vec<(String, Vec<String>)> =
-            wos.iter().map(|wo| (wo.id.clone(), wo.depends_on.clone())).collect();
+        let graph_input: Vec<(String, Vec<String>)> = wos
+            .iter()
+            .map(|wo| (wo.id.clone(), wo.depends_on.clone()))
+            .collect();
         let graph = DependencyGraph::build(&graph_input).unwrap();
         let state = StateStore::open_memory().unwrap();
 
@@ -1275,6 +1368,7 @@ escalation:
             &state,
             Path::new("/tmp"),
             executor,
+            EventReporter::disabled(),
         )
         .await
         .unwrap();

@@ -355,12 +355,18 @@ mod tests {
         // Verify that multi-block content is joined correctly (unit-test the join logic).
         use crate::mcp_client::McpContent;
         let blocks = vec![
-            McpContent::Text { text: "hello ".to_string() },
-            McpContent::Text { text: "world".to_string() },
+            McpContent::Text {
+                text: "hello ".to_string(),
+            },
+            McpContent::Text {
+                text: "world".to_string(),
+            },
         ];
         let joined = blocks
             .iter()
-            .map(|c| match c { McpContent::Text { text } => text.as_str() })
+            .map(|c| match c {
+                McpContent::Text { text } => text.as_str(),
+            })
             .collect::<Vec<_>>()
             .join("");
         assert_eq!(joined, "hello world");
