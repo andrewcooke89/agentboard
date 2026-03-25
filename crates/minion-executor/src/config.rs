@@ -27,6 +27,35 @@ pub struct Config {
 
     /// Timeout for individual shell commands in seconds.
     pub command_timeout_seconds: u64,
+
+    /// Gate commands (per-project configuration).
+    /// If not set, defaults are used.
+    #[serde(default)]
+    pub gate_commands: GateCommands,
+}
+
+/// Shell commands for each gate. Projects override these in config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateCommands {
+    /// Typecheck command (e.g. "bun run typecheck", "cargo check", "tsc --noEmit").
+    pub typecheck: String,
+
+    /// Lint command (e.g. "bun run lint", "cargo clippy", "eslint .").
+    pub lint: String,
+
+    /// Test command template. `{scope}` is replaced with the test scope from WO.
+    /// e.g. "bun test {scope}", "cargo test {scope}".
+    pub test: String,
+}
+
+impl Default for GateCommands {
+    fn default() -> Self {
+        Self {
+            typecheck: "bun run typecheck".to_string(),
+            lint: "bun run lint".to_string(),
+            test: "bun test {scope}".to_string(),
+        }
+    }
 }
 
 impl Config {
@@ -51,6 +80,7 @@ impl Default for Config {
             max_iterations: 20,
             timeout_seconds: 900, // 15 minutes
             command_timeout_seconds: 60,
+            gate_commands: GateCommands::default(),
         }
     }
 }

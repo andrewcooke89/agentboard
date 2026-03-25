@@ -7,7 +7,7 @@
 //! Phases 2+3 are wrapped in a retry loop. If gates fail, the agent is re-invoked
 //! with the error context. After max retries, execution fails with escalation hint.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -176,12 +176,24 @@ pub async fn execute(
             work_order,
             &agent_result.diffs,
             working_dir,
+            &config.gate_commands,
             config.command_timeout_seconds,
         )
         .await?;
 
         if gate_results.all_passed {
             info!(wo_id = %work_order.id, attempt, "All gates passed");
+
+            // Auto-commit if configured
+            if work_order.output.commit {
+                if let Err(e) = auto_commit(work_order, working_dir) {
+                    warn!(wo_id = %work_order.id, error = %e, "Auto-commit failed");
+                    last_error = Some(format!("Gates passed but commit failed: {e}"));
+                    last_gate_results = Some(gate_results);
+                    break;
+                }
+            }
+
             last_gate_results = Some(gate_results);
             last_error = None;
             break;
@@ -697,4 +709,55 @@ depends_on:
             .collect::<Vec<_>>()
             .join("\n")
     }
+}
+
+/// Auto-commit changed files after all gates pass.
+fn auto_commit(work_order: &WorkOrder, working_dir: &Path) -> Result<()> {
+    use std::process::Command;
+
+    let prefix = &work_order.output.commit_prefix;
+    let scope = work_order.scope.as_deref().unwrap_or("misc");
+    let title = &work_order.title;
+
+    // Stage all changes in the working directory
+    let add_output = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(working_dir)
+        .output()
+        .context("Failed to run git add")?;
+
+    if !add_output.status.success() {
+        let stderr = String::from_utf8_lossy(&add_output.stderr);
+        anyhow::bail!("git add failed: {stderr}");
+    }
+
+    // Check if there's anything to commit
+    let status_output = Command::new("git")
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(working_dir)
+        .output()
+        .context("Failed to run git diff --cached")?;
+
+    if status_output.status.success() {
+        info!(wo_id = %work_order.id, "Nothing to commit (no staged changes)");
+        return Ok(());
+    }
+
+    // Build commit message: "feat(src/shared): Add formatDuration utility [WO-TEST-001]"
+    let scope_short = scope.trim_end_matches('/');
+    let msg = format!("{prefix}({scope_short}): {title} [{}]", work_order.id);
+
+    let commit_output = Command::new("git")
+        .args(["commit", "-m", &msg])
+        .current_dir(working_dir)
+        .output()
+        .context("Failed to run git commit")?;
+
+    if !commit_output.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_output.stderr);
+        anyhow::bail!("git commit failed: {stderr}");
+    }
+
+    info!(wo_id = %work_order.id, message = %msg, "Auto-committed");
+    Ok(())
 }

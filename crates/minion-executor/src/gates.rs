@@ -11,10 +11,11 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
+use crate::config::GateCommands;
 use crate::diff::StructuredDiff;
-use crate::wo::{Gates, WorkOrder};
+use crate::wo::WorkOrder;
 
 /// Result of running all gates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +51,7 @@ pub async fn run_gates(
     work_order: &WorkOrder,
     diffs: &[StructuredDiff],
     working_dir: &Path,
+    gate_commands: &GateCommands,
     timeout_secs: u64,
 ) -> Result<GateResults> {
     info!(
@@ -72,7 +74,7 @@ pub async fn run_gates(
     // Run gates in order: typecheck → lint → tests
     // Each gate only runs if the previous ones passed (fail-fast).
     if gates.compile {
-        let r = run_gate("typecheck", "bun run typecheck", working_dir, timeout).await;
+        let r = run_gate("typecheck", &gate_commands.typecheck, working_dir, timeout).await;
         let passed = r.passed;
         results.push(r);
         if !passed {
@@ -81,7 +83,7 @@ pub async fn run_gates(
     }
 
     if gates.lint {
-        let r = run_gate("lint", "bun run lint", working_dir, timeout).await;
+        let r = run_gate("lint", &gate_commands.lint, working_dir, timeout).await;
         let passed = r.passed;
         results.push(r);
         if !passed {
@@ -90,7 +92,7 @@ pub async fn run_gates(
     }
 
     if gates.tests.run {
-        let test_cmd = build_test_command(&gates.tests.scope, &gates.tests.specific);
+        let test_cmd = build_test_command(&gate_commands.test, &gates.tests.scope, &gates.tests.specific);
         let r = run_gate("test", &test_cmd, working_dir, timeout).await;
         results.push(r);
     }
@@ -98,23 +100,53 @@ pub async fn run_gates(
     Ok(build_gate_results(results))
 }
 
-/// Revert diffs from disk (best-effort, for retry cleanup).
+/// Revert diffs from disk using git checkout for tracked files
+/// and rm for newly created (untracked) files.
 pub fn revert_diffs(diffs: &[StructuredDiff], working_dir: &Path) {
+    let mut tracked_files: Vec<String> = Vec::new();
+    let mut created_files: Vec<std::path::PathBuf> = Vec::new();
+
     for diff in diffs {
-        let file_path = working_dir.join(&diff.file);
         match &diff.action {
             crate::diff::DiffAction::Create => {
-                // Remove created files
-                if let Err(e) = std::fs::remove_file(&file_path) {
-                    warn!(path = %file_path.display(), error = %e, "Failed to revert created file");
-                }
+                created_files.push(working_dir.join(&diff.file));
             }
             _ => {
-                // For replace/insert_after/delete, we'd need the original content.
-                // For now, log a warning — full git-based revert comes in Phase 2.
-                debug!(path = %file_path.display(), "Cannot revert non-create diff without original content");
+                tracked_files.push(diff.file.clone());
             }
         }
+    }
+
+    // Revert tracked files via git checkout
+    if !tracked_files.is_empty() {
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg("checkout").arg("--").current_dir(working_dir);
+        for f in &tracked_files {
+            cmd.arg(f);
+        }
+        match cmd.output() {
+            Ok(output) if output.status.success() => {
+                info!(count = tracked_files.len(), "Reverted tracked files via git checkout");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                warn!(error = %stderr, "git checkout failed, falling back to best-effort");
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to run git checkout");
+            }
+        }
+    }
+
+    // Remove newly created (untracked) files
+    for path in &created_files {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!(path = %path.display(), error = %e, "Failed to remove created file");
+        }
+    }
+
+    if !created_files.is_empty() {
+        info!(count = created_files.len(), "Removed created files");
     }
 }
 
@@ -186,17 +218,17 @@ async fn run_gate(name: &str, command: &str, working_dir: &Path, timeout: Durati
     }
 }
 
-/// Build the test command from WO gates config.
-fn build_test_command(scope: &str, specific: &[String]) -> String {
+/// Build the test command from the template and WO gates config.
+///
+/// The template uses `{scope}` as a placeholder, e.g. "bun test {scope}".
+fn build_test_command(template: &str, scope: &str, specific: &[String]) -> String {
     if !specific.is_empty() {
-        // Run specific test files
         let files = specific.join(" ");
-        format!("bun test {files}")
+        template.replace("{scope}", &files)
     } else {
         match scope {
-            "all" => "bun test".to_string(),
-            "relevant" => "bun test".to_string(), // TODO: scope to changed files
-            other => format!("bun test {other}"),
+            "all" | "relevant" => template.replace("{scope}", "").trim().to_string(),
+            other => template.replace("{scope}", other),
         }
     }
 }
@@ -229,19 +261,19 @@ mod tests {
 
     #[test]
     fn test_build_test_command_specific() {
-        let cmd = build_test_command("relevant", &["src/test1.ts".into(), "src/test2.ts".into()]);
+        let cmd = build_test_command("bun test {scope}", "relevant", &["src/test1.ts".into(), "src/test2.ts".into()]);
         assert_eq!(cmd, "bun test src/test1.ts src/test2.ts");
     }
 
     #[test]
     fn test_build_test_command_all() {
-        let cmd = build_test_command("all", &[]);
+        let cmd = build_test_command("bun test {scope}", "all", &[]);
         assert_eq!(cmd, "bun test");
     }
 
     #[test]
     fn test_build_test_command_scope() {
-        let cmd = build_test_command("src/shared/", &[]);
+        let cmd = build_test_command("bun test {scope}", "src/shared/", &[]);
         assert_eq!(cmd, "bun test src/shared/");
     }
 
