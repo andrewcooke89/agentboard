@@ -13,6 +13,7 @@ import WorkflowPanel from './components/WorkflowPanel'
 import { CronManager } from './components/cron/CronManager'
 import { CronAiDrawer } from './components/cron/CronAiDrawer'
 import { CronAiTerminal } from './components/cron/CronAiTerminal'
+import SwarmView from './components/swarm/SwarmView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastViewport, toastManager } from './components/Toast'
 import { useSessionStore } from './stores/sessionStore'
@@ -39,6 +40,8 @@ import PendingReviewDashboard from './components/PendingReviewDashboard'
 import { usePoolStore } from './stores/poolStore'
 import { useCronStore } from './stores/cronStore'
 import { useCronAiStore } from './stores/cronAiStore'
+import { useSwarmStore } from './stores/swarmStore'
+import type { SwarmStateMessage, SwarmUpdateMessage } from '@shared/swarmTypes'
 
 interface ServerInfo {
   port: number
@@ -51,7 +54,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
-  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews' | 'cron-manager'>('sessions')
+  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews' | 'cron-manager' | 'swarm'>('sessions')
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false)
   const [dismissedPermissionBanners, setDismissedPermissionBanners] = useState<Set<string>>(new Set())
@@ -206,6 +209,11 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = subscribe((message: ServerMessage) => {
+      const typedMessage = message as
+        | ServerMessage
+        | SwarmUpdateMessage
+        | SwarmStateMessage
+
       if (message.type === 'sessions') {
         // Detect status transitions for sound notifications before updating
         const currentSessions = useSessionStore.getState().sessions
@@ -550,6 +558,12 @@ export default function App() {
             break
         }
       }
+      if (typedMessage.type === 'swarm-update') {
+        useSwarmStore.getState().handleSwarmUpdate(typedMessage.event)
+      }
+      if (typedMessage.type === 'swarm-state') {
+        useSwarmStore.getState().handleSwarmState(typedMessage.groups)
+      }
 
       // Phase 15: Step paused (REQ-32)
       if (message.type === 'step_paused') {
@@ -739,6 +753,13 @@ export default function App() {
       if (isShortcut && event.shiftKey && code === 'KeyC') {
         event.preventDefault()
         setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')
+        return
+      }
+
+      // Toggle swarm: [mod]+Shift+S
+      if (isShortcut && event.shiftKey && code === 'KeyS') {
+        event.preventDefault()
+        setActiveView((prev) => (prev === 'swarm' ? 'sessions' : 'swarm'))
         return
       }
 
@@ -965,11 +986,13 @@ export default function App() {
           onToggleHistory={() => setShowHistory(!showHistory)}
           historyActive={showHistory}
           onToggleWorkflows={() => setActiveView((prev) => (prev === 'workflow-list' ? 'sessions' : 'workflow-list'))}
-          workflowsActive={activeView !== 'sessions' && activeView !== 'cron-manager'}
+          workflowsActive={activeView !== 'sessions' && activeView !== 'cron-manager' && activeView !== 'swarm'}
           onToggleWorkflowPanel={() => setWorkflowPanelOpen((prev) => !prev)}
           workflowPanelActive={workflowPanelOpen}
           onToggleCronManager={() => setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')}
           cronManagerActive={activeView === 'cron-manager'}
+          onToggleSwarm={() => setActiveView((prev) => (prev === 'swarm' ? 'sessions' : 'swarm'))}
+          swarmActive={activeView === 'swarm'}
         />
         <PoolStatusIndicator poolStatus={poolStatus} />
         <SessionList
@@ -1092,6 +1115,11 @@ export default function App() {
               />
             </CronAiDrawer>
           )}
+        </div>
+      )}
+      {activeView === 'swarm' && (
+        <div className="flex-1 overflow-hidden">
+          <SwarmView />
         </div>
       )}
 

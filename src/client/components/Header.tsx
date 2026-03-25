@@ -25,6 +25,8 @@ interface HeaderProps {
   workflowPanelActive?: boolean
   onToggleCronManager?: () => void
   cronManagerActive?: boolean
+  onToggleSwarm?: () => void
+  swarmActive?: boolean
 }
 
 const statusDot: Record<ConnectionStatus, string> = {
@@ -51,6 +53,8 @@ export default function Header({
   workflowPanelActive,
   onToggleCronManager,
   cronManagerActive,
+  onToggleSwarm,
+  swarmActive,
 }: HeaderProps) {
   const [copied, setCopied] = useState(false)
   const shortcutModifier = useSettingsStore((state) => state.shortcutModifier)
@@ -135,6 +139,25 @@ export default function Header({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" />
               <polyline points="12,6 12,12 16,14" />
+            </svg>
+          </button>
+        )}
+        {onToggleSwarm && (
+          <button
+            onClick={onToggleSwarm}
+            className={`flex h-7 items-center gap-1 rounded border px-1.5 transition-all active:scale-95 ${
+              swarmActive
+                ? 'border-accent/50 bg-accent/10 text-accent'
+                : 'border-border text-secondary hover:bg-hover hover:text-primary'
+            }`}
+            title={`Swarm (${modDisplay}\u21E7S)`}
+            aria-label="Toggle swarm view"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="6" cy="6" r="2" />
+              <circle cx="18" cy="6" r="2" />
+              <circle cx="12" cy="18" r="2" />
+              <path d="M8 7.5l2.5 7M16 7.5l-2.5 7M8 6h8" />
             </svg>
           </button>
         )}
