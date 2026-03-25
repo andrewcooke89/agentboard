@@ -16,6 +16,7 @@ mod config;
 mod context;
 mod diff;
 mod dispatcher;
+mod event_reporter;
 mod executor;
 mod gates;
 mod mcp_client;

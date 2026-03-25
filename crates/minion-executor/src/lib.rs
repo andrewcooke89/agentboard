@@ -9,6 +9,7 @@ pub mod config;
 pub mod context;
 pub mod diff;
 pub mod dispatcher;
+pub mod event_reporter;
 pub mod executor;
 pub mod gates;
 pub mod mcp_client;
