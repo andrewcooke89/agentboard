@@ -104,6 +104,7 @@ export default function App() {
   const toggleCronAiDrawer = useCronAiStore((s) => s.toggleDrawer)
   const cronAiSessionWindowId = useCronAiStore((s) => s.sessionWindowId)
   const cronAiSessionId = useCronAiStore((s) => s.sessionId)
+  const fetchSwarmGroups = useSwarmStore((state) => state.fetchGroups)
 
   const showHistory = useHistoryStore((state) => state.showHistory)
   const setShowHistory = useHistoryStore((state) => state.setShowHistory)
@@ -878,6 +879,11 @@ export default function App() {
   useEffect(() => {
     void fetchPoolStatus()
   }, [fetchPoolStatus])
+
+  // Fetch current swarm state on mount so the view has initial data
+  useEffect(() => {
+    void fetchSwarmGroups()
+  }, [fetchSwarmGroups])
 
   // Calculate permission sessions for banner
   const permissionSessions = useMemo(() => {

@@ -17,6 +17,7 @@ export default function SwarmView() {
     selectedGroup && selectedWoId
       ? selectedGroup.wos[selectedWoId] || null
       : null
+  const activeGroupId = selectedGroup?.groupId ?? selectedGroupId
 
   return (
     <div className="flex h-full flex-col bg-[#0a0a1a]">
@@ -27,7 +28,7 @@ export default function SwarmView() {
               key={group.groupId}
               onClick={() => selectGroup(group.groupId)}
               className={`px-3 py-1 text-xs rounded-t ${
-                group.groupId === selectedGroupId
+                group.groupId === activeGroupId
                   ? 'bg-gray-800 text-white'
                   : 'text-gray-500 hover:text-gray-300'
               }`}
