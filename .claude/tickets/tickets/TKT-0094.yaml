@@ -1,0 +1,37 @@
+id: TKT-0094
+version: 1
+created_at: 2026-03-16T06:38:25.359Z
+updated_at: 2026-03-16T06:52:16.252Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/cronAiService.test.ts
+  line_start: 8
+  code_snippet: CronJob,
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is
+  imported but never used."
+description: "eslint(no-unused-vars): Type 'CronJobDetail' is imported but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:52:16.252Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is
+      [TKT-0094]"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:52:16.252Z
+  resolved_by: minion-fix
+  pr_url: null
+  commit_sha: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Type 'CronJobDetail' is [TKT-0094]"

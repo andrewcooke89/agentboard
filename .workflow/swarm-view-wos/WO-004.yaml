@@ -1,0 +1,123 @@
+# Frontend: Group progress bar + WO detail panel
+
+id: WO-004
+group_id: swarm-view
+title: "Create GroupProgress bar and WoDetail panel components"
+description: |
+  Create two React components for the Swarm View.
+
+  ## 1. Create `src/client/components/swarm/GroupProgress.tsx`
+
+  A horizontal progress bar showing group dispatch status.
+
+  Props:
+  ```typescript
+  interface GroupProgressProps {
+    group: SwarmGroupState | null
+  }
+  ```
+
+  Render:
+  - If group is null, show "No active dispatch" in muted text
+  - Group ID and status badge (colored pill: running=blue, completed=green, failed=red, aborted=red)
+  - Progress bar: segmented bar showing completed (green), running (blue, animated), failed (red),
+    pending (gray) segments proportional to totalWos
+  - Stats row: "5/8 completed | 1 failed | 2 running" style text
+  - Duration: "Running for 2m 34s" (calculate from startedAt, use a 1-second interval timer)
+  - Token usage: "12.4K input / 3.2K output tokens" (format large numbers with K suffix)
+
+  Use Tailwind classes. Match the dark theme (bg-[#1a1a2e] style backgrounds,
+  white/gray text). Look at existing components for the color palette.
+
+  ## 2. Create `src/client/components/swarm/WoDetail.tsx`
+
+  A detail panel showing selected WO information.
+
+  Props:
+  ```typescript
+  interface WoDetailProps {
+    wo: SwarmWoState | null
+  }
+  ```
+
+  Render when wo is not null:
+  - WO ID + Title at top
+  - Status badge (same colors as DagGraph nodes)
+  - Model name + escalation tier indicator (e.g. "glm-4 (tier 0)" or "codex (tier 1, escalated)")
+  - Attempt counter: "Attempt 2/3"
+  - Escalation chain visualization: horizontal pills showing each tier in the chain,
+    with current tier highlighted. E.g.: [glm-4] → [codex] → [opus-cc]
+    where completed tiers are red (failed), current tier is blue, future tiers are gray
+  - Dependencies section: list of depends_on WO IDs with their status
+  - Gate results section (if gateResults is not null):
+    - Each gate as a row: name + pass/fail icon + output (collapsible)
+  - Error history section (if errorHistory has entries):
+    - Scrollable list, newest first
+    - Each entry: tier badge, model, attempt #, error text (truncated, expandable)
+  - Files changed section (if filesChanged has entries):
+    - Simple list of file paths
+  - Token usage: input/output with formatted numbers
+  - Duration if completed
+
+  When wo is null, show "Select a work order" placeholder.
+
+  Use Tailwind. Dark theme. Make sections collapsible using simple useState toggles.
+  Keep it clean and information-dense.
+
+  IMPORTANT: Import types from `../../shared/swarmTypes` NOT from types.ts.
+  Look at existing components in src/client/components/ for styling patterns.
+
+task: implement
+scope: src/client/components/swarm/
+
+interface_files:
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/client/components/PipelineDiagram.tsx
+  - src/client/components/PoolStatusIndicator.tsx
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on:
+  - WO-002
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 10
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

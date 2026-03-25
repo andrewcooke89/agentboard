@@ -1,0 +1,14 @@
+/home/andrew-cooke/tools/agentboard/target/release/deps/serde-7c72fa9cd711c460.d: /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/andrew-cooke/tools/agentboard/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/andrew-cooke/tools/agentboard/target/release/deps/libserde-7c72fa9cd711c460.rlib: /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/andrew-cooke/tools/agentboard/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/andrew-cooke/tools/agentboard/target/release/deps/libserde-7c72fa9cd711c460.rmeta: /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/andrew-cooke/tools/agentboard/target/release/build/serde-41e97f31a0c20611/out/private.rs
+
+/home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/andrew-cooke/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/andrew-cooke/tools/agentboard/target/release/build/serde-41e97f31a0c20611/out/private.rs:
+
+# env-dep:OUT_DIR=/home/andrew-cooke/tools/agentboard/target/release/build/serde-41e97f31a0c20611/out

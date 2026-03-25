@@ -1,0 +1,190 @@
+# Frontend: SwarmView shell + App.tsx routing + Header button
+
+id: WO-005
+group_id: swarm-view
+title: "Create SwarmView shell component and wire into App.tsx routing"
+description: |
+  Create the main Swarm View container component and integrate it into the
+  agentboard app's view routing system.
+
+  ## 1. Create `src/client/components/swarm/SwarmView.tsx`
+
+  The main container that assembles all swarm sub-components.
+
+  ```typescript
+  import { useSwarmStore } from '../../stores/swarmStore'
+  import DagGraph from './DagGraph'
+  import GroupProgress from './GroupProgress'
+  import WoDetail from './WoDetail'
+
+  export default function SwarmView() {
+    const {
+      groups, selectedGroupId, selectedWoId,
+      selectGroup, selectWo
+    } = useSwarmStore()
+
+    // Derive selected group and WO
+    const selectedGroup = groups.find(g => g.groupId === selectedGroupId) || groups[0] || null
+    const selectedWo = selectedGroup && selectedWoId
+      ? selectedGroup.wos[selectedWoId] || null
+      : null
+
+    return (
+      <div className="flex flex-col h-full bg-[#0a0a1a]">
+        {/* Group selector tabs (if multiple groups) */}
+        {groups.length > 1 && (
+          <div className="flex gap-1 px-4 pt-2 border-b border-gray-800">
+            {groups.map(g => (
+              <button
+                key={g.groupId}
+                onClick={() => selectGroup(g.groupId)}
+                className={`px-3 py-1 text-xs rounded-t
+                  ${g.groupId === selectedGroupId
+                    ? 'bg-gray-800 text-white'
+                    : 'text-gray-500 hover:text-gray-300'}`}
+              >
+                {g.groupId}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Progress bar */}
+        <div className="px-4 py-2 border-b border-gray-800">
+          <GroupProgress group={selectedGroup} />
+        </div>
+
+        {/* Main content: DAG + Detail */}
+        <div className="flex flex-1 min-h-0">
+          <div className="flex-1 overflow-auto">
+            <DagGraph
+              wos={selectedGroup?.wos || {}}
+              edges={selectedGroup?.edges || []}
+              selectedWoId={selectedWoId}
+              onSelectWo={selectWo}
+            />
+          </div>
+          <div className="w-80 border-l border-gray-800 overflow-auto">
+            <WoDetail wo={selectedWo} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+  ```
+
+  ## 2. Modify `src/client/App.tsx`
+
+  Add 'swarm' to the activeView union type (line ~54):
+  ```typescript
+  const [activeView, setActiveView] = useState<
+    'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' |
+    'pending-reviews' | 'cron-manager' | 'swarm'
+  >('sessions')
+  ```
+
+  Add the conditional render block after the cron-manager block (around line ~1064):
+  ```typescript
+  {activeView === 'swarm' && (
+    <SwarmView />
+  )}
+  ```
+
+  Import SwarmView at the top of App.tsx:
+  ```typescript
+  import SwarmView from './components/swarm/SwarmView'
+  ```
+
+  Add WebSocket message handling in the subscribe callback for swarm messages:
+  Find the existing subscribe block and add handlers for 'swarm-update' and 'swarm-state'.
+  Import and use `useSwarmStore.getState()` to call handleSwarmUpdate and handleSwarmState.
+
+  Add keyboard shortcut in the handleKeyDown effect (Mod+Shift+S):
+  ```typescript
+  if (e.shiftKey && e.key === 'S') {
+    e.preventDefault()
+    setActiveView(prev => prev === 'swarm' ? 'sessions' : 'swarm')
+    return
+  }
+  ```
+
+  ## 3. Modify `src/client/components/Header.tsx`
+
+  Add swarm toggle props to HeaderProps:
+  ```typescript
+  onToggleSwarm?: () => void
+  swarmActive?: boolean
+  ```
+
+  Add a swarm button in the header bar, following the same pattern as the
+  existing Workflows and Cron buttons. Use a grid/network-style icon or
+  just use the text "Swarm" with the keyboard shortcut hint.
+
+  Pass the swarm toggle props from App.tsx to Header, following the same
+  pattern used for onToggleCronManager/cronManagerActive.
+
+  IMPORTANT: Read the existing App.tsx and Header.tsx code carefully to match
+  exact patterns. The codebase uses specific icon imports from
+  @untitledui-icons/react/line — check what icons are available or just use
+  text-based buttons like some existing ones.
+
+task: implement
+scope: src/client/
+
+interface_files:
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/client/App.tsx
+  - src/client/components/Header.tsx
+  - src/client/stores/swarmStore.ts
+  - src/client/components/swarm/DagGraph.tsx
+  - src/client/components/swarm/GroupProgress.tsx
+  - src/client/components/swarm/WoDetail.tsx
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+
+depends_on:
+  - WO-003
+  - WO-004
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 10
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

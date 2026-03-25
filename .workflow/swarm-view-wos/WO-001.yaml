@@ -1,0 +1,166 @@
+# Backend: SwarmManager + event ingestion API + WebSocket broadcast
+
+id: WO-001
+group_id: swarm-view
+title: "Create SwarmManager service with event ingestion API and WebSocket broadcast"
+description: |
+  Create the backend infrastructure for the Swarm View feature. This involves
+  three files and one modification:
+
+  ## 1. Create `src/server/SwarmManager.ts`
+
+  A singleton class that manages swarm state in memory and broadcasts events.
+
+  ```typescript
+  import type {
+    SwarmEvent, SwarmGroupState, SwarmWoState,
+    GroupStartedEvent, WoStatusChangedEvent, WoCompletedEvent,
+    WoFailedEvent, WoEscalatedEvent, GroupCompletedEvent,
+    WoStatus, GroupStatus
+  } from '../shared/swarmTypes'
+
+  export class SwarmManager {
+    private groups: Map<string, SwarmGroupState> = new Map()
+    private eventLog: SwarmEvent[] = []
+    private listeners: Set<(event: SwarmEvent) => void> = new Set()
+
+    /** Process an incoming swarm event from the executor. */
+    processEvent(event: SwarmEvent): void { ... }
+
+    /** Subscribe to real-time events (for WebSocket broadcast). */
+    onEvent(listener: (event: SwarmEvent) => void): () => void { ... }
+
+    /** Get all active groups (for initial state load). */
+    getGroups(): SwarmGroupState[] { ... }
+
+    /** Get a single group by ID. */
+    getGroup(groupId: string): SwarmGroupState | undefined { ... }
+
+    /** Get recent events (for replay on reconnect). */
+    getRecentEvents(limit?: number): SwarmEvent[] { ... }
+  }
+  ```
+
+  Event processing logic:
+  - `group_started`: Create new SwarmGroupState with initial WO entries (all pending)
+  - `wo_status_changed`: Update the WO's status, model, attempt, tier
+  - `wo_completed`: Update WO with results, increment group completedWos counter
+  - `wo_failed`: Update WO with error info, increment group failedWos
+  - `wo_escalated`: Update WO escalation tier, append to errorHistory
+  - `group_completed`: Update group status, set final stats
+
+  Keep last 1000 events in the eventLog (ring buffer).
+  Auto-clean groups older than 24 hours.
+
+  ## 2. Create `src/server/swarmRoutes.ts`
+
+  Hono routes for swarm event ingestion and state queries:
+
+  ```typescript
+  import { Hono } from 'hono'
+  import type { SwarmManager } from './SwarmManager'
+
+  export function registerSwarmRoutes(app: Hono, swarmManager: SwarmManager): void {
+    // Event ingestion (called by minion-executor)
+    app.post('/api/swarm/events', async (c) => {
+      const event = await c.req.json()
+      swarmManager.processEvent(event)
+      return c.json({ ok: true })
+    })
+
+    // Get all active groups
+    app.get('/api/swarm/groups', (c) => {
+      return c.json(swarmManager.getGroups())
+    })
+
+    // Get single group
+    app.get('/api/swarm/groups/:groupId', (c) => {
+      const group = swarmManager.getGroup(c.req.param('groupId'))
+      if (!group) return c.json({ error: 'not found' }, 404)
+      return c.json(group)
+    })
+
+    // Get recent events
+    app.get('/api/swarm/events', (c) => {
+      const limit = parseInt(c.req.query('limit') || '100')
+      return c.json(swarmManager.getRecentEvents(limit))
+    })
+  }
+  ```
+
+  ## 3. Modify `src/server/index.ts`
+
+  - Import SwarmManager and swarmRoutes
+  - Create SwarmManager instance alongside existing singletons
+  - Call `registerSwarmRoutes(app, swarmManager)`
+  - In the WebSocket message handler, subscribe to swarmManager events:
+    ```typescript
+    swarmManager.onEvent((event) => {
+      broadcast({ type: 'swarm-update', event })
+    })
+    ```
+  - Add 'swarm-state' to the initial state sent on WebSocket connect:
+    When a client connects and sends auth, also send:
+    ```typescript
+    ws.send(JSON.stringify({ type: 'swarm-state', groups: swarmManager.getGroups() }))
+    ```
+
+  Look at how existing managers (like SessionManager or the task handling)
+  are instantiated and wired in index.ts for the pattern to follow.
+
+task: implement
+scope: src/server/
+
+interface_files:
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/server/index.ts
+  - src/server/httpRoutes.ts
+  - src/server/woRoutes.ts
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 10
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"
