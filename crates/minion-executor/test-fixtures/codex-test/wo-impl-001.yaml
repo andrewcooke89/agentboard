@@ -1,0 +1,77 @@
+# GLM impl WO: use the stringMetrics module created by Codex.
+# Depends on WO-PREP-001 (must complete first).
+
+id: WO-IMPL-001
+group_id: codex-test-group
+title: "Add formatStringReport utility using stringMetrics"
+description: |
+  Create a new file `src/shared/formatStringReport.ts` that imports from `./stringMetrics`
+  and exports a function:
+
+  ```typescript
+  export function formatStringReport(input: string): string
+  ```
+
+  This function should:
+  1. Call `analyzeString(input)` to get metrics
+  2. Call `summarizeMetrics(metrics)` to get the summary line
+  3. Return a formatted report string like:
+     ```
+     === String Report ===
+     Input: "<first 30 chars>..."
+     Summary: 42 chars, 8 words, 3 lines, 15 unique chars
+     Most common char: 'e' (5 occurrences)
+     ```
+  4. The "Most common char" line should find the character with highest frequency
+     from `metrics.charFrequency`.
+
+  Import `StringMetrics`, `analyzeString`, and `summarizeMetrics` from `./stringMetrics`.
+
+task: implement
+scope: src/shared/
+
+interface_files:
+  - src/shared/stringMetrics.ts
+reference_files: []
+input_files: []
+
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

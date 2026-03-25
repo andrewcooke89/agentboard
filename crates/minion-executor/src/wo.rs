@@ -228,6 +228,19 @@ impl Default for Execution {
     }
 }
 
+/// A single tier in the escalation chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationTier {
+    /// Model to use at this tier (e.g. "codex", "opus-cc").
+    pub model: String,
+    /// Execution mode: "unattended" or "attended".
+    #[serde(default = "default_unattended")]
+    pub mode: String,
+    /// Max retries at this tier before escalating further.
+    #[serde(default = "default_retries")]
+    pub max_retries: u32,
+}
+
 /// Escalation rules when execution fails.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Escalation {
@@ -235,6 +248,11 @@ pub struct Escalation {
     #[serde(default = "default_true")]
     pub enabled: bool,
 
+    /// Ordered escalation chain. If non-empty, used instead of legacy fields.
+    #[serde(default)]
+    pub chain: Vec<EscalationTier>,
+
+    // Legacy fields (backwards compat — used if chain is empty)
     /// Number of retries before escalating.
     #[serde(default = "default_retries")]
     pub after_retries: u32,
@@ -256,11 +274,28 @@ impl Default for Escalation {
     fn default() -> Self {
         Self {
             enabled: true,
+            chain: vec![],
             after_retries: 2,
             to: "opus".to_string(),
             mode: "attended".to_string(),
             include_error_context: true,
         }
+    }
+}
+
+impl Escalation {
+    /// Get the normalized escalation chain.
+    /// Returns `chain` if non-empty, otherwise converts legacy fields to a single-tier chain.
+    pub fn effective_chain(&self) -> Vec<EscalationTier> {
+        if !self.chain.is_empty() {
+            return self.chain.clone();
+        }
+        // Convert legacy format to chain
+        vec![EscalationTier {
+            model: self.to.clone(),
+            mode: self.mode.clone(),
+            max_retries: self.after_retries,
+        }]
     }
 }
 
@@ -333,6 +368,9 @@ fn default_escalation_model() -> String {
 fn default_attended() -> String {
     "attended".to_string()
 }
+fn default_unattended() -> String {
+    "unattended".to_string()
+}
 fn default_isolation_type() -> String {
     "worktree".to_string()
 }
@@ -394,5 +432,71 @@ execution:
         assert_eq!(wo.task, TaskType::Fix);
         assert_eq!(wo.depends_on, vec!["WO-001"]);
         assert_eq!(wo.execution.model, "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn test_escalation_chain_new_format() {
+        let yaml = r#"
+id: WO-001
+group_id: test
+title: "Test"
+description: "Test"
+task: implement
+escalation:
+  enabled: true
+  chain:
+    - model: codex
+      max_retries: 2
+    - model: opus-cc
+      mode: attended
+      max_retries: 1
+"#;
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        let chain = wo.escalation.effective_chain();
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].model, "codex");
+        assert_eq!(chain[0].max_retries, 2);
+        assert_eq!(chain[0].mode, "unattended");
+        assert_eq!(chain[1].model, "opus-cc");
+        assert_eq!(chain[1].mode, "attended");
+    }
+
+    #[test]
+    fn test_escalation_legacy_format() {
+        let yaml = r#"
+id: WO-002
+group_id: test
+title: "Test"
+description: "Test"
+task: implement
+escalation:
+  enabled: true
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+"#;
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        let chain = wo.escalation.effective_chain();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].model, "opus");
+        assert_eq!(chain[0].mode, "attended");
+        assert_eq!(chain[0].max_retries, 2);
+    }
+
+    #[test]
+    fn test_escalation_default_chain() {
+        let yaml = r#"
+id: WO-003
+group_id: test
+title: "Test"
+description: "Test"
+task: implement
+"#;
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        // Default escalation has legacy fields, effective_chain converts them
+        let chain = wo.escalation.effective_chain();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].model, "opus"); // default_escalation_model
     }
 }

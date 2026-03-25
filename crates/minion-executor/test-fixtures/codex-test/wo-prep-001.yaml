@@ -1,0 +1,77 @@
+# Codex prep WO: generate a utility module with type definitions.
+# This runs first via Codex, then GLM WOs implement against it.
+
+id: WO-PREP-001
+group_id: codex-test-group
+title: "Create stringMetrics utility module with type definitions"
+description: |
+  Create a new file `src/shared/stringMetrics.ts` that exports the following:
+
+  1. A TypeScript interface `StringMetrics`:
+     ```typescript
+     export interface StringMetrics {
+       length: number;
+       wordCount: number;
+       lineCount: number;
+       charFrequency: Record<string, number>;
+     }
+     ```
+
+  2. A function `analyzeString(input: string): StringMetrics` that:
+     - Returns the length of the string
+     - Counts words (split by whitespace)
+     - Counts lines (split by newline)
+     - Builds a character frequency map (lowercase only, ignore whitespace)
+
+  3. A function `summarizeMetrics(metrics: StringMetrics): string` that returns
+     a human-readable one-line summary like:
+     "42 chars, 8 words, 3 lines, 15 unique chars"
+
+  Make sure the file has proper TypeScript types and exports.
+
+task: implement
+scope: src/shared/
+
+interface_files: []
+reference_files: []
+input_files: []
+
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 1
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

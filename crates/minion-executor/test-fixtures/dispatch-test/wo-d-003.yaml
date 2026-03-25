@@ -1,0 +1,70 @@
+# Dispatch Test WO-D-003: Create a formatLabel utility that uses both clampValue and truncateString
+# Depends on WO-D-001 and WO-D-002 — only fires after both complete.
+
+id: WO-D-003
+group_id: dispatch-test-group
+title: "Add formatLabel utility combining clamp and truncate"
+description: |
+  Create a utility function `formatLabel(text: string, maxLen: number, priority: number): string`
+  in src/shared/formatLabel.ts.
+
+  The function should:
+  - Import clampValue from ./clampValue
+  - Import truncateString from ./truncateString
+  - Clamp priority to range 1-5 using clampValue
+  - Build a label like "[P{priority}] {text}"
+  - Truncate the result to maxLen using truncateString
+  - Return the formatted, truncated label
+
+  Export as both default and named export.
+
+task: implement
+scope: src/shared/
+
+interface_files: []
+reference_files: []
+input_files:
+  - src/shared/clampValue.ts
+  - src/shared/truncateString.ts
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on:
+  - WO-D-001
+  - WO-D-002
+prefer_after: []
+
+gates:
+  compile: true
+  lint: true
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

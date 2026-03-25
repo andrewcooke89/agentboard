@@ -57,6 +57,11 @@ pub struct ExecutionResult {
     /// Gate results from the last run (if gates were executed).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate_results: Option<GateResults>,
+
+    /// If the agent flagged an interface contract violation, the reason is here.
+    /// Triggers direct escalation to CC tier, skipping intermediate tiers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_violation: Option<String>,
 }
 
 /// A log entry for a single tool call.
@@ -119,9 +124,12 @@ pub async fn execute(
     let mut last_gate_results: Option<GateResults> = None;
     let mut last_error: Option<String> = None;
     let mut last_diffs: Vec<StructuredDiff> = Vec::new();
+    let mut last_contract_violation: Option<String> = None;
+    let mut retries_used: u32 = 0;
 
     // ── Retry loop: Phase 2 + Phase 3 ──────────────────────────────────────
     for attempt in 0..=max_retries {
+        retries_used = attempt;
         if attempt > 0 {
             info!(wo_id = %work_order.id, attempt, "Retrying after gate failure");
         }
@@ -152,6 +160,13 @@ pub async fn execute(
                 break;
             }
         };
+
+        // Contract violation: break immediately, no gates, no further retries
+        if let Some(violation) = agent_result.contract_violation {
+            last_contract_violation = Some(violation);
+            last_error = Some("Contract violation — escalating directly".to_string());
+            break;
+        }
 
         // Accumulate stats
         all_tool_calls.extend(agent_result.tool_calls);
@@ -225,8 +240,9 @@ pub async fn execute(
         tool_calls: all_tool_calls,
         token_usage: total_token_usage,
         iterations: total_iterations,
-        retries_used: 0, // TODO: track actual retries used
+        retries_used,
         gate_results: last_gate_results,
+        contract_violation: last_contract_violation,
     })
 }
 
@@ -239,6 +255,7 @@ struct AgentLoopResult {
     token_usage: TokenUsage,
     iterations: u32,
     done_called: bool,
+    contract_violation: Option<String>,
 }
 
 /// Run the minimal agent loop: model receives context, writes diffs, calls done.
@@ -258,6 +275,7 @@ async fn run_agent_loop(
     // Set up shared state
     let diff_collector: Arc<Mutex<Vec<StructuredDiff>>> = Arc::new(Mutex::new(Vec::new()));
     let done_flag = Arc::new(AtomicBool::new(false));
+    let contract_violation: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     // Build minimal tool registry: write_file + done + search (escape hatch)
     let mut registry = ToolRegistry::new();
@@ -272,7 +290,7 @@ async fn run_agent_loop(
     }
 
     registry.register(Box::new(WriteFileTool::new(diff_collector.clone())));
-    registry.register(Box::new(DoneTool::new(done_flag.clone())));
+    registry.register(Box::new(DoneTool::new(done_flag.clone(), contract_violation.clone())));
 
     // Build messages
     let system_prompt = build_system_prompt(work_order);
@@ -390,12 +408,18 @@ async fn run_agent_loop(
         .map_err(|e| anyhow::anyhow!("lock poisoned: {e}"))?
         .clone();
 
+    let contract_violation_value = contract_violation
+        .lock()
+        .map_err(|e| anyhow::anyhow!("contract_violation lock poisoned: {e}"))?
+        .clone();
+
     Ok(AgentLoopResult {
         diffs,
         tool_calls: tool_call_log,
         token_usage,
         iterations,
         done_called: done_flag.load(Ordering::SeqCst),
+        contract_violation: contract_violation_value,
     })
 }
 
@@ -711,37 +735,39 @@ depends_on:
     }
 }
 
-/// Auto-commit changed files after all gates pass.
-/// Only stages files that were part of the diffs — never `git add -A`.
-fn auto_commit(work_order: &WorkOrder, diffs: &[StructuredDiff], working_dir: &Path) -> Result<()> {
+/// Auto-commit specific files after gates pass.
+/// Only stages the listed files — never `git add -A`.
+pub fn auto_commit_files(
+    work_order: &WorkOrder,
+    changed_files: &[String],
+    working_dir: &Path,
+) -> Result<()> {
     use std::process::Command;
 
     let prefix = &work_order.output.commit_prefix;
     let scope = work_order.scope.as_deref().unwrap_or("misc");
     let title = &work_order.title;
 
-    // Stage only the files touched by diffs
-    let files: Vec<&str> = diffs.iter().map(|d| d.file.as_str()).collect();
-    if files.is_empty() {
-        info!(wo_id = %work_order.id, "No diff files to commit");
+    if changed_files.is_empty() {
+        info!(wo_id = %work_order.id, "No files to commit");
         return Ok(());
     }
 
+    // git add <files>
     let mut cmd = Command::new("git");
     cmd.arg("add").current_dir(working_dir);
-    for f in &files {
+    for f in changed_files {
         cmd.arg(f);
     }
     let add_output = cmd.output().context("Failed to run git add")?;
-
     if !add_output.status.success() {
         let stderr = String::from_utf8_lossy(&add_output.stderr);
         anyhow::bail!("git add failed: {stderr}");
     }
 
-    info!(wo_id = %work_order.id, files = ?files, "Staged diff files");
+    info!(wo_id = %work_order.id, files = ?changed_files, "Staged files");
 
-    // Build commit message: "feat(src/shared): Add formatDuration utility [WO-TEST-001]"
+    // git commit
     let scope_short = scope.trim_end_matches('/');
     let msg = format!("{prefix}({scope_short}): {title} [{}]", work_order.id);
 
@@ -758,4 +784,11 @@ fn auto_commit(work_order: &WorkOrder, diffs: &[StructuredDiff], working_dir: &P
 
     info!(wo_id = %work_order.id, message = %msg, "Auto-committed");
     Ok(())
+}
+
+/// Auto-commit changed files after all gates pass.
+/// Only stages files that were part of the diffs — never `git add -A`.
+fn auto_commit(work_order: &WorkOrder, diffs: &[StructuredDiff], working_dir: &Path) -> Result<()> {
+    let files: Vec<String> = diffs.iter().map(|d| d.file.clone()).collect();
+    auto_commit_files(work_order, &files, working_dir)
 }

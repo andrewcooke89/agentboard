@@ -18,6 +18,7 @@ import type { ServerContext, WSData } from './serverContext'
 // Extracted modules
 import { checkPortAvailable, getTailscaleIp, pruneOrphanedWsSessions, createConnectionId } from './startup'
 import { registerHttpRoutes } from './httpRoutes'
+import { registerWoRoutes } from './woRoutes'
 import { broadcast as broadcastToSockets, send as sendToSocket, handleMessage, wireRegistryEvents } from './wsRouter'
 import { createTerminalHandlers } from './handlers/terminalHandlers'
 import { createSessionHandlers } from './handlers/sessionHandlers'
@@ -340,6 +341,7 @@ cronCleanupInterval = setInterval(() => {
 // --- HTTP routes ---
 const tlsEnabled = !!(config.tlsCert && config.tlsKey)
 registerHttpRoutes(app, ctx, tlsEnabled, historyService, sessionPoolInstance)
+registerWoRoutes(app)
 app.use('/*', serveStatic({ root: './dist/client' }))
 
 // --- Registry event wiring ---

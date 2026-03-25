@@ -1,0 +1,65 @@
+# Dispatch Test WO-D-001: Create a clampValue utility
+# No dependencies — fires immediately, parallel with WO-D-002.
+
+id: WO-D-001
+group_id: dispatch-test-group
+title: "Add clampValue utility function"
+description: |
+  Create a utility function `clampValue(value: number, min: number, max: number): number`
+  in src/shared/clampValue.ts.
+
+  The function should:
+  - Return min if value < min
+  - Return max if value > max
+  - Return value if it's within range
+  - Handle edge case where min > max by swapping them
+
+  Export as both default and named export.
+
+task: implement
+scope: src/shared/
+
+interface_files: []
+reference_files: []
+input_files:
+  - src/shared/types.ts
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: true
+  lint: true
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

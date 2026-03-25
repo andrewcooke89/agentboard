@@ -67,6 +67,19 @@ pub async fn run_gates(
         info!(count = diffs.len(), "Diffs applied to disk");
     }
 
+    run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs).await
+}
+
+/// Run gates on an already-modified working tree (no diff application needed).
+/// Used by CodexExecutor where files are edited in-place by the Codex CLI.
+pub async fn run_gates_in_place(
+    work_order: &WorkOrder,
+    working_dir: &Path,
+    gate_commands: &GateCommands,
+    timeout_secs: u64,
+) -> Result<GateResults> {
+    info!(wo_id = %work_order.id, "Running gates on working tree");
+
     let gates = &work_order.gates;
     let timeout = Duration::from_secs(timeout_secs);
     let mut results = Vec::new();

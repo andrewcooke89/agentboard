@@ -1,0 +1,74 @@
+# GLM impl WO: use the stringMetrics module created by Codex.
+# Depends on WO-PREP-001 (must complete first).
+# Independent of WO-IMPL-001 — should run in parallel with it.
+
+id: WO-IMPL-002
+group_id: codex-test-group
+title: "Add batchAnalyze utility using stringMetrics"
+description: |
+  Create a new file `src/shared/batchAnalyze.ts` that imports from `./stringMetrics`
+  and exports a function:
+
+  ```typescript
+  export function batchAnalyze(inputs: string[]): { results: StringMetrics[]; aggregate: StringMetrics }
+  ```
+
+  This function should:
+  1. Call `analyzeString()` on each input string
+  2. Compute an aggregate `StringMetrics` that sums up:
+     - `length`: total of all lengths
+     - `wordCount`: total of all word counts
+     - `lineCount`: total of all line counts
+     - `charFrequency`: merged frequency map (sum counts per character)
+  3. Return both the per-input results array and the aggregate.
+
+  Import `StringMetrics` and `analyzeString` from `./stringMetrics`.
+
+task: implement
+scope: src/shared/
+
+interface_files:
+  - src/shared/stringMetrics.ts
+reference_files: []
+input_files: []
+
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

@@ -1,0 +1,103 @@
+# Retry Test: Refactor requiring precise multi-line anchor matching
+# The model must replace a specific function body in an existing file.
+# Multi-line anchors are the #1 failure mode for the executor diff engine.
+
+id: WO-RETRY-001
+group_id: retry-test-group
+title: "Refactor generateDescriptiveName to use configurable format"
+description: |
+  Refactor src/server/nameGenerator.ts to change the `generateDescriptiveName` function.
+
+  Replace the ENTIRE `generateDescriptiveName` function (including its JSDoc comment) with this
+  new version that accepts an optional format parameter:
+
+  ```typescript
+  /**
+   * Generate a descriptive session name from a project path + short timestamp.
+   * Supports configurable formats: 'short' (default), 'full', or 'minimal'.
+   */
+  export function generateDescriptiveName(
+    projectPath: string,
+    format: 'short' | 'full' | 'minimal' = 'short'
+  ): string {
+    const cleaned = projectPath.replace(/\/+$/, '')
+    const lastSegment = cleaned.split('/').pop() || ''
+    const sanitized = lastSegment
+      .replace(/[^a-zA-Z0-9_-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .toLowerCase()
+
+    const now = new Date()
+    const hours = String(now.getHours()).padStart(2, '0')
+    const minutes = String(now.getMinutes()).padStart(2, '0')
+    const timestamp = `${hours}h${minutes}`
+
+    if (!sanitized || sanitized === '~') {
+      return `${generateSessionName()}-${timestamp}`
+    }
+
+    const truncated = sanitized.length > 20 ? sanitized.slice(0, 20) : sanitized
+
+    switch (format) {
+      case 'minimal':
+        return truncated
+      case 'full':
+        return `${truncated}-${timestamp}-${generateSessionName()}`
+      case 'short':
+      default:
+        return `${truncated}-${timestamp}`
+    }
+  }
+  ```
+
+  Use a single `replace` action with the EXACT text of the old function (from JSDoc to closing brace) as the anchor.
+  This is critical — the anchor must match the existing code character-for-character.
+
+task: refactor
+scope: src/server/
+
+interface_files: []
+reference_files: []
+input_files:
+  - src/server/nameGenerator.ts
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: true
+  lint: true
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "refactor"

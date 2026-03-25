@@ -1,0 +1,27 @@
+id: WO-CYCLE-B
+group_id: cycle-test
+title: "Cycle test B"
+description: "This should never execute."
+task: implement
+scope: src/shared/
+depends_on:
+  - WO-CYCLE-A
+gates:
+  compile: true
+  lint: true
+  typecheck: true
+  tests:
+    run: false
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 0
+  timeout_minutes: 1
+escalation:
+  enabled: false
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: false
+  commit_prefix: "test"
