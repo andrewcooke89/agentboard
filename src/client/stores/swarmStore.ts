@@ -57,7 +57,7 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
             woId, title: woId, status: 'pending', model: '', attempt: 0,
             maxRetries: 0, escalationTier: 0, escalationChain: [], dependsOn: [],
             tokenUsage: { inputTokens: 0, outputTokens: 0 }, gateResults: null,
-            errorHistory: [], filesChanged: [], startedAt: null, completedAt: null,
+            errorHistory: [], filesChanged: [], unifiedDiff: null, startedAt: null, completedAt: null,
             durationSeconds: null,
           }
         }
@@ -81,7 +81,7 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
     } else if (event.type === 'wo_completed') {
       const wo = group.wos[event.woId]
       if (wo) {
-        group.wos[event.woId] = { ...wo, status: 'completed', tokenUsage: event.tokenUsage, durationSeconds: event.durationSeconds, completedAt: String(event.timestamp) }
+        group.wos[event.woId] = { ...wo, status: 'completed', tokenUsage: event.tokenUsage, durationSeconds: event.durationSeconds, completedAt: String(event.timestamp), unifiedDiff: event.unifiedDiff ?? null }
       }
       group.completedWos++
     } else if (event.type === 'wo_failed') {
