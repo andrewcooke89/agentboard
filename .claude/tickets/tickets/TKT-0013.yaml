@@ -1,10 +1,10 @@
 id: TKT-0013
 version: 1
 created_at: 2026-02-04T07:37:25.032Z
-updated_at: 2026-02-04T07:37:25.032Z
+updated_at: 2026-03-25T18:03:01.753Z
 category: error-handling
 severity: high
-status: open
+status: resolved
 source:
   file: src/server/logPoller.ts
   line_start: 518
@@ -41,11 +41,14 @@ tags:
   - reliability
   - log-matching
   - ERR-007
-notes: []
+notes:
+  - timestamp: 2026-03-25T18:03:01.752Z
+    author: system
+    content: "Status changed to resolved: source file removed"
 resolution:
-  status: null
-  resolved_at: null
-  resolved_by: null
+  status: fixed
+  resolved_at: 2026-03-25T18:03:01.752Z
+  resolved_by: sweep
   pr_url: null
   commit_sha: null
-  resolution_notes: null
+  resolution_notes: source file removed

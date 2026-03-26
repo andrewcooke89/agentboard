@@ -1,0 +1,95 @@
+id: WO-006
+group_id: swarm-demo
+title: "Wire StatsCards into header area and connect to stats API"
+description: |
+  Wire the StatsCards component and stats store into the agentboard UI.
+
+  ## 1. Modify `src/client/App.tsx`
+
+  - Import useStatsStore from './stores/statsStore'
+  - Import StatsCards from './components/StatsCards'
+  - Import the StatsUpdateMessage type from '@shared/dashboardTypes'
+
+  - In the WebSocket subscribe handler, add handling for 'stats-update' messages:
+    ```typescript
+    if (typedMessage.type === 'stats-update') {
+      useStatsStore.getState().setStats(typedMessage.stats)
+    }
+    ```
+
+  - Call fetchStats() on mount (in a useEffect):
+    ```typescript
+    useEffect(() => {
+      useStatsStore.getState().fetchStats()
+    }, [])
+    ```
+
+  - Add StatsCards below the Header in the sidebar, between Header and PoolStatusIndicator:
+    ```typescript
+    <StatsCards stats={useStatsStore((s) => s.stats)} />
+    ```
+
+  ## 2. Make StatsCards compact for sidebar
+
+  The StatsCards component should work in the sidebar (240px wide). If needed,
+  modify StatsCards.tsx to support a `compact` prop or just make it responsive
+  with flex-wrap so cards wrap in narrow containers.
+
+  Read the current App.tsx carefully. Find where Header and PoolStatusIndicator
+  are rendered in the sidebar section. Add StatsCards between them.
+
+  IMPORTANT: Do NOT rewrite App.tsx — only add the specific imports, WebSocket
+  handler, useEffect, and the StatsCards render. The file is large (~1100 lines)
+  so be surgical.
+
+task: implement
+scope: src/client/
+interface_files:
+  - src/shared/dashboardTypes.ts
+reference_files:
+  - src/client/App.tsx
+  - src/client/components/StatsCards.tsx
+  - src/client/stores/statsStore.ts
+  - src/client/components/Header.tsx
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+depends_on:
+  - WO-001
+  - WO-003
+  - WO-004
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 8
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

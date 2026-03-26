@@ -1,0 +1,113 @@
+id: WO-005
+group_id: swarm-demo
+title: "Wire EventLog into SwarmView with event conversion"
+description: |
+  Modify `src/client/components/swarm/SwarmView.tsx` to include the EventLog
+  component and convert swarm events to EventLogEntry format.
+
+  ## Changes to SwarmView.tsx
+
+  1. Import EventLog from './EventLog'
+  2. Import EventLogEntry from '../../shared/dashboardTypes'
+  3. Import SwarmEvent types from '../../shared/swarmTypes'
+
+  4. Add a `convertToLogEntries` function that converts the swarmStore's
+     eventLog (SwarmEvent[]) to EventLogEntry[]:
+     ```typescript
+     function convertToLogEntry(event: SwarmEvent): EventLogEntry {
+       const base = {
+         id: `${event.groupId}-${event.timestamp}-${Math.random().toString(36).slice(2,6)}`,
+         timestamp: event.timestamp,
+         groupId: event.groupId,
+       }
+       switch (event.type) {
+         case 'group_started':
+           return { ...base, type: 'group_started', message: `Group ${event.groupId} started (${event.totalWos} WOs)`, severity: 'info' }
+         case 'wo_status_changed':
+           return { ...base, type: 'wo_started', woId: event.woId, model: event.model, tier: event.tier,
+             message: `${event.woId} → ${event.newStatus} (${event.model}, tier ${event.tier})`, severity: 'info' }
+         case 'wo_completed':
+           const tokens = event.tokenUsage.inputTokens + event.tokenUsage.outputTokens
+           const tokenStr = tokens > 1000 ? `${(tokens/1000).toFixed(1)}K` : `${tokens}`
+           return { ...base, type: 'wo_completed', woId: event.woId,
+             message: `${event.woId} completed (${tokenStr} tokens, ${event.durationSeconds.toFixed(0)}s)`, severity: 'success' }
+         case 'wo_failed':
+           return { ...base, type: 'wo_failed', woId: event.woId, model: event.model, tier: event.tier,
+             message: `${event.woId} failed: ${event.error.slice(0, 80)}`, severity: 'error' }
+         case 'wo_escalated':
+           return { ...base, type: 'wo_escalated', woId: event.woId, tier: event.toTier,
+             message: `${event.woId} escalated tier ${event.fromTier}→${event.toTier} (${event.toModel})`, severity: 'warning' }
+         case 'group_completed':
+           return { ...base, type: 'group_completed',
+             message: `Group ${event.groupId} ${event.status} (${event.completedWos} done, ${event.failedWos} failed, ${event.totalDurationSeconds.toFixed(0)}s)`,
+             severity: event.status === 'completed' ? 'success' : 'error' }
+       }
+     }
+     ```
+
+  5. Add the EventLog below the DAG + Detail area. Layout change:
+     ```
+     <div className="flex flex-col h-full">
+       {/* Group tabs if multiple */}
+       {/* Progress bar */}
+       {/* Main content: DAG + Detail - flex-1 */}
+       <div className="flex flex-1 min-h-0"> ... DAG + WoDetail ... </div>
+       {/* Event log at bottom */}
+       <div className="border-t border-gray-800">
+         <EventLog events={logEntries} maxHeight="200px" />
+       </div>
+     </div>
+     ```
+
+  Read the current SwarmView.tsx carefully and modify it — do NOT rewrite from scratch.
+
+task: implement
+scope: src/client/components/swarm/
+interface_files:
+  - src/shared/dashboardTypes.ts
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/client/components/swarm/SwarmView.tsx
+  - src/client/components/swarm/EventLog.tsx
+  - src/client/stores/swarmStore.ts
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+depends_on:
+  - WO-002
+  - WO-004
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 8
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

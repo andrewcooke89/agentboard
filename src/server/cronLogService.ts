@@ -14,7 +14,7 @@ export class CronLogService {
    *   detect log redirections in the command
    */
   async getLogs(
-    jobId: string,
+    _jobId: string,
     lines: number,
     offset?: number
   ): Promise<string[]> {

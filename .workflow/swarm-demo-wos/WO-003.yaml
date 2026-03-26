@@ -1,0 +1,90 @@
+id: WO-003
+group_id: swarm-demo
+title: "Create StatsCards component for dashboard metrics"
+description: |
+  Create `src/client/components/StatsCards.tsx` — a horizontal row of metric
+  cards showing key dashboard statistics.
+
+  Props:
+  ```typescript
+  interface StatsCardsProps {
+    stats: DashboardStats | null
+  }
+  ```
+
+  Import DashboardStats from `../shared/dashboardTypes`.
+
+  ## Cards to Display
+
+  Render a horizontal flex row of cards (gap-3, overflow-x-auto):
+
+  1. **Sessions** — stats.activeSessions count, label "Active Sessions", blue accent
+  2. **Tasks** — stats.runningTasks / stats.totalTasks, label "Tasks", green accent
+  3. **Dispatches** — stats.activeDispatches active, label "Dispatches", purple accent
+  4. **WOs Completed** — stats.totalWosCompleted, label "WOs Done", green accent
+  5. **WOs Failed** — stats.totalWosFailed, label "WOs Failed", red accent (only show if > 0)
+  6. **Uptime** — format stats.uptimeSeconds as "Xh Ym", label "Uptime", gray accent
+
+  ## Card Design
+
+  Each card:
+  - Compact: ~120px wide, ~60px tall
+  - Dark background: bg-gray-800/60 with subtle border (border-gray-700/50)
+  - Rounded corners (rounded-lg)
+  - Value: large text (text-lg font-semibold), colored by accent
+  - Label: small text below (text-xs text-gray-500)
+  - Subtle left border colored by accent (border-l-2)
+
+  ## Null State
+
+  If stats is null, show skeleton placeholders (gray pulsing blocks).
+
+  Use Tailwind. Keep it minimal and information-dense.
+  Look at existing components for the exact color values used in agentboard.
+
+task: implement
+scope: src/client/components/
+interface_files:
+  - src/shared/dashboardTypes.ts
+reference_files:
+  - src/client/components/PoolStatusIndicator.tsx
+  - src/client/components/Header.tsx
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 8
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

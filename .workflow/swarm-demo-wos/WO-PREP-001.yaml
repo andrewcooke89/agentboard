@@ -1,0 +1,85 @@
+id: WO-PREP-001
+group_id: swarm-demo
+title: "Create shared types for event log and stats features"
+description: |
+  Create `src/shared/dashboardTypes.ts` with types for both features.
+
+  ## Event Log Types
+
+  ```typescript
+  export interface EventLogEntry {
+    id: string             // unique, use crypto.randomUUID() on creation
+    timestamp: string      // ISO datetime
+    type: 'wo_started' | 'wo_completed' | 'wo_failed' | 'wo_escalated' | 'group_started' | 'group_completed'
+    groupId: string
+    woId?: string
+    model?: string
+    tier?: number
+    message: string        // human-readable summary, e.g. "WO-003 completed (8.2K tokens, 34s)"
+    severity: 'info' | 'success' | 'warning' | 'error'
+  }
+  ```
+
+  ## Stats Types
+
+  ```typescript
+  export interface DashboardStats {
+    activeSessions: number
+    totalTasks: number
+    runningTasks: number
+    completedTasksToday: number
+    activeDispatches: number
+    completedDispatches: number
+    totalWosCompleted: number
+    totalWosFailed: number
+    uptimeSeconds: number
+    lastUpdated: string
+  }
+
+  export interface StatsUpdateMessage {
+    type: 'stats-update'
+    stats: DashboardStats
+  }
+  ```
+
+  Export everything. Follow existing naming conventions in src/shared/.
+
+task: implement
+scope: src/shared/
+interface_files: []
+reference_files:
+  - src/shared/swarmTypes.ts
+  - src/shared/types.ts
+input_files: []
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools: []
+depends_on: []
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 1
+  timeout_minutes: 5
+escalation:
+  enabled: false
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"
