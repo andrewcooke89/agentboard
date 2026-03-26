@@ -221,6 +221,7 @@ impl Executor for CcExecutor {
                         retries_used: 0,
                         gate_results: None,
                         contract_violation: None,
+                        unified_diff: None,
                     });
                 }
                 _ => continue, // queued, running — keep polling
@@ -258,6 +259,7 @@ impl Executor for CcExecutor {
                 retries_used: 0,
                 gate_results: None,
                 contract_violation: None,
+                unified_diff: None,
             });
         }
 
@@ -271,6 +273,7 @@ impl Executor for CcExecutor {
             &config.gate_commands,
             config.command_timeout_seconds,
             None,
+            None,
         )
         .await?;
 
@@ -278,6 +281,24 @@ impl Executor for CcExecutor {
         if gate_results.all_passed && work_order.output.commit {
             auto_commit_files(work_order, &changed_files, working_dir)?;
         }
+
+        // Capture unified diff after auto-commit.
+        let unified_diff = if gate_results.all_passed && work_order.output.commit {
+            match tokio::process::Command::new("git")
+                .args(["diff", "HEAD~1..HEAD"])
+                .current_dir(working_dir)
+                .output()
+                .await
+            {
+                Ok(output) if output.status.success() => {
+                    let diff = String::from_utf8_lossy(&output.stdout).to_string();
+                    if diff.is_empty() { None } else { Some(diff) }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let success = gate_results.all_passed;
         let error = if success {
@@ -309,6 +330,7 @@ impl Executor for CcExecutor {
             retries_used: 0,
             gate_results: Some(gate_results),
             contract_violation: None,
+            unified_diff,
         })
     }
 }
