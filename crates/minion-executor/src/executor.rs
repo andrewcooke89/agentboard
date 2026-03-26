@@ -18,7 +18,7 @@ use crate::api_client::{ApiClient, ContentBlock, Message, MessagesRequest, RateL
 use crate::config::Config;
 use crate::context::{self, AssembledContext};
 use crate::diff::StructuredDiff;
-use crate::gates::{self, GateResults};
+use crate::gates::{self, GateBaseline, GateResults};
 use crate::mcp_client::McpClient;
 use crate::tools::done::DoneTool;
 use crate::tools::mcp_proxy::create_mcp_tools;
@@ -62,6 +62,11 @@ pub struct ExecutionResult {
     /// Triggers direct escalation to CC tier, skipping intermediate tiers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_violation: Option<String>,
+
+    /// Unified diff output from `git diff HEAD~1..HEAD` after auto-commit.
+    /// Contains the diff of changes made by this work order.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unified_diff: Option<String>,
 }
 
 /// A log entry for a single tool call.
@@ -126,6 +131,16 @@ pub async fn execute(
     let mut last_diffs: Vec<StructuredDiff> = Vec::new();
     let mut last_contract_violation: Option<String> = None;
     let mut retries_used: u32 = 0;
+
+    // Capture gate baseline from clean working tree (suppresses pre-existing errors)
+    let baseline: GateBaseline = crate::gates::capture_baseline(
+        &config.gate_commands,
+        config.command_timeout_seconds,
+        &work_order.gates,
+        working_dir,
+    )
+    .await;
+    info!(wo_id = %work_order.id, "Gate baseline captured");
 
     // ── Retry loop: Phase 2 + Phase 3 ──────────────────────────────────────
     for attempt in 0..=max_retries {
@@ -194,6 +209,7 @@ pub async fn execute(
             &config.gate_commands,
             config.command_timeout_seconds,
             Some(mcp_client.as_ref()),
+            Some(&baseline),
         )
         .await?;
 
@@ -242,6 +258,7 @@ pub async fn execute(
         retries_used,
         gate_results: last_gate_results,
         contract_violation: last_contract_violation,
+        unified_diff: None,
     })
 }
 
