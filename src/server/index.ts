@@ -21,6 +21,8 @@ import { registerHttpRoutes } from './httpRoutes'
 import { registerWoRoutes } from './woRoutes'
 import { SwarmManager } from './SwarmManager'
 import { registerSwarmRoutes } from './swarmRoutes'
+import { registerStatsRoutes } from './statsRoutes'
+import type { DashboardStats } from '../shared/dashboardTypes'
 import { broadcast as broadcastToSockets, send as sendToSocket, handleMessage, wireRegistryEvents } from './wsRouter'
 import { createTerminalHandlers } from './handlers/terminalHandlers'
 import { createSessionHandlers } from './handlers/sessionHandlers'
@@ -373,6 +375,40 @@ const tlsEnabled = !!(config.tlsCert && config.tlsKey)
 registerHttpRoutes(app, ctx, tlsEnabled, historyService, sessionPoolInstance)
 registerWoRoutes(app)
 registerSwarmRoutes(app, swarmManager)
+
+// --- Stats ---
+function getStats(): DashboardStats {
+  const sessions = registry.getAll?.() ?? []
+  const activeSessions = Array.isArray(sessions) ? sessions.length : 0
+  const tasks = taskStore.listTasks({ limit: 1000 })
+  const totalTasks = tasks.length
+  const runningTasks = tasks.filter((t: { status: string }) => t.status === 'running').length
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const completedTasksToday = tasks.filter((t: { status: string; completedAt?: string }) => {
+    if (t.status !== 'completed' || !t.completedAt) return false
+    return new Date(t.completedAt).getTime() >= today.getTime()
+  }).length
+  const groups = swarmManager.getGroups()
+  let activeDispatches = 0
+  let completedDispatches = 0
+  let totalWosCompleted = 0
+  let totalWosFailed = 0
+  for (const group of groups) {
+    if (group.status === 'running' || group.status === 'pending') activeDispatches++
+    else completedDispatches++
+    totalWosCompleted += group.completedWos
+    totalWosFailed += group.failedWos
+  }
+  return {
+    activeSessions, totalTasks, runningTasks, completedTasksToday,
+    activeDispatches, completedDispatches, totalWosCompleted, totalWosFailed,
+    uptimeSeconds: Math.floor(process.uptime()),
+    lastUpdated: new Date().toISOString(),
+  }
+}
+registerStatsRoutes(app, getStats)
+
 app.use('/*', serveStatic({ root: './dist/client' }))
 
 // --- Registry event wiring ---
@@ -380,6 +416,11 @@ wireRegistryEvents(registry, broadcast)
 const unsubscribeSwarmEvents = swarmManager.onEvent((event) => {
   broadcastSwarmEvent(event)
 })
+
+// Broadcast stats every 5 seconds
+setInterval(() => {
+  broadcast({ type: 'stats-update', stats: getStats() })
+}, 5000)
 
 // --- Startup state logging ---
 const startupActiveSessions = db.getActiveSessions()

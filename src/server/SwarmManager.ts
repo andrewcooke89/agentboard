@@ -252,11 +252,10 @@ export class SwarmManager {
     const group = this.groups.get(event.groupId)
     if (!group) return
 
-    group.status = event.status
+    group.status = event.status === 'partial' ? 'failed' : event.status
     group.totalDurationSeconds = event.totalDurationSeconds
     group.completedWos = event.completedWos
     group.failedWos = event.failedWos
-    group.totalTokens = { ...event.totalTokens }
   }
 
   private pruneExpiredGroups(referenceTimestamp?: string): void {
