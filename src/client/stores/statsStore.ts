@@ -1,24 +1,25 @@
 import { create } from 'zustand'
-import type { DashboardStats } from '../../shared/dashboardTypes'
+import type { Stats } from '@shared/types'
+import { authFetch } from '../utils/api'
 
 interface StatsStore {
-  stats: DashboardStats | null
-  setStats: (stats: DashboardStats) => void
+  stats: Stats | null
+  setStats: (stats: Stats) => void
   fetchStats: () => Promise<void>
 }
 
 export const useStatsStore = create<StatsStore>((set) => ({
   stats: null,
-  
-  setStats: (stats: DashboardStats) => {
-    set({ stats })
-  },
-  
+  setStats: (stats) => set({ stats }),
   fetchStats: async () => {
-    const res = await fetch('/api/stats')
-    if (res.ok) {
-      const data = await res.json()
-      set({ stats: data })
+    try {
+      const response = await authFetch('/api/stats')
+      if (response.ok) {
+        const stats = await response.json()
+        set({ stats })
+      }
+    } catch (error) {
+      console.error('Failed to fetch stats:', error)
     }
   },
 }))
