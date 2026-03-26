@@ -31,6 +31,7 @@ function createInitialWoState(woId: string): SwarmWoState {
     startedAt: null,
     completedAt: null,
     durationSeconds: null,
+    unifiedDiff: null,
   }
 }
 
@@ -193,6 +194,7 @@ export class SwarmManager {
       durationSeconds: event.durationSeconds,
       completedAt: event.timestamp,
       startedAt: current.startedAt ?? event.timestamp,
+      unifiedDiff: event.unifiedDiff ?? null,
     }
 
     if (!wasCompleted) {
