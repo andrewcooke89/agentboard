@@ -193,7 +193,7 @@ pub async fn execute(
             working_dir,
             &config.gate_commands,
             config.command_timeout_seconds,
-            None,
+            Some(mcp_client.as_ref()),
         )
         .await?;
 
