@@ -308,6 +308,40 @@ impl McpClient {
         })
     }
 
+    /// Call `get_file_symbols` MCP tool and parse the markdown response into structured symbols.
+    ///
+    /// The tool returns markdown like:
+    /// ```text
+    /// - **WorkOrder** (struct) [rust] - line 10
+    /// - **TaskType** (enum) [rust] - line 99
+    /// - **from_file** (method) [rust] - line 81
+    /// ```
+    ///
+    /// We parse each line matching `- **Name** (kind)` pattern.
+    pub async fn get_file_symbols(&self, path: &str) -> Result<Vec<FileSymbol>> {
+        let call = McpToolCall {
+            name: "get_file_symbols".to_string(),
+            arguments: serde_json::json!({ "path": path }),
+        };
+        let result = self.call_tool(&call).await?;
+        if result.is_error {
+            bail!("get_file_symbols error for {}", path);
+        }
+
+        // Extract text content from MCP result
+        let text = result
+            .content
+            .iter()
+            .map(|c| {
+                let McpContent::Text { text } = c;
+                text.as_str()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(parse_file_symbols(&text))
+    }
+
     /// List available tools on the MCP server.
     pub async fn list_tools(&self) -> Result<Vec<McpToolInfo>> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -419,6 +453,40 @@ pub struct McpToolInfo {
 
     /// JSON Schema for the tool's input.
     pub input_schema: serde_json::Value,
+}
+
+/// Symbol returned by the `get_file_symbols` MCP tool (tree-sitter parsed).
+#[derive(Debug, Clone)]
+pub struct FileSymbol {
+    pub name: String,
+    pub kind: String, // "struct", "enum", "function", "method", "interface", "type_alias", etc.
+}
+
+// ── Symbol parsing ────────────────────────────────────────────────────────────
+
+/// Parse the markdown output of get_file_symbols into FileSymbol structs.
+/// Lines look like: `- **Name** (kind) [lang] - line N`
+fn parse_file_symbols(text: &str) -> Vec<FileSymbol> {
+    let mut symbols = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        // Match pattern: - **Name** (kind)
+        if let Some(rest) = line.strip_prefix("- **") {
+            if let Some(name_end) = rest.find("**") {
+                let name = rest[..name_end].to_string();
+                let after_name = &rest[name_end + 2..];
+                // Extract (kind)
+                if let Some(kind_start) = after_name.find('(') {
+                    if let Some(kind_end) = after_name[kind_start..].find(')') {
+                        let kind =
+                            after_name[kind_start + 1..kind_start + kind_end].to_string();
+                        symbols.push(FileSymbol { name, kind });
+                    }
+                }
+            }
+        }
+    }
+    symbols
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -552,5 +620,54 @@ mod tests {
         let back: McpToolInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back.name, "semantic_search");
         assert_eq!(back.input_schema["type"], "object");
+    }
+
+    // ── parse_file_symbols ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_file_symbols_basic() {
+        let text = r#"Symbols in /path/to/file.rs:
+
+- **WorkOrder** (struct) [rust] - line 10
+- **TaskType** (enum) [rust] - line 99
+- **from_file** (method) [rust] - line 81
+  `pub fn from_file(path: &Path) -> Result<Self>`
+  Parent: WorkOrder
+- **Gates** (struct) [rust] - line 140"#;
+
+        let symbols = parse_file_symbols(text);
+        assert_eq!(symbols.len(), 4);
+        assert_eq!(symbols[0].name, "WorkOrder");
+        assert_eq!(symbols[0].kind, "struct");
+        assert_eq!(symbols[1].name, "TaskType");
+        assert_eq!(symbols[1].kind, "enum");
+        assert_eq!(symbols[2].name, "from_file");
+        assert_eq!(symbols[2].kind, "method");
+        assert_eq!(symbols[3].name, "Gates");
+        assert_eq!(symbols[3].kind, "struct");
+    }
+
+    #[test]
+    fn test_parse_file_symbols_empty() {
+        let text = "No symbols found in file: /path/to/file.ts";
+        let symbols = parse_file_symbols(text);
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn test_parse_file_symbols_typescript() {
+        let text = r#"Symbols in src/types.ts:
+
+- **SwarmGroupState** (interface) [typescript] - line 45
+- **WoStatus** (type_alias) [typescript] - line 10
+- **convertToLogEntry** (function) [typescript] - line 20"#;
+
+        let symbols = parse_file_symbols(text);
+        assert_eq!(symbols.len(), 3);
+        assert_eq!(symbols[0].name, "SwarmGroupState");
+        assert_eq!(symbols[0].kind, "interface");
+        assert_eq!(symbols[1].kind, "type_alias");
+        assert_eq!(symbols[2].name, "convertToLogEntry");
+        assert_eq!(symbols[2].kind, "function");
     }
 }

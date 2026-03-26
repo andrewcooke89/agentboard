@@ -4,6 +4,7 @@
 //! Codex edits files directly in the working tree. Changes are captured
 //! via `git diff` after the process exits.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -22,7 +23,18 @@ use crate::dispatcher::scheduler::Executor;
 use crate::executor::{auto_commit_files, ExecutionResult, TokenUsage, ToolCallLog};
 use crate::gates::{self, GateResults};
 use crate::mcp_client::McpClient;
-use crate::wo::WorkOrder;
+use crate::wo::{VerificationSymbol, VerificationTarget, WorkOrder};
+
+/// Directory prefixes that should never be included in captured changed files.
+const IGNORED_PREFIXES: &[&str] = &[
+    "target/",
+    "node_modules/",
+    ".claude/",
+    ".workflow/",
+    "dist/",
+    ".git/",
+];
+const IGNORED_FILES: &[&str] = &["Cargo.lock"];
 
 /// Executor that spawns the Codex CLI in headless mode.
 #[derive(Clone)]
@@ -53,10 +65,10 @@ impl Executor for CodexExecutor {
         info!(wo_id = %work_order.id, "Starting Codex execution");
 
         // ── Phase 1: Context Assembly ───────────────────────────────────
-        let assembled_context = match McpClient::new(config).await {
+        let (assembled_context, mcp_client) = match McpClient::new(config).await {
             Ok(mcp) => {
                 let mcp = Arc::new(mcp);
-                match context::assemble_context(&mcp, work_order, working_dir).await {
+                let ctx = match context::assemble_context(&mcp, work_order, working_dir).await {
                     Ok(ctx) => ctx,
                     Err(e) => {
                         warn!(wo_id = %work_order.id, error = %e, "Context assembly failed, using WO fields only");
@@ -66,17 +78,31 @@ impl Executor for CodexExecutor {
                             dependencies: None,
                         }
                     }
-                }
+                };
+                (ctx, Some(mcp))
             }
             Err(e) => {
                 warn!(wo_id = %work_order.id, error = %e, "MCP client init failed, using WO fields only");
-                AssembledContext {
-                    agent_brief: None,
-                    file_contents: vec![],
-                    dependencies: None,
-                }
+                (
+                    AssembledContext {
+                        agent_brief: None,
+                        file_contents: vec![],
+                        dependencies: None,
+                    },
+                    None,
+                )
             }
         };
+
+        // Build known_files list for scope filtering
+        let known_files: Vec<String> = work_order
+            .interface_files
+            .iter()
+            .chain(work_order.reference_files.iter())
+            .chain(work_order.input_files.iter())
+            .chain(work_order.full_context_files.iter())
+            .cloned()
+            .collect();
 
         let max_retries = work_order.execution.max_retries;
         let timeout_duration =
@@ -188,7 +214,8 @@ impl Executor for CodexExecutor {
             }
 
             // Capture what Codex changed
-            let changed_files = capture_changed_files(working_dir)?;
+            let mut changed_files =
+                capture_changed_files(working_dir, work_order.scope.as_deref(), &known_files)?;
             if changed_files.is_empty() {
                 warn!(wo_id = %work_order.id, "Codex produced no file changes");
                 last_error = Some("Codex produced no changes".to_string());
@@ -196,6 +223,95 @@ impl Executor for CodexExecutor {
             }
 
             info!(wo_id = %work_order.id, files = ?changed_files, "Codex modified files");
+
+            // ── Verification sub-loop ─────────────────────────────────
+            // Check required symbols exist, re-invoke Codex if missing.
+            if !work_order.verification.is_empty() {
+                if let Some(ref mcp) = mcp_client {
+                    let max_verification_retries = 2u32;
+                    for v_attempt in 0..=max_verification_retries {
+                        let missing =
+                            run_verification(mcp, &work_order.verification, working_dir).await;
+                        if missing.is_empty() {
+                            info!(wo_id = %work_order.id, "Verification passed: all required symbols present");
+                            break;
+                        }
+                        if v_attempt == max_verification_retries {
+                            warn!(
+                                wo_id = %work_order.id,
+                                missing_count = missing.iter().map(|(_, s)| s.len()).sum::<usize>(),
+                                "Verification failed after {} fix attempts, proceeding to gates",
+                                max_verification_retries
+                            );
+                            break;
+                        }
+                        info!(
+                            wo_id = %work_order.id,
+                            v_attempt,
+                            missing_count = missing.iter().map(|(_, s)| s.len()).sum::<usize>(),
+                            "Verification found missing symbols, re-invoking Codex"
+                        );
+                        // Re-invoke Codex with targeted fix prompt — NO revert
+                        let fix_prompt = build_verification_fix_prompt(&missing, work_order);
+                        let _permit = self
+                            .semaphore
+                            .acquire()
+                            .await
+                            .expect("semaphore closed");
+                        let fix_output = tokio::process::Command::new(&self.codex_binary)
+                            .args([
+                                "exec",
+                                "--dangerously-bypass-approvals-and-sandbox",
+                                "--json",
+                                "--ephemeral",
+                                "-C",
+                            ])
+                            .arg(working_dir)
+                            .arg("-")
+                            .stdin(std::process::Stdio::piped())
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn();
+                        match fix_output {
+                            Ok(mut child) => {
+                                if let Some(mut stdin) = child.stdin.take() {
+                                    use tokio::io::AsyncWriteExt;
+                                    let _ = stdin.write_all(fix_prompt.as_bytes()).await;
+                                    drop(stdin);
+                                }
+                                let timeout_dur = Duration::from_secs(180); // 3 min for fix
+                                match tokio::time::timeout(timeout_dur, child.wait()).await {
+                                    Ok(Ok(status)) if status.success() => {
+                                        info!(wo_id = %work_order.id, v_attempt, "Verification fix Codex completed");
+                                    }
+                                    Ok(Ok(status)) => {
+                                        warn!(wo_id = %work_order.id, code = ?status.code(), "Verification fix Codex exited non-zero");
+                                    }
+                                    Ok(Err(e)) => {
+                                        warn!(wo_id = %work_order.id, error = %e, "Verification fix Codex error");
+                                    }
+                                    Err(_) => {
+                                        warn!(wo_id = %work_order.id, "Verification fix Codex timed out");
+                                        let _ = child.kill().await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                warn!(wo_id = %work_order.id, error = %e, "Failed to spawn verification fix Codex");
+                                break;
+                            }
+                        }
+                        drop(_permit);
+                    }
+                    // Re-capture changed files after verification fixes
+                    changed_files = capture_changed_files(
+                        working_dir,
+                        work_order.scope.as_deref(),
+                        &known_files,
+                    )?;
+                }
+            }
+
             last_diffs = synthesize_diffs(&changed_files, working_dir);
 
             // ── Phase 3: Deterministic Gates ────────────────────────────
@@ -311,7 +427,15 @@ fn build_codex_prompt(
 }
 
 /// Capture the list of files changed in the working tree relative to HEAD.
-fn capture_changed_files(working_dir: &Path) -> Result<Vec<String>> {
+///
+/// Filters out ignored directories/files and optionally restricts to scope.
+/// Files listed in `known_files` (interface, reference, input, full_context)
+/// are always included even if outside scope.
+fn capture_changed_files(
+    working_dir: &Path,
+    scope: Option<&str>,
+    known_files: &[String],
+) -> Result<Vec<String>> {
     use std::process::Command;
 
     // Get both modified tracked files and new untracked files
@@ -343,6 +467,20 @@ fn capture_changed_files(working_dir: &Path) -> Result<Vec<String>> {
     files.extend(untracked);
     files.sort();
     files.dedup();
+
+    // Filter out ignored directories, files, and enforce scope
+    files.retain(|f| {
+        if IGNORED_PREFIXES.iter().any(|prefix| f.starts_with(prefix)) {
+            return false;
+        }
+        if IGNORED_FILES.iter().any(|name| f == *name) {
+            return false;
+        }
+        if let Some(scope) = scope {
+            return f.starts_with(scope) || known_files.iter().any(|kf| kf == f);
+        }
+        true
+    });
 
     Ok(files)
 }
@@ -443,6 +581,69 @@ fn parse_codex_events(stdout: &str) -> Vec<ToolCallLog> {
     logs
 }
 
+// ── Verification helpers ─────────────────────────────────────────────────────
+
+/// Check verification targets against actual file symbols via MCP tree-sitter.
+/// Returns list of (file, missing_symbols) tuples.
+async fn run_verification(
+    mcp: &McpClient,
+    verification: &[VerificationTarget],
+    working_dir: &Path,
+) -> Vec<(String, Vec<VerificationSymbol>)> {
+    let mut missing = Vec::new();
+    for target in verification {
+        let abs_path = working_dir
+            .join(&target.file)
+            .to_string_lossy()
+            .to_string();
+        match mcp.get_file_symbols(&abs_path).await {
+            Ok(actual_symbols) => {
+                let actual_set: HashSet<(&str, &str)> = actual_symbols
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.kind.as_str()))
+                    .collect();
+                let file_missing: Vec<VerificationSymbol> = target
+                    .symbols
+                    .iter()
+                    .filter(|req| !actual_set.contains(&(req.name.as_str(), req.kind.as_str())))
+                    .cloned()
+                    .collect();
+                if !file_missing.is_empty() {
+                    missing.push((target.file.clone(), file_missing));
+                }
+            }
+            Err(e) => {
+                warn!(file = %target.file, error = %e, "Verification: could not get symbols, treating as all missing");
+                missing.push((target.file.clone(), target.symbols.clone()));
+            }
+        }
+    }
+    missing
+}
+
+/// Build a targeted fix prompt for Codex to add missing symbols.
+fn build_verification_fix_prompt(
+    missing: &[(String, Vec<VerificationSymbol>)],
+    work_order: &WorkOrder,
+) -> String {
+    let mut prompt = format!(
+        "The following required symbols are MISSING from files you created for work order '{}'.\n\
+         Add them to the EXISTING files WITHOUT removing or changing any existing code.\n\n",
+        work_order.title
+    );
+    for (file, symbols) in missing {
+        prompt.push_str(&format!("File `{file}` is missing:\n"));
+        for sym in symbols {
+            prompt.push_str(&format!("  - `{}` ({})\n", sym.name, sym.kind));
+        }
+        prompt.push('\n');
+    }
+    prompt.push_str(
+        "Refer to the original work order description for the full specification of these symbols.\n",
+    );
+    prompt
+}
+
 // ── Unit tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -451,11 +652,15 @@ mod tests {
     use crate::context::{FileContext, FileContextSource};
 
     fn make_test_wo() -> WorkOrder {
-        serde_yaml::from_str(
+        make_test_wo_with("WO-TEST-001", "Test WO")
+    }
+
+    fn make_test_wo_with(id: &str, title: &str) -> WorkOrder {
+        serde_yaml::from_str(&format!(
             r#"
-id: WO-TEST-001
+id: "{id}"
 group_id: test-group
-title: "Test WO"
+title: "{title}"
 description: "A test work order"
 task: implement
 scope: src/
@@ -476,8 +681,8 @@ execution:
 output:
   commit: true
   commit_prefix: "feat"
-"#,
-        )
+"#
+        ))
         .unwrap()
     }
 
@@ -659,5 +864,56 @@ output:
             diffs.is_empty(),
             "missing file should produce no diff entry"
         );
+    }
+
+    // ── verification helpers ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_build_verification_fix_prompt() {
+        let missing = vec![(
+            "src/types.ts".to_string(),
+            vec![
+                VerificationSymbol {
+                    name: "Foo".into(),
+                    kind: "interface".into(),
+                },
+                VerificationSymbol {
+                    name: "Bar".into(),
+                    kind: "type_alias".into(),
+                },
+            ],
+        )];
+        let wo = make_test_wo_with("WO-TEST", "Test WO");
+        let prompt = build_verification_fix_prompt(&missing, &wo);
+        assert!(prompt.contains("Foo"));
+        assert!(prompt.contains("interface"));
+        assert!(prompt.contains("Bar"));
+        assert!(prompt.contains("type_alias"));
+        assert!(prompt.contains("src/types.ts"));
+    }
+
+    #[test]
+    fn test_capture_filter_ignores_target() {
+        // This tests the filtering logic conceptually
+        let files = vec![
+            "src/types.ts".to_string(),
+            "target/debug/something".to_string(),
+            ".claude/tickets/TKT-001.yaml".to_string(),
+            "src/main.ts".to_string(),
+            "Cargo.lock".to_string(),
+        ];
+        let filtered: Vec<String> = files
+            .into_iter()
+            .filter(|f| {
+                if IGNORED_PREFIXES.iter().any(|p| f.starts_with(p)) {
+                    return false;
+                }
+                if IGNORED_FILES.iter().any(|name| f == *name) {
+                    return false;
+                }
+                true
+            })
+            .collect();
+        assert_eq!(filtered, vec!["src/types.ts", "src/main.ts"]);
     }
 }

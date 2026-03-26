@@ -23,6 +23,21 @@ use crate::gates;
 use crate::mcp_client::McpClient;
 use crate::wo::WorkOrder;
 
+/// Directory prefixes that should never be included in captured changed files.
+const IGNORED_PREFIXES: &[&str] = &[
+    "target/",
+    "node_modules/",
+    ".claude/",
+    ".workflow/",
+    "dist/",
+    ".git/",
+];
+
+/// Specific files that should never be included.
+const IGNORED_FILES: &[&str] = &[
+    "Cargo.lock",
+];
+
 // ── Struct ────────────────────────────────────────────────────────────────────
 
 /// Executor that escalates to Opus Claude Code via the agentboard task API.
@@ -219,7 +234,17 @@ impl Executor for CcExecutor {
         );
 
         // Phase 4: Capture what CC changed.
-        let changed_files = capture_changed_files(working_dir)?;
+        let known_files: Vec<String> = work_order.interface_files.iter()
+            .chain(work_order.reference_files.iter())
+            .chain(work_order.input_files.iter())
+            .chain(work_order.full_context_files.iter())
+            .cloned()
+            .collect();
+        let changed_files = capture_changed_files(
+            working_dir,
+            work_order.scope.as_deref(),
+            &known_files,
+        )?;
 
         if changed_files.is_empty() {
             return Ok(ExecutionResult {
@@ -348,7 +373,16 @@ pub fn build_escalation_prompt(
 }
 
 /// Capture the list of files changed in the working tree relative to HEAD.
-fn capture_changed_files(working_dir: &Path) -> Result<Vec<String>> {
+///
+/// Filters out build artifacts and directories that should never be committed
+/// (see `IGNORED_PREFIXES` and `IGNORED_FILES`). If `scope` is set, only files
+/// within that directory prefix are kept — unless the file is explicitly listed
+/// in `known_files` (interface, reference, input, or full-context files from the WO).
+fn capture_changed_files(
+    working_dir: &Path,
+    scope: Option<&str>,
+    known_files: &[String],
+) -> Result<Vec<String>> {
     use std::process::Command;
 
     let diff_output = Command::new("git")
@@ -379,6 +413,24 @@ fn capture_changed_files(working_dir: &Path) -> Result<Vec<String>> {
     files.extend(untracked);
     files.sort();
     files.dedup();
+
+    // Filter out ignored paths and enforce scope.
+    files.retain(|f| {
+        // Reject hardcoded ignore prefixes.
+        if IGNORED_PREFIXES.iter().any(|prefix| f.starts_with(prefix)) {
+            return false;
+        }
+        // Reject hardcoded ignore files.
+        if IGNORED_FILES.iter().any(|name| f == *name) {
+            return false;
+        }
+        // If scope is set, file must be within scope OR explicitly listed in WO.
+        if let Some(scope) = scope {
+            return f.starts_with(scope) || known_files.iter().any(|kf| kf == f);
+        }
+        true
+    });
+
     Ok(files)
 }
 

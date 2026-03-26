@@ -5,6 +5,24 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::Path;
 
+/// A symbol that must be present in a file after code generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationSymbol {
+    /// Symbol name (e.g. "SwarmGroupState").
+    pub name: String,
+    /// Expected symbol kind from tree-sitter (e.g. "interface", "type_alias", "function", "struct", "class", "enum").
+    pub kind: String,
+}
+
+/// Verification spec for a single file — which symbols must exist after generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationTarget {
+    /// File path relative to project root.
+    pub file: String,
+    /// Symbols that must be present.
+    pub symbols: Vec<VerificationSymbol>,
+}
+
 /// A work order describing a single unit of work for the executor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkOrder {
@@ -38,6 +56,15 @@ pub struct WorkOrder {
     /// Existing code the agent needs to read.
     #[serde(default)]
     pub input_files: Vec<String>,
+
+    /// Files to include with full verbatim content (bypasses intern skeletonization).
+    #[serde(default)]
+    pub full_context_files: Vec<String>,
+
+    /// Post-generation verification: required symbols per file.
+    /// Used by CodexExecutor to check completeness via tree-sitter before running gates.
+    #[serde(default)]
+    pub verification: Vec<VerificationTarget>,
 
     /// Configuration for intern-based context assembly.
     #[serde(default)]
@@ -482,6 +509,32 @@ escalation:
         assert_eq!(chain[0].model, "opus");
         assert_eq!(chain[0].mode, "attended");
         assert_eq!(chain[0].max_retries, 2);
+    }
+
+    #[test]
+    fn test_deserialize_wo_with_verification() {
+        let yaml = "id: WO-001\ngroup_id: test\ntitle: test\ndescription: test\ntask: implement\nverification:\n  - file: src/types.ts\n    symbols:\n      - name: SwarmGroupState\n        kind: interface\n      - name: WoStatus\n        kind: type_alias\n";
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(wo.verification.len(), 1);
+        assert_eq!(wo.verification[0].symbols.len(), 2);
+        assert_eq!(wo.verification[0].symbols[0].name, "SwarmGroupState");
+        assert_eq!(wo.verification[0].symbols[0].kind, "interface");
+    }
+
+    #[test]
+    fn test_deserialize_wo_with_full_context_files() {
+        let yaml = "id: WO-001\ngroup_id: test\ntitle: test\ndescription: test\ntask: implement\nfull_context_files:\n  - src/server/index.ts\n  - src/server/routes.ts\n";
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(wo.full_context_files.len(), 2);
+        assert_eq!(wo.full_context_files[0], "src/server/index.ts");
+    }
+
+    #[test]
+    fn test_backwards_compat_no_new_fields() {
+        let yaml = "id: WO-001\ngroup_id: test\ntitle: test\ndescription: test\ntask: implement\n";
+        let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
+        assert!(wo.verification.is_empty());
+        assert!(wo.full_context_files.is_empty());
     }
 
     #[test]

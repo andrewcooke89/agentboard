@@ -63,10 +63,38 @@ pub async fn assemble_context(
     //    For refactor tasks, read full file content (the model needs to see everything to rewrite).
     //    For other tasks, use focused extraction via intern_read_file.
     let mut file_contents = Vec::new();
+
+    // Read full_context_files verbatim first (bypasses intern skeletonization).
+    // These are processed before interface/reference/input files so the dedup
+    // check in the intern loop will skip files already loaded as full content.
+    for file_path in &work_order.full_context_files {
+        if file_contents.iter().any(|fc: &FileContext| fc.path == *file_path) {
+            continue; // already loaded
+        }
+        let abs_path = resolve_path(file_path, working_dir);
+        match read_full_file(&abs_path).await {
+            Ok(content) => {
+                info!(path = %file_path, len = content.len(), "Added full context file");
+                file_contents.push(FileContext {
+                    path: file_path.clone(),
+                    content,
+                    source: FileContextSource::InternReadFile,
+                });
+            }
+            Err(e) => {
+                warn!(path = %file_path, error = %e, "Failed to read full context file, skipping");
+            }
+        }
+    }
+
     let all_files = collect_file_paths(work_order);
     let use_full_read = matches!(work_order.task, crate::wo::TaskType::Refactor);
 
     for file_path in &all_files {
+        // Skip files already loaded as full content (e.g. from full_context_files).
+        if file_contents.iter().any(|fc: &FileContext| fc.path == *file_path) {
+            continue;
+        }
         let abs_path = resolve_path(file_path, working_dir);
         let result = if use_full_read {
             read_full_file(&abs_path).await
