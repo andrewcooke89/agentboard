@@ -41,7 +41,10 @@ import { usePoolStore } from './stores/poolStore'
 import { useCronStore } from './stores/cronStore'
 import { useCronAiStore } from './stores/cronAiStore'
 import { useSwarmStore } from './stores/swarmStore'
+import { useStatsStore } from './stores/statsStore'
 import type { SwarmStateMessage, SwarmUpdateMessage } from '@shared/swarmTypes'
+import type { DashboardStats } from '@shared/dashboardTypes'
+import { StatsCards } from './components/StatsCards'
 
 interface ServerInfo {
   port: number
@@ -105,6 +108,8 @@ export default function App() {
   const cronAiSessionWindowId = useCronAiStore((s) => s.sessionWindowId)
   const cronAiSessionId = useCronAiStore((s) => s.sessionId)
   const fetchSwarmGroups = useSwarmStore((state) => state.fetchGroups)
+  const dashboardStats = useStatsStore((state) => state.stats)
+  const fetchStats = useStatsStore((state) => state.fetchStats)
 
   const showHistory = useHistoryStore((state) => state.showHistory)
   const setShowHistory = useHistoryStore((state) => state.setShowHistory)
@@ -565,6 +570,9 @@ export default function App() {
       if (typedMessage.type === 'swarm-state') {
         useSwarmStore.getState().handleSwarmState(typedMessage.groups)
       }
+      if (typedMessage.type === 'stats-update') {
+        useStatsStore.getState().setStats((typedMessage as { stats: DashboardStats }).stats)
+      }
 
       // Phase 15: Step paused (REQ-32)
       if (message.type === 'step_paused') {
@@ -880,10 +888,11 @@ export default function App() {
     void fetchPoolStatus()
   }, [fetchPoolStatus])
 
-  // Fetch current swarm state on mount so the view has initial data
+  // Fetch current swarm state and stats on mount
   useEffect(() => {
     void fetchSwarmGroups()
-  }, [fetchSwarmGroups])
+    void fetchStats()
+  }, [fetchSwarmGroups, fetchStats])
 
   // Calculate permission sessions for banner
   const permissionSessions = useMemo(() => {
@@ -1001,6 +1010,7 @@ export default function App() {
           swarmActive={activeView === 'swarm'}
         />
         <PoolStatusIndicator poolStatus={poolStatus} />
+        <StatsCards stats={dashboardStats} />
         <SessionList
           sessions={sessions}
           inactiveSessions={agentSessions.inactive}
