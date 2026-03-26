@@ -55,6 +55,8 @@ pub enum SwarmEvent {
         files_changed: Vec<String>,
         #[serde(rename = "durationSeconds")]
         duration_seconds: f64,
+        #[serde(rename = "unifiedDiff", skip_serializing_if = "Option::is_none")]
+        unified_diff: Option<String>,
     },
     WoFailed {
         #[serde(rename = "groupId")]
@@ -234,6 +236,7 @@ mod tests {
             }),
             files_changed: vec!["src/lib.rs".to_string()],
             duration_seconds: 9.5,
+            unified_diff: None,
         };
 
         let serialized = serde_json::to_value(event).expect("event should serialize");
