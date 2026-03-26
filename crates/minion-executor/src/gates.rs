@@ -4,6 +4,7 @@
 //! checks against the actual codebase. Results determine whether to accept,
 //! retry, or escalate.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -15,7 +16,8 @@ use tracing::{info, warn};
 
 use crate::config::GateCommands;
 use crate::diff::StructuredDiff;
-use crate::wo::WorkOrder;
+use crate::mcp_client::McpClient;
+use crate::wo::{VerificationSymbol, VerificationTarget, WorkOrder};
 
 /// Result of running all gates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +55,7 @@ pub async fn run_gates(
     working_dir: &Path,
     gate_commands: &GateCommands,
     timeout_secs: u64,
+    mcp: Option<&McpClient>,
 ) -> Result<GateResults> {
     info!(
         wo_id = %work_order.id,
@@ -66,7 +69,7 @@ pub async fn run_gates(
         info!(count = diffs.len(), "Diffs applied to disk");
     }
 
-    run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs).await
+    run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs, mcp).await
 }
 
 /// Run gates on an already-modified working tree (no diff application needed).
@@ -76,12 +79,45 @@ pub async fn run_gates_in_place(
     working_dir: &Path,
     gate_commands: &GateCommands,
     timeout_secs: u64,
+    mcp: Option<&McpClient>,
 ) -> Result<GateResults> {
     info!(wo_id = %work_order.id, "Running gates on working tree");
 
     let gates = &work_order.gates;
     let timeout = Duration::from_secs(timeout_secs);
     let mut results = Vec::new();
+
+    // Verification gate: check required symbols exist via tree-sitter.
+    // Runs first, before typecheck/lint/test, so we fail fast if the agent
+    // forgot to implement required symbols.
+    if !work_order.verification.is_empty() {
+        if let Some(mcp) = mcp {
+            let missing = run_verification_gate(mcp, &work_order.verification, working_dir).await;
+            if missing.is_empty() {
+                results.push(GateResult {
+                    name: "verification".to_string(),
+                    passed: true,
+                    output: "All required symbols present".to_string(),
+                });
+            } else {
+                let mut output = String::from("Missing required symbols:\n");
+                for (file, symbols) in &missing {
+                    output.push_str(&format!("\n  {}:\n", file));
+                    for sym in symbols {
+                        output.push_str(&format!("    - {} ({})\n", sym.name, sym.kind));
+                    }
+                }
+                results.push(GateResult {
+                    name: "verification".to_string(),
+                    passed: false,
+                    output,
+                });
+                // Fail fast — don't run other gates if verification fails.
+                return Ok(build_gate_results(results));
+            }
+        }
+        // If no MCP client, skip verification silently.
+    }
 
     // Run gates in order: typecheck → lint → tests
     // Each gate only runs if the previous ones passed (fail-fast).
@@ -167,6 +203,53 @@ pub fn revert_diffs(diffs: &[StructuredDiff], working_dir: &Path) {
     if !created_files.is_empty() {
         info!(count = created_files.len(), "Removed created files");
     }
+}
+
+/// Check verification targets against actual file symbols via MCP tree-sitter.
+///
+/// Returns a list of `(file, missing_symbols)` tuples. An empty return value
+/// means all required symbols are present.
+///
+/// Made public so executors with their own pre-gates retry loops (e.g.
+/// `CodexExecutor`) can call it directly without duplicating the logic.
+pub async fn run_verification_gate(
+    mcp: &McpClient,
+    verification: &[VerificationTarget],
+    working_dir: &Path,
+) -> Vec<(String, Vec<VerificationSymbol>)> {
+    let mut missing = Vec::new();
+    for target in verification {
+        let abs_path = working_dir
+            .join(&target.file)
+            .to_string_lossy()
+            .to_string();
+        match mcp.get_file_symbols(&abs_path).await {
+            Ok(actual_symbols) => {
+                let actual_set: HashSet<(&str, &str)> = actual_symbols
+                    .iter()
+                    .map(|s| (s.name.as_str(), s.kind.as_str()))
+                    .collect();
+                let file_missing: Vec<VerificationSymbol> = target
+                    .symbols
+                    .iter()
+                    .filter(|req| !actual_set.contains(&(req.name.as_str(), req.kind.as_str())))
+                    .cloned()
+                    .collect();
+                if !file_missing.is_empty() {
+                    missing.push((target.file.clone(), file_missing));
+                }
+            }
+            Err(e) => {
+                warn!(
+                    file = %target.file,
+                    error = %e,
+                    "Verification gate: could not get symbols, treating as all missing"
+                );
+                missing.push((target.file.clone(), target.symbols.clone()));
+            }
+        }
+    }
+    missing
 }
 
 // ── Internals ───────────────────────────────────────────────────────────────

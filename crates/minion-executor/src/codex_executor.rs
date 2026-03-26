@@ -4,7 +4,6 @@
 //! Codex edits files directly in the working tree. Changes are captured
 //! via `git diff` after the process exits.
 
-use std::collections::HashSet;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -23,7 +22,7 @@ use crate::dispatcher::scheduler::Executor;
 use crate::executor::{auto_commit_files, ExecutionResult, TokenUsage, ToolCallLog};
 use crate::gates::{self, GateResults};
 use crate::mcp_client::McpClient;
-use crate::wo::{VerificationSymbol, VerificationTarget, WorkOrder};
+use crate::wo::{VerificationSymbol, WorkOrder};
 
 /// Directory prefixes that should never be included in captured changed files.
 const IGNORED_PREFIXES: &[&str] = &[
@@ -231,7 +230,7 @@ impl Executor for CodexExecutor {
                     let max_verification_retries = 2u32;
                     for v_attempt in 0..=max_verification_retries {
                         let missing =
-                            run_verification(mcp, &work_order.verification, working_dir).await;
+                            gates::run_verification_gate(mcp, &work_order.verification, working_dir).await;
                         if missing.is_empty() {
                             info!(wo_id = %work_order.id, "Verification passed: all required symbols present");
                             break;
@@ -321,6 +320,7 @@ impl Executor for CodexExecutor {
                 working_dir,
                 &config.gate_commands,
                 config.command_timeout_seconds,
+                mcp_client.as_deref(),
             )
             .await?;
 
@@ -579,46 +579,6 @@ fn parse_codex_events(stdout: &str) -> Vec<ToolCallLog> {
     }
 
     logs
-}
-
-// ── Verification helpers ─────────────────────────────────────────────────────
-
-/// Check verification targets against actual file symbols via MCP tree-sitter.
-/// Returns list of (file, missing_symbols) tuples.
-async fn run_verification(
-    mcp: &McpClient,
-    verification: &[VerificationTarget],
-    working_dir: &Path,
-) -> Vec<(String, Vec<VerificationSymbol>)> {
-    let mut missing = Vec::new();
-    for target in verification {
-        let abs_path = working_dir
-            .join(&target.file)
-            .to_string_lossy()
-            .to_string();
-        match mcp.get_file_symbols(&abs_path).await {
-            Ok(actual_symbols) => {
-                let actual_set: HashSet<(&str, &str)> = actual_symbols
-                    .iter()
-                    .map(|s| (s.name.as_str(), s.kind.as_str()))
-                    .collect();
-                let file_missing: Vec<VerificationSymbol> = target
-                    .symbols
-                    .iter()
-                    .filter(|req| !actual_set.contains(&(req.name.as_str(), req.kind.as_str())))
-                    .cloned()
-                    .collect();
-                if !file_missing.is_empty() {
-                    missing.push((target.file.clone(), file_missing));
-                }
-            }
-            Err(e) => {
-                warn!(file = %target.file, error = %e, "Verification: could not get symbols, treating as all missing");
-                missing.push((target.file.clone(), target.symbols.clone()));
-            }
-        }
-    }
-    missing
 }
 
 /// Build a targeted fix prompt for Codex to add missing symbols.

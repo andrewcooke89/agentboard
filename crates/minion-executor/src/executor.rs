@@ -193,6 +193,7 @@ pub async fn execute(
             working_dir,
             &config.gate_commands,
             config.command_timeout_seconds,
+            None,
         )
         .await?;
 

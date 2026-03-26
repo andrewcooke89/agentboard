@@ -270,6 +270,7 @@ impl Executor for CcExecutor {
             working_dir,
             &config.gate_commands,
             config.command_timeout_seconds,
+            None,
         )
         .await?;
 
