@@ -240,6 +240,7 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         },
                         gate_results: summarize_gate_results(&result),
                         files_changed: result.diffs.iter().map(|d| d.file.clone()).collect(),
+                        unified_diff: result.unified_diff.clone(),
                         duration_seconds,
                     })
                     .await;
@@ -337,9 +338,25 @@ pub async fn run_dispatch_loop<E: Executor + Clone>(
                         let chain = wo.escalation.effective_chain();
                         // Find CC tier (model == "opus-cc").
                         // Chain index is 0-based, escalation_tier = chain_index + 1.
-                        if let Some((cc_chain_idx, cc_tier)) =
-                            chain.iter().enumerate().find(|(_, t)| t.model == "opus-cc")
-                        {
+                        // NOTE: opus-cc is an Anthropic model — skip it if found, since
+                        // the Anthropic API is unavailable and will always 401.
+                        let cc_candidate = chain
+                            .iter()
+                            .enumerate()
+                            .find(|(_, t)| t.model == "opus-cc");
+                        let cc_candidate = cc_candidate.and_then(|(idx, tier)| {
+                            if tier.model.starts_with("opus") || tier.model.starts_with("claude") {
+                                warn!(
+                                    wo_id = %wo_id,
+                                    model = %tier.model,
+                                    "Contract violation: skipping CC tier — Anthropic API model not available"
+                                );
+                                None
+                            } else {
+                                Some((idx, tier))
+                            }
+                        });
+                        if let Some((cc_chain_idx, cc_tier)) = cc_candidate {
                             info!(
                                 wo_id = %wo_id,
                                 violation = %violation,
@@ -612,8 +629,28 @@ async fn try_escalate<E: Executor + Clone>(
         return Ok(false);
     }
 
-    let tier = &chain[chain_index];
-    let new_escalation_tier = current_tier + 1;
+    // Find the next tier that is not an Anthropic API model (opus/claude).
+    // Those always 401 — skip them rather than wasting retries.
+    let mut actual_chain_index = chain_index;
+    loop {
+        if actual_chain_index >= chain.len() {
+            return Ok(false);
+        }
+        let m = &chain[actual_chain_index].model;
+        if m.starts_with("opus") || m.starts_with("claude") {
+            warn!(
+                wo_id = %wo_id,
+                model = %m,
+                "Skipping escalation tier: Anthropic API model not available"
+            );
+            actual_chain_index += 1;
+        } else {
+            break;
+        }
+    }
+
+    let tier = &chain[actual_chain_index];
+    let new_escalation_tier = (actual_chain_index + 1) as u32;
     info!(
         wo_id = %wo_id,
         from_tier = current_tier,
@@ -840,6 +877,7 @@ mod tests {
                 retries_used: 0,
                 gate_results: None,
                 contract_violation: None,
+                unified_diff: None,
             })
         }
     }
@@ -898,6 +936,7 @@ mod tests {
                 retries_used: 0,
                 gate_results: None,
                 contract_violation: None,
+                unified_diff: None,
             })
         }
     }
@@ -930,6 +969,7 @@ mod tests {
                     retries_used: 0,
                     gate_results: None,
                     contract_violation: None,
+                    unified_diff: None,
                 })
             } else {
                 Ok(ExecutionResult {
@@ -943,6 +983,7 @@ mod tests {
                     retries_used: 0,
                     gate_results: None,
                     contract_violation: Some("Interface X is missing method doFoo()".to_string()),
+                    unified_diff: None,
                 })
             }
         }
@@ -1295,8 +1336,9 @@ escalation:
     }
 
     #[tokio::test]
-    async fn test_contract_violation_escalates_to_cc() {
-        // WO with contract violation on glm-5 should jump directly to opus-cc.
+    async fn test_contract_violation_cc_tier_skipped_when_opus() {
+        // Anthropic API (opus-cc) is unavailable. A contract violation should NOT
+        // escalate to opus-cc — it should be skipped and the WO should fail permanently.
         let yaml = r#"
 id: "WO-1"
 group_id: "grp"
@@ -1337,19 +1379,16 @@ escalation:
         .await
         .unwrap();
 
-        assert_eq!(result.status, super::super::state::GroupStatus::Completed);
+        // opus-cc is skipped, so the contract violation falls through to permanent failure.
+        assert_eq!(result.status, super::super::state::GroupStatus::Failed);
         assert_eq!(
             result.wo_results[0].status,
-            super::super::state::WoStatus::Completed
+            super::super::state::WoStatus::Failed
         );
 
-        // Should have jumped directly to CC tier (chain index 1 -> escalation_tier 2).
-        let wo_state = state.get_wo_state("WO-1").unwrap();
-        assert_eq!(wo_state.escalation_tier, 2);
-
-        // Error history should show the glm-5 failure.
+        // Error history should show glm-5 and codex failures (no opus-cc attempt).
         let history = state.get_error_history("WO-1").unwrap();
-        assert_eq!(history.len(), 1);
+        assert!(history.iter().all(|e| e.model != "opus-cc"), "opus-cc must never be attempted");
         assert_eq!(history[0].model, "glm-5");
     }
 
