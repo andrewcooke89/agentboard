@@ -35,6 +35,7 @@ export interface WoCompletedEvent {
     inputTokens: number
     outputTokens: number
   }
+  unifiedDiff?: string
 }
 
 export interface WoFailedEvent {
@@ -110,6 +111,7 @@ export interface SwarmWoState {
   startedAt: string | null
   completedAt: string | null
   durationSeconds: number | null
+  unifiedDiff: string | null
 }
 
 export interface SwarmGroupState {
