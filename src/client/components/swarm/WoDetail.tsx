@@ -177,11 +177,72 @@ function ErrorHistoryList({ entries }: { entries: ErrorHistoryEntry[] }) {
   )
 }
 
+
+function classifyDiffLine(line: string): 'add' | 'remove' | 'hunk' | 'header' | 'context' {
+  if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
+    return 'header'
+  }
+  if (line.startsWith('@@')) {
+    return 'hunk'
+  }
+  if (line.startsWith('+')) {
+    return 'add'
+  }
+  if (line.startsWith('-')) {
+    return 'remove'
+  }
+  return 'context'
+}
+
+const DIFF_LINE_STYLES: Record<'add' | 'remove' | 'hunk' | 'header' | 'context', string> = {
+  add: 'bg-green-500/15 text-green-300',
+  remove: 'bg-red-500/15 text-red-300',
+  hunk: 'text-purple-400',
+  header: 'text-gray-400 font-semibold',
+  context: 'text-gray-400',
+}
+
+function UnifiedDiffViewer({ diff }: { diff: string }) {
+  const [showAll, setShowAll] = useState(false)
+
+  const lines = useMemo(() => diff.split('\n'), [diff])
+  const displayLines = showAll ? lines : lines.slice(0, 30)
+  const hasMore = lines.length > 30
+
+  return (
+    <div>
+      <pre className="max-h-[500px] overflow-auto rounded-md border border-white/8 bg-black/20 p-3 text-xs font-mono">
+        {displayLines.map((line, index) => {
+          const category = classifyDiffLine(line)
+          const style = DIFF_LINE_STYLES[category]
+          const content = line === '' ? '\u00A0' : line
+
+          return (
+            <div key={index} className={style}>
+              {content}
+            </div>
+          )
+        })}
+      </pre>
+      {hasMore && !showAll ? (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="mt-2 text-[11px] text-blue-300 transition-colors hover:text-blue-200"
+        >
+          Show all {lines.length} lines
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
 export default function WoDetail({ wo }: WoDetailProps) {
   const [showDependencies, setShowDependencies] = useState(true)
   const [showGates, setShowGates] = useState(true)
   const [showErrors, setShowErrors] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
+  const [showDiff, setShowDiff] = useState(false)
 
   const groups = useSwarmStore((state) => state.groups)
 
@@ -314,6 +375,12 @@ export default function WoDetail({ wo }: WoDetailProps) {
               </div>
             ))}
           </div>
+        </Section>
+      ) : null}
+
+      {wo.unifiedDiff ? (
+        <Section title="Diff" open={showDiff} onToggle={() => setShowDiff((open) => !open)}>
+          <UnifiedDiffViewer diff={wo.unifiedDiff} />
         </Section>
       ) : null}
     </div>
