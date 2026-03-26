@@ -111,6 +111,7 @@ impl Executor for CodexExecutor {
         let mut last_gate_results: Option<GateResults> = None;
         let mut last_error: Option<String> = None;
         let mut last_diffs: Vec<StructuredDiff> = Vec::new();
+        let mut last_unified_diff: Option<String> = None;
         let mut retries_used: u32 = 0;
 
         // ── Retry loop: Phase 2 + Phase 3 ──────────────────────────────
@@ -321,6 +322,7 @@ impl Executor for CodexExecutor {
                 &config.gate_commands,
                 config.command_timeout_seconds,
                 mcp_client.as_deref(),
+                None,
             )
             .await?;
 
@@ -335,6 +337,21 @@ impl Executor for CodexExecutor {
                         last_gate_results = Some(gate_results);
                         break;
                     }
+                    
+                    // Capture unified diff of the commit
+                    let unified_diff = match tokio::process::Command::new("git")
+                        .args(["diff", "HEAD~1..HEAD"])
+                        .current_dir(working_dir)
+                        .output()
+                        .await
+                    {
+                        Ok(output) if output.status.success() => {
+                            let diff = String::from_utf8_lossy(&output.stdout).to_string();
+                            if diff.is_empty() { None } else { Some(diff) }
+                        }
+                        _ => None,
+                    };
+                    last_unified_diff = unified_diff;
                 }
 
                 last_gate_results = Some(gate_results);
@@ -363,6 +380,7 @@ impl Executor for CodexExecutor {
             success,
             error: last_error,
             diffs: last_diffs,
+            unified_diff: last_unified_diff,
             tool_calls: all_tool_calls,
             token_usage: TokenUsage::default(), // Codex doesn't report token usage
             iterations: retries_used + 1,
