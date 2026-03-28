@@ -265,41 +265,35 @@ export const useCronStore = create<CronStore>()(
           // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { useSettingsStore } = require('./settingsStore') as typeof import('./settingsStore')
           const settings = useSettingsStore.getState()
-          const desktopEnabled = settings.cronDesktopNotifications
-
+          if (!settings.cronDesktopNotifications) return
+          
           // Check which event categories are enabled
-          const shouldNotify = (() => {
-            if (!desktopEnabled) return false
-            if (event === 'first-failure' || event === 'consecutive-failures') {
-              return settings.cronNotifyFailure
-            }
-            if (event === 'missed-run') {
-              return settings.cronNotifyMissedRun
-            }
-            if (event === 'manual-run-completed') {
-              return settings.cronNotifyManualRun
-            }
-            return false
-          })()
-
-          if (shouldNotify && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            const now = Date.now()
-            const { desktopNotifTimestamps } = get()
-            const lastSent = desktopNotifTimestamps[jobId] ?? 0
-
-            if (now - lastSent >= DESKTOP_NOTIF_COOLDOWN_MS) {
-              const job = get().jobs.find((j) => j.id === jobId)
-              const title = job ? `Cron: ${job.name}` : 'Cron Job'
-              // eslint-disable-next-line no-new
-              new Notification(title, { body: message, tag: `cron-${jobId}` })
-              set({
-                desktopNotifTimestamps: {
-                  ...get().desktopNotifTimestamps,
-                  [jobId]: now,
-                },
-              })
-            }
+          let shouldNotify = false
+          if (event === 'first-failure' || event === 'consecutive-failures') {
+            shouldNotify = settings.cronNotifyFailure
+          } else if (event === 'missed-run') {
+            shouldNotify = settings.cronNotifyMissedRun
+          } else if (event === 'manual-run-completed') {
+            shouldNotify = settings.cronNotifyManualRun
           }
+          if (!shouldNotify) return
+          if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+
+          const now = Date.now()
+          const { desktopNotifTimestamps } = get()
+          const lastSent = desktopNotifTimestamps[jobId] ?? 0
+          if (now - lastSent < DESKTOP_NOTIF_COOLDOWN_MS) return
+
+          const job = get().jobs.find((j) => j.id === jobId)
+          const title = job ? `Cron: ${job.name}` : 'Cron Job'
+          // eslint-disable-next-line no-new
+          new Notification(title, { body: message, tag: `cron-${jobId}` })
+          set({
+            desktopNotifTimestamps: {
+              ...get().desktopNotifTimestamps,
+              [jobId]: now,
+            },
+          })
         } catch (e) {
           console.error('Failed to send desktop notification:', e)
         }
