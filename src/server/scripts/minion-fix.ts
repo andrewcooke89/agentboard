@@ -486,40 +486,50 @@ async function processProject(
 
     // ── Step 2: Run ONE medium ticket via plan-dispatch ─────────────────
 
-    if (medium.length > 0) {
-      const ticket = medium[0]
-
-      // Create fix branch on first medium ticket
-      if (!fixBranchCreated) {
-        const fixBranch = `fix/nightly-${today}`
-        if (!gitCreateBranch(projectPath, fixBranch)) {
-          console.error(`${tag} Could not create branch ${fixBranch}, skipping medium tickets`)
-        } else {
-          fixBranchCreated = true
-          console.log(`${tag} Created fix branch ${fixBranch}`)
-        }
+    if (medium.length === 0) {
+      // Brief pause between cycles to avoid hammering the API
+      if (!pastDeadline(args)) {
+        console.log(`${tag} Cycle ${cycle} complete, pausing 30s before next cycle`)
+        await new Promise(r => setTimeout(r, 30_000))
       }
+      continue
+    }
 
-      if (fixBranchCreated) {
-        console.log(`${tag} Plan-dispatching medium ticket ${ticket.id}`)
-        mediumStats.dispatched++
-        const success = await fixViaPlanDispatch(ticket, project, args.apiUrl)
+    const ticket = medium[0]
 
-        if (success) {
-          storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-plan-dispatch' })
-          prCommitMessages.push(`- ${ticket.id}: ${ticket.title}`)
-          console.log(`${tag} Resolved ${ticket.id} via plan-dispatch`)
-          fixed++
-          mediumStats.succeeded++
-        } else {
-          try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'plan-dispatch failed, skipping for tonight' }) } catch { /* already transitioned */ }
-          console.log(`${tag} Plan-dispatch failed for ${ticket.id}`)
-          failed++
-          mediumStats.failed++
-          if (notableFailures.length < 10) {
-            notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'plan-dispatch failed' })
-          }
+    // Create fix branch on first medium ticket
+    if (!fixBranchCreated) {
+      const fixBranch = `fix/nightly-${today}`
+      if (!gitCreateBranch(projectPath, fixBranch)) {
+        console.error(`${tag} Could not create branch ${fixBranch}, skipping medium tickets`)
+        // Brief pause between cycles to avoid hammering the API
+        if (!pastDeadline(args)) {
+          console.log(`${tag} Cycle ${cycle} complete, pausing 30s before next cycle`)
+          await new Promise(r => setTimeout(r, 30_000))
         }
+        continue
+      }
+      fixBranchCreated = true
+      console.log(`${tag} Created fix branch ${fixBranch}`)
+    }
+
+    console.log(`${tag} Plan-dispatching medium ticket ${ticket.id}`)
+    mediumStats.dispatched++
+    const success = await fixViaPlanDispatch(ticket, project, args.apiUrl)
+
+    if (success) {
+      storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-plan-dispatch' })
+      prCommitMessages.push(`- ${ticket.id}: ${ticket.title}`)
+      console.log(`${tag} Resolved ${ticket.id} via plan-dispatch`)
+      fixed++
+      mediumStats.succeeded++
+    } else {
+      try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'plan-dispatch failed, skipping for tonight' }) } catch { /* already transitioned */ }
+      console.log(`${tag} Plan-dispatch failed for ${ticket.id}`)
+      failed++
+      mediumStats.failed++
+      if (notableFailures.length < 10) {
+        notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'plan-dispatch failed' })
       }
     }
 
