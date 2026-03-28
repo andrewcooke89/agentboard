@@ -696,7 +696,12 @@ export function createWorkflowEngine(
             new Promise<string>((_, reject) => setTimeout(() => reject(new Error('stream read timeout')), timeoutMs)),
           ])
           return result.length > MAX_NATIVE_STDOUT ? result.slice(0, MAX_NATIVE_STDOUT) : result
-        } catch {
+        } catch (err) {
+          ctx.logger.warn('native_step_stream_read_failed', {
+            runId: run.id,
+            step: sanitizeForLog(step.name),
+            error: String(err),
+          })
           return ''
         }
       }
