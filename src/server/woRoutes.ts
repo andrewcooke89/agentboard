@@ -470,6 +470,22 @@ export function registerWoRoutes(app: Hono): void {
             record.result = { raw_output: stdout }
           }
         }
+
+        // Auto-resolve ticket if this was an on-demand dispatch
+        const ticketMatch = groupId.match(/^ondemand-(TKT-\d+)-/)
+        if (ticketMatch) {
+          const ticketId = ticketMatch[1]
+          const newStatus = record.status === 'completed' ? 'resolved' : 'validated'
+          const reason = record.status === 'completed'
+            ? `Dispatch ${dispatchId} completed successfully`
+            : `Dispatch ${dispatchId} failed: ${record.error?.slice(0, 200) || 'unknown'}`
+          const port = process.env.PORT || '4040'
+          fetch(`http://localhost:${port}/api/tickets/${ticketId}/transition`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus, reason }),
+          }).catch(() => { /* best-effort */ })
+        }
       })
 
       child.on('error', (err) => {

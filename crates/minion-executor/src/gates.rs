@@ -230,8 +230,16 @@ pub fn revert_diffs(diffs: &[StructuredDiff], working_dir: &Path) {
         }
     }
 
-    // Revert tracked files via git checkout
+    // Revert tracked files via git checkout (with lock to avoid index contention)
     if !tracked_files.is_empty() {
+        let _lock = match crate::executor::acquire_git_lock(working_dir) {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                warn!(error = %e, "Failed to acquire git lock for revert, proceeding without lock");
+                None
+            }
+        };
+
         let mut cmd = std::process::Command::new("git");
         cmd.arg("checkout").arg("--").current_dir(working_dir);
         for f in &tracked_files {

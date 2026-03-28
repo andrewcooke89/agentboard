@@ -502,9 +502,14 @@ Parameters:
 - `action`: one of `create`, `replace`, `insert_after`, `delete`
 - `anchor`: unique string to locate the edit position (required for replace/insert_after/delete)
 - `content`: the new code (not needed for delete)
+- `line_hint`: (optional integer) approximate line number of the target code. Provide this when the anchor pattern might appear multiple times in the file.
 
 For **new files**: `action: "create"` with full file content. No anchor needed.
 For **modifications**: `action: "replace"` with an anchor that uniquely identifies the code to replace.
+
+**IMPORTANT**: Your anchor MUST be unique within the file. If the code pattern you're targeting appears multiple times (e.g., similar catch blocks, repeated patterns), you MUST either:
+1. Include enough surrounding context in your anchor to make it unique (e.g., include the enclosing function signature or a nearby distinctive line), OR
+2. Provide `line_hint` with the approximate line number so the system can disambiguate.
 
 ## Workflow
 
@@ -661,8 +666,8 @@ depends_on:
         assert!(prompt.contains("write_file"));
         assert!(prompt.contains("done"));
         assert!(prompt.contains("search"));
+        assert!(prompt.contains("read_file"));
         // Should NOT contain exploration tools
-        assert!(!prompt.contains("read_file"));
         assert!(!prompt.contains("find_symbol"));
         assert!(!prompt.contains("find_references"));
         assert!(!prompt.contains("file_skeleton"));
@@ -774,8 +779,37 @@ depends_on:
     }
 }
 
+/// Acquire an exclusive file lock for git operations, with retry.
+/// Returns the locked File handle — lock is released when it drops.
+pub fn acquire_git_lock(working_dir: &Path) -> Result<std::fs::File> {
+    use fs2::FileExt;
+
+    let lock_path = working_dir.join(".git").join("agentboard.lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&lock_path)
+        .context("Failed to open git lock file")?;
+
+    for attempt in 0..10 {
+        match lock_file.try_lock_exclusive() {
+            Ok(()) => return Ok(lock_file),
+            Err(_) if attempt < 9 => {
+                debug!(attempt, "Git lock held by another process, retrying in 1s");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            Err(e) => {
+                anyhow::bail!("Failed to acquire git lock after 10 attempts: {e}");
+            }
+        }
+    }
+    unreachable!()
+}
+
 /// Auto-commit specific files after gates pass.
 /// Only stages the listed files — never `git add -A`.
+/// Acquires a file lock to serialize concurrent git operations.
 pub fn auto_commit_files(
     work_order: &WorkOrder,
     changed_files: &[String],
@@ -791,6 +825,10 @@ pub fn auto_commit_files(
         info!(wo_id = %work_order.id, "No files to commit");
         return Ok(());
     }
+
+    // Acquire exclusive lock for git operations
+    let _lock = acquire_git_lock(working_dir)
+        .context("Failed to acquire git lock for commit")?;
 
     // git add <files>
     let mut cmd = Command::new("git");
@@ -822,6 +860,7 @@ pub fn auto_commit_files(
     }
 
     info!(wo_id = %work_order.id, message = %msg, "Auto-committed");
+    // _lock dropped here, releasing the file lock
     Ok(())
 }
 

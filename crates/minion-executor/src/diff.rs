@@ -27,6 +27,12 @@ pub struct StructuredDiff {
     /// Required for create, replace, and insert_after. Not needed for delete.
     #[serde(default)]
     pub content: Option<String>,
+
+    /// Optional line number hint for disambiguating duplicate anchors.
+    /// When an anchor matches multiple locations, the closest match to this
+    /// line number is chosen.
+    #[serde(default)]
+    pub line_hint: Option<u32>,
 }
 
 /// The type of diff action.
@@ -90,11 +96,39 @@ impl StructuredDiff {
     }
 }
 
+/// Given multiple byte-offset matches, pick the one closest to `line_hint`.
+fn pick_closest_match(
+    file_content: &str,
+    matches: &[(usize, usize)],
+    line_hint: u32,
+) -> (usize, usize) {
+    let hint = line_hint as usize;
+    let mut best = matches[0];
+    let mut best_dist = usize::MAX;
+    for &(start, end) in matches {
+        // Count newlines before start to get line number (1-based)
+        let line = file_content[..start].matches('\n').count() + 1;
+        let dist = if line > hint { line - hint } else { hint - line };
+        if dist < best_dist {
+            best_dist = dist;
+            best = (start, end);
+        }
+    }
+    best
+}
+
 /// Try to find an anchor using exact match first, then fall back to
 /// whitespace-normalized matching if the exact anchor isn't found.
+/// When multiple matches are found and `line_hint` is provided, picks
+/// the match closest to that line number.
 ///
 /// Returns `(start_byte, end_byte)` of the matched region in `file_content`.
-fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usize, usize)> {
+fn find_anchor(
+    file_content: &str,
+    anchor: &str,
+    file_name: &str,
+    line_hint: Option<u32>,
+) -> Result<(usize, usize)> {
     // Exact match first
     let count = file_content.matches(anchor).count();
     if count == 1 {
@@ -102,6 +136,21 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
         return Ok((start, start + anchor.len()));
     }
     if count > 1 {
+        // Try to disambiguate with line_hint
+        if let Some(hint) = line_hint {
+            let matches: Vec<(usize, usize)> = file_content
+                .match_indices(anchor)
+                .map(|(start, _)| (start, start + anchor.len()))
+                .collect();
+            let (start, end) = pick_closest_match(file_content, &matches, hint);
+            let line = file_content[..start].matches('\n').count() + 1;
+            info!(
+                file = %file_name,
+                "Anchor matched {} times, disambiguated via line_hint={} (chose line {})",
+                count, hint, line,
+            );
+            return Ok((start, end));
+        }
         anyhow::bail!(
             "anchor found {} times in file '{}' (must be unique): '{}'",
             count,
@@ -110,9 +159,7 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
         );
     }
 
-    // Fallback 1: normalize whitespace in both anchor and content, then match.
-    // This handles cases where the model omits/adds blank lines or comment lines
-    // between anchor lines.
+    // Fallback: normalize whitespace in both anchor and content, then match.
     let norm_anchor = normalize_whitespace(anchor);
     if norm_anchor.is_empty() {
         anyhow::bail!(
@@ -122,9 +169,6 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
         );
     }
 
-    // Try to find a contiguous region in file_content whose normalized form matches.
-    // Strategy: find all lines matching the FIRST non-empty anchor line, then
-    // check if the subsequent lines match the rest of the anchor lines.
     let anchor_lines: Vec<&str> = anchor
         .lines()
         .map(|l| l.trim())
@@ -146,13 +190,11 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
 
     for (i, file_line) in file_lines.iter().enumerate() {
         if file_line.trim() == first_anchor_line {
-            // Try to match remaining anchor lines forwards
             let mut anchor_idx = 1;
             let mut file_idx = i + 1;
             while anchor_idx < anchor_lines.len() && file_idx < file_lines.len() {
                 let trimmed = file_lines[file_idx].trim();
                 if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
-                    // Skip blank lines and comments in the file
                     file_idx += 1;
                     continue;
                 }
@@ -169,19 +211,23 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
         }
     }
 
-    if candidates.len() == 1 {
-        let (start_line, end_line) = candidates[0];
-        // Convert line indices to byte offsets
-        let byte_start = file_lines[..start_line]
-            .iter()
-            .map(|l| l.len() + 1) // +1 for newline
-            .sum::<usize>();
-        let byte_end = file_lines[..end_line]
+    // Helper: convert line-index candidate to byte offsets
+    let lines_to_bytes = |start_line: usize, end_line: usize| -> (usize, usize) {
+        let byte_start: usize = file_lines[..start_line]
             .iter()
             .map(|l| l.len() + 1)
-            .sum::<usize>();
-        // Clamp to file length (last line might not have trailing newline)
-        let byte_end = byte_end.min(file_content.len());
+            .sum();
+        let byte_end: usize = file_lines[..end_line]
+            .iter()
+            .map(|l| l.len() + 1)
+            .sum::<usize>()
+            .min(file_content.len());
+        (byte_start, byte_end)
+    };
+
+    if candidates.len() == 1 {
+        let (start_line, end_line) = candidates[0];
+        let (byte_start, byte_end) = lines_to_bytes(start_line, end_line);
         info!(
             file = %file_name,
             "Anchor matched via whitespace-normalized fallback (lines {}-{})",
@@ -192,6 +238,21 @@ fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usi
     }
 
     if candidates.len() > 1 {
+        // Try to disambiguate with line_hint
+        if let Some(hint) = line_hint {
+            let byte_candidates: Vec<(usize, usize)> = candidates
+                .iter()
+                .map(|&(sl, el)| lines_to_bytes(sl, el))
+                .collect();
+            let (start, end) = pick_closest_match(file_content, &byte_candidates, hint);
+            let line = file_content[..start].matches('\n').count() + 1;
+            info!(
+                file = %file_name,
+                "Anchor matched {} locations via fuzzy match, disambiguated via line_hint={} (chose line {})",
+                candidates.len(), hint, line,
+            );
+            return Ok((start, end));
+        }
         anyhow::bail!(
             "anchor matched {} locations via fuzzy match in file '{}' (must be unique): '{}'",
             candidates.len(),
@@ -236,7 +297,7 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
             let anchor = diff.anchor.as_ref().unwrap();
             let content = diff.content.as_ref().unwrap();
 
-            let (start, end) = find_anchor(file_content, anchor, &diff.file)?;
+            let (start, end) = find_anchor(file_content, anchor, &diff.file, diff.line_hint)?;
 
             let mut result = String::with_capacity(file_content.len() + content.len());
             result.push_str(&file_content[..start]);
@@ -248,7 +309,7 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
             let anchor = diff.anchor.as_ref().unwrap();
             let content = diff.content.as_ref().unwrap();
 
-            let (_start, end) = find_anchor(file_content, anchor, &diff.file)?;
+            let (_start, end) = find_anchor(file_content, anchor, &diff.file, diff.line_hint)?;
 
             // Advance to end of the line (just past the newline, or EOF)
             let line_end = file_content[end..]
@@ -268,7 +329,7 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
         DiffAction::Delete => {
             let anchor = diff.anchor.as_ref().unwrap();
 
-            let (start, end) = find_anchor(file_content, anchor, &diff.file)?;
+            let (start, end) = find_anchor(file_content, anchor, &diff.file, diff.line_hint)?;
 
             // Expand to full lines
             let line_start = file_content[..start]
@@ -395,7 +456,7 @@ mod tests {
             action: DiffAction::Create,
             anchor: None,
             content: Some("fn main() {}".to_string()),
-        };
+            line_hint: None,        };
         assert!(diff.validate().is_ok());
     }
 
@@ -406,7 +467,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: None,
             content: Some("new content".to_string()),
-        };
+            line_hint: None,        };
         assert!(diff.validate().is_err());
     }
 
@@ -419,7 +480,7 @@ mod tests {
             action: DiffAction::Create,
             anchor: None,
             content: Some("fn hello() {}".to_string()),
-        };
+            line_hint: None,        };
         let result = apply_diff_to_content("", &diff).unwrap();
         assert_eq!(result, "fn hello() {}");
     }
@@ -433,7 +494,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn old_name()".to_string()),
             content: Some("fn new_name()".to_string()),
-        };
+            line_hint: None,        };
         let content = "line1\nfn old_name() {\n    todo!()\n}\n";
         let result = apply_diff_to_content(content, &diff).unwrap();
         assert!(result.contains("fn new_name()"));
@@ -447,7 +508,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn nonexistent()".to_string()),
             content: Some("fn replacement()".to_string()),
-        };
+            line_hint: None,        };
         let err = apply_diff_to_content("fn existing() {}", &diff).unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
@@ -459,7 +520,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn foo()".to_string()),
             content: Some("fn bar()".to_string()),
-        };
+            line_hint: None,        };
         let err = apply_diff_to_content("fn foo() {}\nfn foo() {}", &diff).unwrap_err();
         assert!(err.to_string().contains("found 2 times"));
     }
@@ -473,7 +534,7 @@ mod tests {
             action: DiffAction::InsertAfter,
             anchor: Some("// insert here".to_string()),
             content: Some("let x = 42;".to_string()),
-        };
+            line_hint: None,        };
         let content = "fn main() {\n    // insert here\n    println!(\"hello\");\n}\n";
         let result = apply_diff_to_content(content, &diff).unwrap();
         let anchor_pos = result.find("// insert here").unwrap();
@@ -495,7 +556,7 @@ mod tests {
             action: DiffAction::InsertAfter,
             anchor: Some("// missing".to_string()),
             content: Some("let x = 1;".to_string()),
-        };
+            line_hint: None,        };
         let err = apply_diff_to_content("fn main() {}", &diff).unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
@@ -509,7 +570,7 @@ mod tests {
             action: DiffAction::Delete,
             anchor: Some("// TODO: remove this line".to_string()),
             content: None,
-        };
+            line_hint: None,        };
         let content = "line1\n// TODO: remove this line\nline3\n";
         let result = apply_diff_to_content(content, &diff).unwrap();
         assert!(!result.contains("// TODO: remove this line"));
@@ -524,7 +585,7 @@ mod tests {
             action: DiffAction::Delete,
             anchor: Some("// gone".to_string()),
             content: None,
-        };
+            line_hint: None,        };
         let err = apply_diff_to_content("fn main() {}", &diff).unwrap_err();
         assert!(err.to_string().contains("not found"));
     }
@@ -539,7 +600,7 @@ mod tests {
             action: DiffAction::Create,
             anchor: None,
             content: Some("fn hello() {}".to_string()),
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         let written = std::fs::read_to_string(dir.path().join("hello.rs")).unwrap();
         assert_eq!(written, "fn hello() {}");
@@ -553,7 +614,7 @@ mod tests {
             action: DiffAction::Create,
             anchor: None,
             content: Some("// content".to_string()),
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         assert!(dir.path().join("src/deep/nested/file.rs").exists());
     }
@@ -567,7 +628,7 @@ mod tests {
             action: DiffAction::Create,
             anchor: None,
             content: Some("new content".to_string()),
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         let result = std::fs::read_to_string(dir.path().join("existing.rs")).unwrap();
         assert_eq!(result, "new content");
@@ -582,7 +643,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn old_name()".to_string()),
             content: Some("fn new_name()".to_string()),
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         let result = std::fs::read_to_string(dir.path().join("test.rs")).unwrap();
         assert!(result.contains("fn new_name()"));
@@ -598,7 +659,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn nonexistent()".to_string()),
             content: Some("fn replacement()".to_string()),
-        };
+            line_hint: None,        };
         assert!(apply_diff(&diff, dir.path()).is_err());
     }
 
@@ -611,7 +672,7 @@ mod tests {
             action: DiffAction::Replace,
             anchor: Some("fn foo()".to_string()),
             content: Some("fn bar()".to_string()),
-        };
+            line_hint: None,        };
         assert!(apply_diff(&diff, dir.path()).is_err());
     }
 
@@ -628,7 +689,7 @@ mod tests {
             action: DiffAction::InsertAfter,
             anchor: Some("// marker".to_string()),
             content: Some("    let x = 1;".to_string()),
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         let result = std::fs::read_to_string(dir.path().join("test.rs")).unwrap();
         let marker_pos = result.find("// marker").unwrap();
@@ -645,7 +706,7 @@ mod tests {
             action: DiffAction::Delete,
             anchor: Some("// remove me".to_string()),
             content: None,
-        };
+            line_hint: None,        };
         apply_diff(&diff, dir.path()).unwrap();
         let result = std::fs::read_to_string(dir.path().join("test.rs")).unwrap();
         assert!(!result.contains("// remove me"));
@@ -665,13 +726,13 @@ mod tests {
                 action: DiffAction::Create,
                 anchor: None,
                 content: Some("fn a() {}".to_string()),
-            },
+            line_hint: None,            },
             StructuredDiff {
                 file: "b.rs".to_string(),
                 action: DiffAction::Create,
                 anchor: None,
                 content: Some("fn b() {}".to_string()),
-            },
+            line_hint: None,            },
         ];
 
         let results = apply_diffs(&diffs, dir.path()).unwrap();
@@ -692,13 +753,13 @@ mod tests {
                 action: DiffAction::Create,
                 anchor: None,
                 content: Some("fn a() {}".to_string()),
-            },
+            line_hint: None,            },
             StructuredDiff {
                 file: "nonexistent.rs".to_string(),
                 action: DiffAction::Replace,
                 anchor: Some("fn foo()".to_string()),
                 content: Some("fn bar()".to_string()),
-            },
+            line_hint: None,            },
         ];
         assert!(apply_diffs(&diffs, dir.path()).is_err());
     }

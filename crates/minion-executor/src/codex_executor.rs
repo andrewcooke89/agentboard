@@ -547,6 +547,7 @@ fn synthesize_diffs(changed_files: &[String], working_dir: &Path) -> Vec<Structu
                 action: DiffAction::Create, // Simplified — all are full-file for reporting
                 anchor: None,
                 content: Some(content),
+                line_hint: None,
             })
         })
         .collect()

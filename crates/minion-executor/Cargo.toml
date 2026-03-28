@@ -19,6 +19,7 @@ async-trait = "0.1"
 dirs-next = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = { version = "0.4", features = ["clock"] }
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

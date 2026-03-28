@@ -57,6 +57,10 @@ impl Tool for WriteFileTool {
                 "content": {
                     "type": "string",
                     "description": "The new content (not needed for delete)"
+                },
+                "line_hint": {
+                    "type": "integer",
+                    "description": "Approximate line number of the target code. Provide when the anchor pattern may appear multiple times in the file."
                 }
             },
             "required": ["file", "action"]
@@ -81,11 +85,14 @@ impl Tool for WriteFileTool {
         let anchor = input["anchor"].as_str().map(|s| s.to_string());
         let content = input["content"].as_str().map(|s| s.to_string());
 
+        let line_hint = input["line_hint"].as_u64().map(|n| n as u32);
+
         let diff = StructuredDiff {
             file: file.to_string(),
             action,
             anchor,
             content,
+            line_hint,
         };
 
         diff.validate()?;

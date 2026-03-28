@@ -547,6 +547,7 @@ mod tests {
             retries_used: 0,
             gate_results: None,
             contract_violation: None,
+            unified_diff: None,
         }
     }
 
