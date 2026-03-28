@@ -92,6 +92,80 @@ function parseLogEntry(line: string): ParsedEntry | null {
   }
 }
 
+function PreviewContent({
+  loading,
+  error,
+  previewData,
+  showRaw,
+  parsedEntries,
+}: {
+  loading: boolean
+  error: string | null
+  previewData: PreviewData | null
+  showRaw: boolean
+  parsedEntries: ParsedEntry[]
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8 text-muted">
+        Loading preview...
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="flex items-center justify-center py-8 text-danger">
+        {error}
+      </div>
+    )
+  }
+  if (previewData && showRaw) {
+    return (
+      <div className="space-y-1">
+        {previewData.lines.slice(-50).map((line, i) => (
+          <div key={i} className="whitespace-pre-wrap break-all text-muted">
+            {line || '\u00A0'}
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (previewData && !showRaw) {
+    if (parsedEntries.length === 0) {
+      return (
+        <div className="py-8 text-center text-muted">
+          No readable content found. Try raw view.
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-2">
+        {parsedEntries.map((entry, i) => (
+          <div
+            key={i}
+            className={`rounded px-2 py-1 ${
+              entry.type === 'user'
+                ? 'bg-blue-500/10 text-blue-400'
+                : entry.type === 'assistant'
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : entry.type === 'system'
+                    ? 'bg-yellow-500/10 text-yellow-400'
+                    : 'text-muted'
+            }`}
+          >
+            <span className="whitespace-pre-wrap break-words">
+              {entry.content.length > 500
+                ? `${entry.content.slice(0, 500)}...`
+                : entry.content}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  return null
+}
+
 export default function SessionPreviewModal({
   session,
   onClose,
@@ -200,55 +274,13 @@ export default function SessionPreviewModal({
           ref={contentRef}
           className="flex-1 overflow-y-auto p-4 font-mono text-xs"
         >
-          {loading && (
-            <div className="flex items-center justify-center py-8 text-muted">
-              Loading preview...
-            </div>
-          )}
-          {error && (
-            <div className="flex items-center justify-center py-8 text-danger">
-              {error}
-            </div>
-          )}
-          {previewData && !showRaw && (
-            <div className="space-y-2">
-              {parsedEntries.length === 0 ? (
-                <div className="py-8 text-center text-muted">
-                  No readable content found. Try raw view.
-                </div>
-              ) : (
-                parsedEntries.map((entry, i) => (
-                  <div
-                    key={i}
-                    className={`rounded px-2 py-1 ${
-                      entry.type === 'user'
-                        ? 'bg-blue-500/10 text-blue-400'
-                        : entry.type === 'assistant'
-                          ? 'bg-emerald-500/10 text-emerald-400'
-                          : entry.type === 'system'
-                            ? 'bg-yellow-500/10 text-yellow-400'
-                            : 'text-muted'
-                    }`}
-                  >
-                    <span className="whitespace-pre-wrap break-words">
-                      {entry.content.length > 500
-                        ? `${entry.content.slice(0, 500)}...`
-                        : entry.content}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-          {previewData && showRaw && (
-            <div className="space-y-1">
-              {previewData.lines.slice(-50).map((line, i) => (
-                <div key={i} className="whitespace-pre-wrap break-all text-muted">
-                  {line || '\u00A0'}
-                </div>
-              ))}
-            </div>
-          )}
+          <PreviewContent
+            loading={loading}
+            error={error}
+            previewData={previewData}
+            showRaw={showRaw}
+            parsedEntries={parsedEntries}
+          />
         </div>
 
         {/* Footer */}
