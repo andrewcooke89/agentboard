@@ -106,6 +106,51 @@ function getGroupStatus(children: StepRunState[]): StepRunStatus {
   return 'pending'
 }
 
+/** Dependency icon for individual dependency items */
+function DependencyIcon({ status }: { status: string }) {
+  if (status === 'completed') {
+    return (
+      <svg className="w-2.5 h-2.5 text-green-400" viewBox="0 0 16 16" fill="none" aria-label="completed">
+        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    )
+  }
+  if (status === 'running') {
+    return (
+      <svg className="w-2.5 h-2.5 text-yellow-400 animate-spin" viewBox="0 0 16 16" fill="none" aria-label="running">
+        <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.3" />
+        <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    )
+  }
+  return (
+    <svg className="w-2.5 h-2.5 text-gray-500" viewBox="0 0 16 16" fill="currentColor" aria-label="pending">
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  )
+}
+
+/** Render list of dependencies with status icons */
+function DependencyList({ dependsOn, allSteps }: { dependsOn: string[]; allSteps: StepRunState[] }) {
+  return (
+    <span className="text-[10px] opacity-70 italic shrink-0 flex items-center gap-1" title={`Depends on: ${dependsOn.join(', ')}`}>
+      <span>depends_on: </span>
+      {dependsOn.map((depName, depIdx) => {
+        const depStep = allSteps.find(s => s.name === depName)
+        const depStatus = depStep?.status || 'unknown'
+        return (
+          <span key={depIdx} className="inline-flex items-center gap-0.5">
+            <DependencyIcon status={depStatus} />
+            <span>{depName}</span>
+            {depIdx < dependsOn.length - 1 && <span>,</span>}
+          </span>
+        )
+      })}
+      <span />
+    </span>
+  )
+}
+
 export interface ParallelGroupNodeProps {
   step: StepRunState
   isSelected: boolean
@@ -225,36 +270,7 @@ export default function ParallelGroupNode({ step, isSelected, onSelect, allSteps
 
                 {/* Dependency info */}
                 {hasDependency && childStatus === 'pending' && (
-                  <span className="text-[10px] opacity-70 italic shrink-0 flex items-center gap-1" title={`Depends on: ${dependsOn.join(', ')}`}>
-                    <span>depends_on: </span>
-                    {dependsOn.map((depName, depIdx) => {
-                      const depStep = allSteps.find(s => s.name === depName)
-                      const depStatus = depStep?.status || 'unknown'
-                      const isDone = depStatus === 'completed'
-                      const isRunning = depStatus === 'running'
-                      return (
-                        <span key={depIdx} className="inline-flex items-center gap-0.5">
-                          {isDone ? (
-                            <svg className="w-2.5 h-2.5 text-green-400" viewBox="0 0 16 16" fill="none" aria-label="completed">
-                              <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          ) : isRunning ? (
-                            <svg className="w-2.5 h-2.5 text-yellow-400 animate-spin" viewBox="0 0 16 16" fill="none" aria-label="running">
-                              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" opacity="0.3" />
-                              <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
-                          ) : (
-                            <svg className="w-2.5 h-2.5 text-gray-500" viewBox="0 0 16 16" fill="currentColor" aria-label="pending">
-                              <circle cx="8" cy="8" r="2" />
-                            </svg>
-                          )}
-                          <span>{depName}</span>
-                          {depIdx < dependsOn.length - 1 && <span>,</span>}
-                        </span>
-                      )
-                    })}
-                    <span />
-                  </span>
+                  <DependencyList dependsOn={dependsOn} allSteps={allSteps} />
                 )}
               </div>
             )
