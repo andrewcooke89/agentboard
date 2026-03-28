@@ -574,11 +574,16 @@ Test framework: bun test (compatible with Jest/Vitest API)
     if (testFileErrors) {
       console.log(`${tag} Tests have type errors — retrying with error feedback`)
       workCard.retries.tests = (workCard.retries.tests || 0) + 1
-      for (const testFile of testFiles) {
+      const testFilesToFix = testFiles.filter((testFile) => {
         const absPath = path.isAbsolute(testFile.path)
           ? testFile.path
           : path.join(workCard.project, testFile.path)
-        if (!fs.existsSync(absPath)) continue
+        return fs.existsSync(absPath)
+      })
+      for (const testFile of testFilesToFix) {
+        const absPath = path.isAbsolute(testFile.path)
+          ? testFile.path
+          : path.join(workCard.project, testFile.path)
         const currentTest = fs.readFileSync(absPath, 'utf8')
         const fixPrompt = `The following test file has TypeScript type errors. Fix ONLY the type errors — do not change test logic or assertions.
 
