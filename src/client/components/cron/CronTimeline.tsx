@@ -78,8 +78,8 @@ function buildBuckets(
         result[bucketIdx].jobs.push({ id: job.id, name: job.name, health: job.health })
         dataPoints++
       }
-    } catch {
-      // skip unparseable schedules
+    } catch (e) {
+      console.warn('Failed to parse cron schedule:', job.schedule, e)
     }
   }
 
