@@ -26,8 +26,8 @@ class PtyTerminalProxy extends TerminalProxyBase {
 
     try {
       this.process?.terminal?.resize(cols, rows)
-    } catch {
-      // Ignore resize errors
+    } catch (error) {
+      console.error('Resize error:', error)
     }
   }
 
@@ -207,16 +207,16 @@ class PtyTerminalProxy extends TerminalProxyBase {
       if (onReady) {
         try {
           onReady()
-        } catch {
-          // Ignore onReady failures
+        } catch (error) {
+          console.error('onReady error:', error)
         }
       }
       this.outputSuppressed = false
       this.setCurrentWindow(target)
       try {
         this.runTmux(['refresh-client', '-t', this.clientTty])
-      } catch {
-        // Ignore refresh failures
+      } catch (error) {
+        console.error('Refresh error:', error)
       }
       const durationMs = this.now() - startedAt
       this.logEvent('terminal_switch_success', {
