@@ -72,9 +72,8 @@ export function createSessionHandlers(
         const orphanById = (agentSessionId?: string | null) => {
           if (!agentSessionId || orphaned.has(agentSessionId)) return
           const orphanedSession = ctx.db.orphanSession(agentSessionId)
-          if (orphanedSession) {
-            orphaned.set(agentSessionId, toAgentSession(orphanedSession))
-          }
+          if (!orphanedSession) return
+          orphaned.set(agentSessionId, toAgentSession(orphanedSession))
         }
 
         orphanById(session.agentSessionId)
