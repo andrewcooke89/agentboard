@@ -38,22 +38,10 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
     const groupIdx = groups.findIndex(g => g.groupId === event.groupId)
 
     if (event.type === 'group_started') {
-      const newGroup: SwarmGroupState = {
-        groupId: event.groupId,
-        status: 'running',
-        totalWos: event.totalWos,
-        completedWos: 0,
-        failedWos: 0,
-        edges: 'edges' in event ? (event as { edges: Array<{ from: string; to: string }> }).edges : [],
-        wos: {},
-        startedAt: String(event.timestamp),
-        totalDurationSeconds: null,
-        totalTokens: { inputTokens: 0, outputTokens: 0 },
-      }
-      // Initialize WOs if woIds available
+      const wos: SwarmGroupState['wos'] = {}
       if ('woIds' in event) {
         for (const woId of (event as { woIds: string[] }).woIds) {
-          newGroup.wos[woId] = {
+          wos[woId] = {
             woId, title: woId, status: 'pending', model: '', attempt: 0,
             maxRetries: 0, escalationTier: 0, escalationChain: [], dependsOn: [],
             tokenUsage: { inputTokens: 0, outputTokens: 0 }, gateResults: null,
@@ -61,6 +49,18 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
             durationSeconds: null,
           }
         }
+      }
+      const newGroup: SwarmGroupState = {
+        groupId: event.groupId,
+        status: 'running',
+        totalWos: event.totalWos,
+        completedWos: 0,
+        failedWos: 0,
+        edges: 'edges' in event ? (event as { edges: Array<{ from: string; to: string }> }).edges : [],
+        wos,
+        startedAt: String(event.timestamp),
+        totalDurationSeconds: null,
+        totalTokens: { inputTokens: 0, outputTokens: 0 },
       }
       const newGroups = [...groups, newGroup]
       set({ groups: newGroups, eventLog: newLog, selectedGroupId: selectedGroupId || event.groupId })
