@@ -64,8 +64,8 @@ export function resolvePoolSize(projectDir?: string): number {
           }
         }
       }
-    } catch {
-      // File doesn't exist or parse error - fall through to next priority
+    } catch (error) {
+      throw error
     }
   }
 
