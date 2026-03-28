@@ -333,7 +333,8 @@ function readLogTail(logPath: string, byteLimit = DEFAULT_LOG_TAIL_BYTES): strin
     } finally {
       fs.closeSync(fd)
     }
-  } catch {
+  } catch (error) {
+    logger.warn('read_log_tail_error', { logPath, error: String(error) })
     return ''
   }
 }
