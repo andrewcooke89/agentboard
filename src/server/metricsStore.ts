@@ -550,7 +550,8 @@ export class MetricsStore {
     try {
       files = fs.readdirSync(reportDir)
         .filter(f => f.startsWith('nightly-') && f.endsWith('.json'))
-    } catch {
+    } catch (e) {
+      console.error('Failed to read report directory:', e)
       return
     }
 
