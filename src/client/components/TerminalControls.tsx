@@ -317,8 +317,8 @@ export default function TerminalControls({
           }
           return
         }
-      } catch {
-        // Fall through to manual paste input
+      } catch (err) {
+        console.error('Failed to read clipboard text:', err)
       }
     }
 
