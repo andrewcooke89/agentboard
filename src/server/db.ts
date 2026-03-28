@@ -315,7 +315,7 @@ function ensureDataDir(dbPath: string) {
 
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  } catch {
+  } catch (_) {
     // Ignore mkdir failures; SQLite will surface errors when opening
   }
 
@@ -590,7 +590,8 @@ export function reconcilePoolSlots(db: SQLiteDatabase): void {
       })
       return check.exitCode === 0
     } catch {
-      return false // On any error, treat as dead (safe fallback)
+      // Error checking tmux session - treat as dead (safe fallback)
+      return false
     }
   })
 }
