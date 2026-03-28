@@ -97,6 +97,18 @@ enum Commands {
         /// Agentboard API URL for CC escalation (overrides config).
         #[arg(long)]
         agentboard_url: Option<String>,
+
+        /// Override typecheck gate command (e.g. "cargo check").
+        #[arg(long)]
+        gate_typecheck: Option<String>,
+
+        /// Override lint gate command (e.g. "cargo clippy -- -D warnings").
+        #[arg(long)]
+        gate_lint: Option<String>,
+
+        /// Override test gate command (e.g. "cargo test {scope}").
+        #[arg(long)]
+        gate_test: Option<String>,
     },
 }
 
@@ -139,6 +151,9 @@ async fn main() -> Result<()> {
             max_failures,
             codex_binary,
             agentboard_url,
+            gate_typecheck,
+            gate_lint,
+            gate_test,
         } => {
             run_dispatch(
                 wos,
@@ -149,6 +164,9 @@ async fn main() -> Result<()> {
                 max_failures,
                 codex_binary,
                 agentboard_url,
+                gate_typecheck,
+                gate_lint,
+                gate_test,
             )
             .await
         }
@@ -227,6 +245,9 @@ async fn run_dispatch(
     max_failures: u32,
     codex_binary: Option<String>,
     agentboard_url: Option<String>,
+    gate_typecheck: Option<String>,
+    gate_lint: Option<String>,
+    gate_test: Option<String>,
 ) -> Result<()> {
     let mut cfg = load_config(config_path.as_deref())?;
 
@@ -236,6 +257,15 @@ async fn run_dispatch(
     }
     if agentboard_url.is_some() {
         cfg.agentboard_url = agentboard_url;
+    }
+    if let Some(cmd) = gate_typecheck {
+        cfg.gate_commands.typecheck = cmd;
+    }
+    if let Some(cmd) = gate_lint {
+        cfg.gate_commands.lint = cmd;
+    }
+    if let Some(cmd) = gate_test {
+        cfg.gate_commands.test = cmd;
     }
 
     let working_dir = match working_dir {

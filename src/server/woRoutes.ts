@@ -424,6 +424,10 @@ export function registerWoRoutes(app: Hono): void {
     if (EXECUTOR_CONFIG) {
       args.push('--config', EXECUTOR_CONFIG)
     }
+    // Per-project gate command overrides
+    if (body.gate_typecheck) args.push('--gate-typecheck', String(body.gate_typecheck))
+    if (body.gate_lint) args.push('--gate-lint', String(body.gate_lint))
+    if (body.gate_test) args.push('--gate-test', String(body.gate_test))
 
     const record: DispatchRecord = {
       id: dispatchId,
@@ -483,7 +487,7 @@ export function registerWoRoutes(app: Hono): void {
           fetch(`http://localhost:${port}/api/tickets/${ticketId}/transition`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus, reason }),
+            body: JSON.stringify({ status: newStatus, reason, project: workingDir }),
           }).catch(() => { /* best-effort */ })
         }
       })

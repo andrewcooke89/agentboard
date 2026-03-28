@@ -19,6 +19,9 @@ interface ProjectConfig {
   fix_model: string
   fix_model_medium?: string
   auto_merge_efforts?: string[]
+  lint_cmd?: string
+  typecheck_cmd?: string
+  test_cmd?: string
 }
 
 interface MinionConfig {
@@ -224,7 +227,15 @@ export function registerTicketRoutes(
       const dispResp = await fetch(`${baseUrl}/api/wo/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ group_id: groupId, working_dir: projectPath, concurrency: 1, max_failures: 1 }),
+        body: JSON.stringify({
+          group_id: groupId,
+          working_dir: projectPath,
+          concurrency: 1,
+          max_failures: 1,
+          gate_typecheck: project.typecheck_cmd,
+          gate_lint: project.lint_cmd,
+          gate_test: project.test_cmd,
+        }),
       })
       if (!dispResp.ok) return c.json({ error: `Failed to dispatch: ${dispResp.status}` }, 500)
 
