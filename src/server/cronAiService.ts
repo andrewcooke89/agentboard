@@ -630,8 +630,8 @@ When first activated, perform a health check and greet the user with:
           .map((j: CronJob) => `${j.name}[${j.schedule}]=${j.health ?? 'unknown'}`)
           .join(', ')
       }
-    } catch {
-      // best-effort; continue without job list
+    } catch (err) {
+      console.error('[cron-ai] Failed to build job summary:', err)
     }
 
     // Inline role description instead of /skill cron-manager (not a valid Claude Code slash command).
