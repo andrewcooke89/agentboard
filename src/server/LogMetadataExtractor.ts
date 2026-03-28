@@ -55,11 +55,12 @@ export async function extractLogMetadata(
           } else if (entry.role === 'user' && typeof entry.content === 'string') {
             firstUserMessage = entry.content.slice(0, 200)
           } else if (entry.type === 'human' && entry.message?.content) {
-            const text = typeof entry.message.content === 'string'
-              ? entry.message.content
-              : Array.isArray(entry.message.content)
-                ? entry.message.content.find((b: any) => b.type === 'text')?.text ?? ''
-                : ''
+            let text = ''
+            if (typeof entry.message.content === 'string') {
+              text = entry.message.content
+            } else if (Array.isArray(entry.message.content)) {
+              text = entry.message.content.find((b: any) => b.type === 'text')?.text ?? ''
+            }
             if (text) firstUserMessage = text.slice(0, 200)
           }
         }
