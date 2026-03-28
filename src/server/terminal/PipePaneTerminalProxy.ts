@@ -380,8 +380,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
         '-y',
         rows.toString(),
       ])
-    } catch {
-      // Ignore resize errors
+    } catch (err) {
+      console.error('resize error:', err)
     }
   }
 
