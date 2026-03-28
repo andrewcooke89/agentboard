@@ -341,7 +341,6 @@ async function createMcpServer(): Promise<void> {
         })
         continue
       }
-      // Fire-and-forget; errors handled inside
       handleRequest(req).catch((err) => {
         process.stderr.write(`[cron-mcp] Unhandled error: ${err}\n`)
       })
