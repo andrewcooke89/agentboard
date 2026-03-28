@@ -309,21 +309,21 @@ export class CronManager {
     // Interpreter + script argument
     const interpreters = ['bash', 'sh', 'python', 'python3', 'node', 'ruby', 'perl']
     const basename = first.split('/').pop() ?? first
-    if (interpreters.includes(basename) && parts.length > 1) {
-      const second = parts[1]
-      if (
-        second.startsWith('/') ||
-        second.startsWith('./') ||
-        second.startsWith('~/') ||
-        second.endsWith('.py') ||
-        second.endsWith('.sh') ||
-        second.endsWith('.rb') ||
-        second.endsWith('.pl') ||
-        second.endsWith('.js') ||
-        second.endsWith('.ts')
-      ) {
-        return second
-      }
+    if (!interpreters.includes(basename) || parts.length <= 1) return null
+
+    const second = parts[1]
+    if (
+      second.startsWith('/') ||
+      second.startsWith('./') ||
+      second.startsWith('~/') ||
+      second.endsWith('.py') ||
+      second.endsWith('.sh') ||
+      second.endsWith('.rb') ||
+      second.endsWith('.pl') ||
+      second.endsWith('.js') ||
+      second.endsWith('.ts')
+    ) {
+      return second
     }
 
     return null
