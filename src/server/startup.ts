@@ -23,7 +23,8 @@ export function checkPortAvailable(port: number, logger: Logger): void {
         stderr: 'pipe',
       })
       processName = nameResult.stdout?.toString().trim() || 'unknown'
-    } catch {
+    } catch (error) {
+      logger.error('failed_to_get_process_name', { pid, error })
     }
     logger.error('port_in_use', { port, pid, processName })
     process.exit(1)
