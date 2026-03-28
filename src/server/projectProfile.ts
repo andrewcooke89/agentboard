@@ -35,8 +35,8 @@ export function loadProjectProfile(projectPath: string): Record<string, string> 
     if (stats.mode & 0o002) {
       console.warn(`[SECURITY] project_profile.yaml is world-writable: ${profilePath}`)
     }
-  } catch {
-    // Ignore stat errors, file will fail to read anyway
+  } catch (e) {
+    console.error(`[SECURITY] Failed to stat project_profile.yaml: ${profilePath}`, e)
   }
 
   let raw: unknown
