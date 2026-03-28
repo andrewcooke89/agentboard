@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { type CommandPreset, getFullCommand } from '../stores/settingsStore'
 import { DirectoryBrowser } from './DirectoryBrowser'
+import { type CommandPreset } from '../stores/settingsStore'
+import useNewSessionForm from './hooks/useNewSessionForm'
+import CommandPresetSelector from './CommandPresetSelector'
+import ProjectPathSelector from './ProjectPathSelector'
 
 interface NewSessionModalProps {
   isOpen: boolean
@@ -27,196 +29,36 @@ export default function NewSessionModal({
   activeProjectPath,
   projectPathPresets,
 }: NewSessionModalProps) {
-  const [projectPath, setProjectPath] = useState('')
-  const [name, setName] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
-  const [modifiers, setModifiers] = useState('')
-  const [customCommand, setCustomCommand] = useState('')
-  const [isCustomMode, setIsCustomMode] = useState(false)
-  const [showBrowser, setShowBrowser] = useState(false)
-  const formRef = useRef<HTMLFormElement>(null)
-  const projectPathRef = useRef<HTMLInputElement>(null)
-  const defaultButtonRef = useRef<HTMLButtonElement>(null)
-
-  // Get current preset
-  const selectedPreset = selectedPresetId
-    ? commandPresets.find(p => p.id === selectedPresetId)
-    : null
-
-  // Compute preview command
-  const previewCommand = isCustomMode
-    ? customCommand.trim()
-    : selectedPreset
-      ? getFullCommand({ ...selectedPreset, modifiers })
-      : ''
-
-  useEffect(() => {
-    if (!isOpen) {
-      setProjectPath('')
-      setName('')
-      setPrompt('')
-      setSelectedPresetId(null)
-      setModifiers('')
-      setCustomCommand('')
-      setIsCustomMode(false)
-      setShowBrowser(false)
-      // Focus terminal after modal closes
-      setTimeout(() => {
-        if (typeof document === 'undefined' || typeof document.querySelector !== 'function') return
-        const textarea = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
-        if (textarea) {
-          textarea.removeAttribute('disabled')
-          textarea.focus()
-        }
-      }, 300)
-      return
-    }
-    // Disable terminal textarea when modal opens to prevent keyboard capture
-    if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
-      const textarea = document.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
-      if (textarea && typeof textarea.setAttribute === 'function') {
-        if (typeof textarea.blur === 'function') textarea.blur()
-        textarea.setAttribute('disabled', 'true')
-      }
-    }
-    // Initialize state when opening
-    const basePath =
-      activeProjectPath?.trim() || lastProjectPath || defaultProjectDir
-    setProjectPath(basePath)
-    setName('')
-    // Select default preset
-    const defaultPreset = commandPresets.find(p => p.id === defaultPresetId)
-    if (defaultPreset) {
-      setSelectedPresetId(defaultPresetId)
-      setModifiers(defaultPreset.modifiers)
-      setIsCustomMode(false)
-    } else if (commandPresets.length > 0) {
-      setSelectedPresetId(commandPresets[0].id)
-      setModifiers(commandPresets[0].modifiers)
-      setIsCustomMode(false)
-    } else {
-      setIsCustomMode(true)
-    }
-    setCustomCommand('')
-    // Focus default button and scroll project path after DOM update
-    setTimeout(() => {
-      defaultButtonRef.current?.focus()
-      if (projectPathRef.current) {
-        const input = projectPathRef.current
-        input.scrollLeft = input.scrollWidth
-      }
-    }, 50)
-  }, [activeProjectPath, commandPresets, defaultPresetId, defaultProjectDir, isOpen, lastProjectPath])
-
-  useEffect(() => {
-    if (!isOpen) return
-    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
-
-    const getFocusableElements = () => {
-      if (!formRef.current) return []
-      const selector =
-        'input:not([disabled]), button:not([disabled]):not([tabindex="-1"]), [tabindex="0"]'
-      return Array.from(formRef.current.querySelectorAll<HTMLElement>(selector))
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showBrowser) return
-
-      if (e.key === 'Escape') {
-        if (typeof e.stopPropagation === 'function') e.stopPropagation()
-        onClose()
-        return
-      }
-
-      if (e.key === 'Enter' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
-        e.preventDefault()
-        if (typeof e.stopPropagation === 'function') e.stopPropagation()
-        formRef.current?.requestSubmit()
-        return
-      }
-
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        if (typeof e.stopPropagation === 'function') e.stopPropagation()
-        const focusableElements = getFocusableElements()
-        if (focusableElements.length === 0) return
-
-        const activeEl = document.activeElement as HTMLElement
-        const currentIndex = focusableElements.indexOf(activeEl)
-
-        let nextIndex: number
-        if (currentIndex === -1) {
-          // If current element not in list, start from beginning or end
-          nextIndex = e.shiftKey ? focusableElements.length - 1 : 0
-        } else if (e.shiftKey) {
-          nextIndex = currentIndex <= 0 ? focusableElements.length - 1 : currentIndex - 1
-        } else {
-          nextIndex = currentIndex >= focusableElements.length - 1 ? 0 : currentIndex + 1
-        }
-
-        focusableElements[nextIndex]?.focus()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, showBrowser])
+  const {
+    projectPath, setProjectPath,
+    name, setName,
+    prompt, setPrompt,
+    selectedPresetId,
+    modifiers, setModifiers,
+    customCommand, setCustomCommand,
+    isCustomMode,
+    showBrowser, setShowBrowser,
+    formRef, projectPathRef, defaultButtonRef,
+    selectedPreset, previewCommand,
+    handlePresetSelect, handleCustomSelect, handleSubmit,
+  } = useNewSessionForm({
+    isOpen,
+    onClose,
+    onCreate,
+    defaultProjectDir,
+    commandPresets,
+    defaultPresetId,
+    onUpdateModifiers,
+    lastProjectPath,
+    activeProjectPath,
+  })
 
   if (!isOpen) {
     return null
   }
 
-  const handlePresetSelect = (presetId: string) => {
-    const preset = commandPresets.find(p => p.id === presetId)
-    if (preset) {
-      setSelectedPresetId(presetId)
-      setModifiers(preset.modifiers)
-      setIsCustomMode(false)
-    }
-  }
-
-  const handleCustomSelect = () => {
-    setIsCustomMode(true)
-    setSelectedPresetId(null)
-  }
-
-  const handleSubmit = (event: React.FormEvent) => {
-    event.preventDefault()
-    const trimmedPath = projectPath.trim()
-    if (!trimmedPath) {
-      return
-    }
-
-    let finalCommand: string
-    if (isCustomMode) {
-      finalCommand = customCommand.trim()
-    } else if (selectedPreset) {
-      // Auto-save modifier if changed
-      const trimmedModifiers = modifiers.trim()
-      if (trimmedModifiers !== selectedPreset.modifiers.trim()) {
-        onUpdateModifiers(selectedPreset.id, trimmedModifiers)
-      }
-      finalCommand = getFullCommand({ ...selectedPreset, modifiers: trimmedModifiers })
-    } else {
-      finalCommand = ''
-    }
-
-    onCreate(
-      trimmedPath,
-      name.trim() || undefined,
-      finalCommand || undefined,
-      prompt.trim() || undefined
-    )
-    onClose()
-  }
-
-  // Build button list: presets + Custom
-  const allOptions = [
-    ...commandPresets.map(p => ({ id: p.id, label: p.label, isCustom: false })),
-    { id: 'custom', label: 'Custom', isCustom: true },
-  ]
-
   const browserInitialPath = projectPath.trim() || '~'
+  const pathPlaceholder = activeProjectPath || lastProjectPath || defaultProjectDir || '/Users/you/code/my-project'
 
   return (
     <div
@@ -238,132 +80,28 @@ export default function NewSessionModal({
         </h2>
 
         <div className="mt-4 space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs text-secondary">
-              Command
-            </label>
-            <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Command preset">
-              {allOptions.map((option, index) => {
-                const isActive = option.isCustom ? isCustomMode : selectedPresetId === option.id
-                return (
-                  <button
-                    key={option.id}
-                    ref={isActive ? defaultButtonRef : undefined}
-                    type="button"
-                    role="radio"
-                    aria-checked={isActive}
-                    tabIndex={isActive ? 0 : -1}
-                    onClick={() => {
-                      if (option.isCustom) {
-                        handleCustomSelect()
-                      } else {
-                        handlePresetSelect(option.id)
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      let newIndex = index
-                      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                        e.preventDefault()
-                        newIndex = (index + 1) % allOptions.length
-                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                        e.preventDefault()
-                        newIndex = (index - 1 + allOptions.length) % allOptions.length
-                      } else {
-                        return
-                      }
-                      const newOption = allOptions[newIndex]
-                      if (newOption.isCustom) {
-                        handleCustomSelect()
-                      } else {
-                        handlePresetSelect(newOption.id)
-                      }
-                      const container = e.currentTarget.parentElement
-                      const buttons = container?.querySelectorAll<HTMLButtonElement>('[role="radio"]')
-                      buttons?.[newIndex]?.focus()
-                    }}
-                    className={`btn text-xs focus:outline-none focus:ring-2 focus:ring-primary ${isActive ? 'btn-primary' : ''}`}
-                  >
-                    {option.label}
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Modifier input for presets */}
-            {!isCustomMode && selectedPreset && (
-              <div className="mt-2">
-                <input
-                  value={modifiers}
-                  onChange={(event) => setModifiers(event.target.value)}
-                  placeholder="Modifiers (e.g., --model opus)"
-                  className="input font-mono text-xs"
-                />
-              </div>
-            )}
-
-            {/* Custom command input */}
-            {isCustomMode && (
-              <input
-                value={customCommand}
-                onChange={(event) => setCustomCommand(event.target.value)}
-                placeholder="Enter custom command..."
-                className="input mt-2 font-mono text-xs"
-              />
-            )}
-
-            {/* Command preview */}
-            {previewCommand && (
-              <p className="mt-2 text-xs text-muted font-mono truncate">
-                Will run: {previewCommand}
-              </p>
-            )}
-          </div>
-          <div>
-            <label className="mb-1.5 block text-xs text-secondary">
-              Project Path
-            </label>
-            {/* Project path preset quick-select buttons */}
-            {projectPathPresets && projectPathPresets.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-1.5">
-                {projectPathPresets.map((preset) => {
-                  const label = preset.replace(/\/+$/, '').split('/').pop() || preset
-                  const isActive = projectPath === preset
-                  return (
-                    <button
-                      key={preset}
-                      type="button"
-                      title={preset}
-                      onClick={() => setProjectPath(preset)}
-                      className={`btn text-xs focus:outline-none focus:ring-2 focus:ring-primary ${isActive ? 'btn-primary' : ''}`}
-                    >
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                ref={projectPathRef}
-                value={projectPath}
-                onChange={(event) => setProjectPath(event.target.value)}
-                placeholder={
-                  activeProjectPath ||
-                  lastProjectPath ||
-                  defaultProjectDir ||
-                  '/Users/you/code/my-project'
-                }
-                className="input flex-1 text-sm"
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() => setShowBrowser(true)}
-              >
-                Browse
-              </button>
-            </div>
-          </div>
+          <CommandPresetSelector
+            commandPresets={commandPresets}
+            selectedPresetId={selectedPresetId}
+            isCustomMode={isCustomMode}
+            modifiers={modifiers}
+            customCommand={customCommand}
+            previewCommand={previewCommand}
+            defaultButtonRef={defaultButtonRef}
+            onPresetSelect={handlePresetSelect}
+            onCustomSelect={handleCustomSelect}
+            onModifiersChange={setModifiers}
+            onCustomCommandChange={setCustomCommand}
+            selectedPreset={selectedPreset}
+          />
+          <ProjectPathSelector
+            projectPath={projectPath}
+            onPathChange={setProjectPath}
+            onBrowse={() => setShowBrowser(true)}
+            projectPathRef={projectPathRef}
+            projectPathPresets={projectPathPresets}
+            placeholder={pathPlaceholder}
+          />
           <div>
             <label className="mb-1.5 block text-xs text-secondary">
               Initial Prompt <span className="text-muted">(optional)</span>
@@ -411,3 +149,4 @@ export default function NewSessionModal({
     </div>
   )
 }
+
