@@ -248,8 +248,8 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
             providedVars[key] = value
           }
         }
-      } catch {
-        // No body or invalid JSON — that's fine, variables are optional
+      } catch (error) {
+        logger.warn('workflow_run_variables_parse_failed', { error: String(error) })
       }
 
       // Auto-detect tier from spec file count when tier is absent, "auto", or "1" (default)
