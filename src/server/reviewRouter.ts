@@ -166,8 +166,8 @@ export async function executeL1Review(reviewConfig: {
   if (reviewConfig.spec_path) {
     try {
       specContent = fs.readFileSync(reviewConfig.spec_path, 'utf-8')
-    } catch {
-      // Spec file is optional, continue without it
+    } catch (err) {
+      logger.warn('l1_review_spec_read_failed', { spec_path: reviewConfig.spec_path, error: err })
     }
   }
 
@@ -323,8 +323,8 @@ export async function executeL2Review(l1Result: ReviewResult, reviewConfig: {
   if (reviewConfig.spec_path) {
     try {
       specContent = fs.readFileSync(reviewConfig.spec_path, 'utf-8')
-    } catch {
-      // Spec file is optional, continue without it
+    } catch (err) {
+      logger.warn('l2_review_spec_read_failed', { spec_path: reviewConfig.spec_path, error: err })
     }
   }
 
