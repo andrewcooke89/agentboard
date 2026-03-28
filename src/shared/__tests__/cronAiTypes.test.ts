@@ -754,7 +754,7 @@ describe('compile-time exhaustiveness', () => {
         case 'ticket-update': return msg.type
         default: {
           const _exhaustive: never = msg
-          throw new Error(`Unhandled: ${(_exhaustive as ServerMessage).type}`)
+          throw new Error(`Unhandled message type`)
         }
       }
     }
@@ -818,7 +818,7 @@ describe('compile-time exhaustiveness', () => {
         case 'cron-ai-navigate': return msg.type
         default: {
           const _exhaustive: never = msg
-          throw new Error(`Unhandled: ${(_exhaustive as ClientMessage).type}`)
+          throw new Error(`Unhandled message type`)
         }
       }
     }
