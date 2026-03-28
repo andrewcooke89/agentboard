@@ -920,23 +920,23 @@ ${retryFileInstructions}
 
         const output = await getTaskOutput(apiUrl, taskId)
         const code = extractCode(output)
-        if (code && isModifyRetry) {
+        if (!code) {
+          console.log(`${tag} Retry: agent edited ${sourceFile.path} directly`)
+          continue
+        }
+
+        if (isModifyRetry) {
           const origLen = currentContent === 'New file — create from scratch' ? 0 : currentContent.split('\n').length
           const codeLen = code.split('\n').length
           if (origLen > 50 && codeLen < origLen * 0.5) {
             console.log(`${tag} Retry: skipping truncated code block for ${sourceFile.path} (${codeLen} vs ${origLen} lines)`)
-          } else {
-            fs.mkdirSync(path.dirname(absPath), { recursive: true })
-            fs.writeFileSync(absPath, code, 'utf8')
-            console.log(`${tag} Retry wrote ${sourceFile.path}`)
+            continue
           }
-        } else if (code) {
-          fs.mkdirSync(path.dirname(absPath), { recursive: true })
-          fs.writeFileSync(absPath, code, 'utf8')
-          console.log(`${tag} Retry wrote ${sourceFile.path}`)
-        } else {
-          console.log(`${tag} Retry: agent edited ${sourceFile.path} directly`)
         }
+
+        fs.mkdirSync(path.dirname(absPath), { recursive: true })
+        fs.writeFileSync(absPath, code, 'utf8')
+        console.log(`${tag} Retry wrote ${sourceFile.path}`)
       }
 
       const retryResult = runGates()
