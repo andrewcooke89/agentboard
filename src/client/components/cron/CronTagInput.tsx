@@ -68,6 +68,16 @@ export function CronTagInput({ jobId, tags }: CronTagInputProps) {
     sendTagUpdate(tags.filter((t) => t !== tag))
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setEditing(false)
+      setInput('')
+    } else if (e.key === 'Enter' && input.trim()) {
+      addTag(input)
+      e.preventDefault()
+    }
+  }
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {tags.map((tag) => (
@@ -92,16 +102,7 @@ export function CronTagInput({ jobId, tags }: CronTagInputProps) {
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && input.trim()) {
-                addTag(input)
-                e.preventDefault()
-              }
-              if (e.key === 'Escape') {
-                setEditing(false)
-                setInput('')
-              }
-            }}
+            onKeyDown={handleKeyDown}
             onBlur={() => {
               if (!input) setEditing(false)
             }}
