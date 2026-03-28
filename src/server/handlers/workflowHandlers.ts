@@ -189,8 +189,8 @@ export function createWorkflowHandlers(ctx: ServerContext, pool?: import('../ses
       if (workflow.file_path) {
         try {
           await fs.unlink(workflow.file_path)
-        } catch {
-          // File may already be gone
+        } catch (err) {
+          logger.warn('workflow_file_delete_failed', { id, filePath: sanitizeForLog(workflow.file_path), error: String(err) })
         }
       }
 
