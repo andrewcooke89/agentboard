@@ -68,8 +68,8 @@ export class WebSocketManager {
         }
 
         this.listeners.forEach((listener) => listener(parsed))
-      } catch {
-        // Ignore malformed payloads
+      } catch (e) {
+        console.error(e)
       }
     }
 
