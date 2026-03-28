@@ -300,8 +300,8 @@ export const useCronStore = create<CronStore>()(
               })
             }
           }
-        } catch {
-          // ignore — settings store unavailable in tests or SSR
+        } catch (e) {
+          console.error('Failed to send desktop notification:', e)
         }
       },
 
