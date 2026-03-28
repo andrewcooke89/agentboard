@@ -116,7 +116,7 @@ impl Default for Config {
             mcp_server_address: "http://localhost:3100".to_string(),
             mcp_server_binary: Config::default_mcp_server_binary(),
             default_model: "glm-4".to_string(),
-            max_iterations: 20,
+            max_iterations: 40,
             timeout_seconds: 900, // 15 minutes
             command_timeout_seconds: 60,
             gate_commands: GateCommands::default(),
@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.max_iterations, 20);
+        assert_eq!(config.max_iterations, 40);
         assert_eq!(config.proxy_url, "http://localhost:8090");
     }
 
