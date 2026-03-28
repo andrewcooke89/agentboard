@@ -198,8 +198,8 @@ async function gatherCodebaseSource(projectPath: string, maxFiles: number): Prom
       await fsPromises.access(filePath)
       const content = (await fsPromises.readFile(filePath, 'utf-8')).slice(0, 5000)
       sections.push(`## ${file}\n\n\`\`\`\n${content}\n\`\`\`\n`)
-    } catch {
-      // File read failed
+    } catch (error) {
+      logger.error('key_file_read_failed', { file, error })
     }
   }
 
