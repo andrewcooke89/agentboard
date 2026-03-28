@@ -192,8 +192,8 @@ export function createWorkflowFileWatcher(
       // Ensure directory exists
       try {
         fs.mkdirSync(dir, { recursive: true })
-      } catch {
-        // May already exist
+      } catch (err) {
+        ctx.logger.warn('workflow_dir_create_error', { dir, error: String(err) })
       }
 
       // Initial scan
