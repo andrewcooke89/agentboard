@@ -577,7 +577,7 @@ function writeTelemetryYaml(outputDir: string, data: Record<string, unknown>): v
     fs.mkdirSync(outputDir, { recursive: true })
     fs.writeFileSync(yamlPath, yaml.dump(data))
   } catch {
-    // Best-effort write
+    void 0
   }
 }
 
@@ -597,7 +597,7 @@ function appendStepToTelemetryYaml(outputDir: string, step: Record<string, unkno
 
     fs.writeFileSync(yamlPath, yaml.dump(data))
   } catch {
-    // Best-effort write
+    void 0
   }
 }
 
@@ -616,7 +616,7 @@ function finalizeTelemetryYaml(outputDir: string, metrics: Record<string, unknow
 
     fs.writeFileSync(yamlPath, yaml.dump(data))
   } catch {
-    // Best-effort write
+    void 0
   }
 }
 
