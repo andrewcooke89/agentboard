@@ -50,13 +50,7 @@ export class SessionRefreshWorkerClient {
 
       this.pending.set(id, {
         resolve: (response) => {
-          if (response.type === 'result' && response.kind === 'refresh') {
-            resolve(response.sessions)
-          } else {
-            const message =
-              response.type === 'error' ? response.error : 'Session refresh failed'
-            reject(new Error(message))
-          }
+          this.handleRefreshResponse(response, resolve, reject)
         },
         reject,
         timeoutId,
@@ -157,6 +151,20 @@ export class SessionRefreshWorkerClient {
     }
     this.pending.delete(response.id)
     pending.resolve(response)
+  }
+
+  private handleRefreshResponse(
+    response: RefreshWorkerResponse,
+    resolve: (sessions: Session[]) => void,
+    reject: (error: Error) => void
+  ): void {
+    if (response.type === 'result' && response.kind === 'refresh') {
+      resolve(response.sessions)
+    } else {
+      const message =
+        response.type === 'error' ? response.error : 'Session refresh failed'
+      reject(new Error(message))
+    }
   }
 
   private failAll(error: Error): void {
