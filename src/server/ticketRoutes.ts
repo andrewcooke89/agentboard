@@ -50,6 +50,113 @@ function getReportDir(): string {
   return path.join(process.env.HOME ?? '/root', '.agentboard', 'reports')
 }
 
+
+async function dispatchSmallTicket(
+  ticket: any,
+  ticketId: string,
+  projectPath: string,
+  project: ProjectConfig,
+  effort: string,
+  baseUrl: string,
+  broadcastFn: (message: Record<string, unknown>) => void,
+  metricsStore?: MetricsStore,
+): Promise<Response> {
+  const relPath = ticket.source?.file ? path.relative(projectPath, ticket.source.file) : ''
+  const ticketScope = relPath ? path.dirname(relPath) : ''
+
+  // Check file lock before doing anything irreversible
+  if (relPath && fileLockRegistry.isLocked(relPath)) {
+    const lock = fileLockRegistry.getLock(relPath)
+    return new Response(JSON.stringify({ ok: false, skipped: true, reason: 'File is locked by another dispatch', locked_by: lock }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  const groupId = `ondemand-${ticketId}-${Date.now()}`
+  const woId = `WO-${ticketId}`
+
+  const wo = {
+    id: woId,
+    group_id: groupId,
+    title: ticket.title,
+    description: `Fix the following issue in ${ticket.source.file}:${ticket.source.line_start}\n\n**Issue:** ${ticket.title}\n**Details:** ${ticket.description}\n**Suggested fix:** ${ticket.suggestion ?? 'No suggestion'}\n\nRules:\n- Make the minimal change needed\n- Do not refactor surrounding code\n- Do not add comments or documentation`,
+    task: 'fix',
+    scope: ticketScope || undefined,
+    full_context_files: relPath ? [relPath] : [],
+    gates: { compile: true, lint: true, typecheck: true, tests: { run: false } },
+    execution: { model: (effort === 'small' ? project.fix_model : project.fix_model_medium) || project.fix_model || 'glm-5', max_retries: 2, timeout_minutes: effort === 'small' ? 5 : 10 },
+    isolation: { type: 'none' },
+    output: { commit: true, commit_prefix: 'fix' },
+  }
+
+  const woResp = await fetch(`${baseUrl}/api/wo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(wo),
+  })
+  if (!woResp.ok) return new Response(JSON.stringify({ error: `Failed to create WO: ${woResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+
+  const dispResp = await fetch(`${baseUrl}/api/wo/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      group_id: groupId,
+      working_dir: projectPath,
+      concurrency: 1,
+      max_failures: 1,
+      gate_typecheck: project.typecheck_cmd,
+      gate_lint: project.lint_cmd,
+      gate_test: project.test_cmd,
+    }),
+  })
+  if (!dispResp.ok) return new Response(JSON.stringify({ error: `Failed to dispatch: ${dispResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+
+  const { dispatch_id } = await dispResp.json() as { dispatch_id: string }
+  broadcastFn({ type: 'ticket-update', ticket: { id: ticketId, status: 'in-progress' }, action: 'fix-dispatched' })
+  try {
+    metricsStore?.recordTicketEvent({
+      ticketId,
+      action: 'fix-dispatched',
+      source: 'on-demand',
+      metadata: { group_id: groupId, wo_id: woId, effort: 'small' },
+    })
+  } catch { /* non-fatal */ }
+  return new Response(JSON.stringify({ ok: true, dispatch_id, group_id: groupId, effort: 'small' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+}
+
+async function dispatchMediumTicket(
+  ticketId: string,
+  projectPath: string,
+  baseUrl: string,
+  broadcastFn: (message: Record<string, unknown>) => void,
+  metricsStore?: MetricsStore,
+): Promise<Response> {
+  const scriptDir = path.join(import.meta.dir, 'scripts')
+  const scriptPath = path.join(scriptDir, 'minion-plan-dispatch.ts')
+
+  const taskResp = await fetch(`${baseUrl}/api/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      projectPath,
+      prompt: `Run the plan-dispatch script for ticket ${ticketId}:\nbun run ${scriptPath} --ticket-id ${ticketId} --project ${projectPath} --api-url ${baseUrl}`,
+      timeoutSeconds: 2700,
+      metadata: { source: 'minion-ondemand', ticket_id: ticketId },
+    }),
+  })
+  if (!taskResp.ok) return new Response(JSON.stringify({ error: `Failed to create task: ${taskResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+
+  const { id: taskId } = await taskResp.json() as { id: string }
+  broadcastFn({ type: 'ticket-update', ticket: { id: ticketId, status: 'in-progress' }, action: 'fix-dispatched' })
+  try {
+    metricsStore?.recordTicketEvent({
+      ticketId,
+      action: 'fix-dispatched',
+      source: 'on-demand',
+      metadata: { task_id: taskId, effort: 'medium' },
+    })
+  } catch { /* non-fatal */ }
+  return new Response(JSON.stringify({ ok: true, task_id: taskId, effort: 'medium' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+}
+
 // ─── Route Registration ─────────────────────────────────────────────────────
 
 export function registerTicketRoutes(
@@ -241,14 +348,16 @@ export function registerTicketRoutes(
 
       const { dispatch_id } = await dispResp.json() as { dispatch_id: string }
       broadcastFn({ type: 'ticket-update', ticket: { id: ticketId, status: 'in-progress' }, action: 'fix-dispatched' })
-      try {
-        metricsStore?.recordTicketEvent({
-          ticketId,
-          action: 'fix-dispatched',
-          source: 'on-demand',
-          metadata: { group_id: groupId, wo_id: woId, effort: 'small' },
-        })
-      } catch { /* non-fatal */ }
+      if (metricsStore) {
+        try {
+          metricsStore.recordTicketEvent({
+            ticketId,
+            action: 'fix-dispatched',
+            source: 'on-demand',
+            metadata: { group_id: groupId, wo_id: woId, effort: 'small' },
+          })
+        } catch { /* non-fatal */ }
+      }
       return c.json({ ok: true, dispatch_id, group_id: groupId, effort: 'small' }, 202)
 
     } else {
