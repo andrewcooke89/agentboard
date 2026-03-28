@@ -742,7 +742,9 @@ function detectStaleDeps(project: ProjectConfig): Finding[] {
         for (let li = 0; li < pkgContent.length; li++) {
           if (pkgContent[li].includes(`"${pkg}"`)) { depLine = li + 1; break }
         }
-      } catch { /* use line 1 */ }
+      } catch {
+        console.error(`Failed to read package.json for stale dep check: ${pkgJsonPath}`)
+      }
 
       findings.push({
         file: pkgJsonPath,
