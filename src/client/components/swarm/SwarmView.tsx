@@ -5,7 +5,7 @@ import GroupProgress from './GroupProgress'
 import WoDetail from './WoDetail'
 import EventLog from './EventLog'
 import type { EventLogEntry, BaseEventLogEntry } from '../../shared/dashboardTypes'
-import type { SwarmEvent } from '../../shared/swarmTypes'
+import type { SwarmEvent } from '../../../shared/swarmTypes'
 
 function convertToLogEntry(event: SwarmEvent): EventLogEntry {
   const base: Omit<BaseEventLogEntry, 'type' | 'message' | 'severity'> = {
