@@ -72,15 +72,14 @@ export function createTerminalHandlers(
         ws.data.currentTmuxTarget = null
         ws.data.terminal = null
         void terminal.dispose()
-        if (ctx.sockets.has(ws)) {
-          sendTerminalError(
-            ws,
-            sessionId,
-            'ERR_TMUX_ATTACH_FAILED',
-            'tmux client exited',
-            true
-          )
-        }
+        if (!ctx.sockets.has(ws)) return
+        sendTerminalError(
+          ws,
+          sessionId,
+          'ERR_TMUX_ATTACH_FAILED',
+          'tmux client exited',
+          true
+        )
       },
     })
 
