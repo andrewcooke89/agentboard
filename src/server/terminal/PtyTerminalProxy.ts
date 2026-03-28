@@ -201,15 +201,16 @@ class PtyTerminalProxy extends TerminalProxyBase {
       mode: this.getMode(),
     })
 
+    if (onReady) {
+      try {
+        onReady()
+      } catch (error) {
+        console.error('onReady error:', error)
+      }
+    }
+
     try {
       this.runTmux(['switch-client', '-c', this.clientTty, '-t', target])
-      if (onReady) {
-        try {
-          onReady()
-        } catch (error) {
-          console.error('onReady error:', error)
-        }
-      }
       this.outputSuppressed = false
       this.setCurrentWindow(target)
       try {
