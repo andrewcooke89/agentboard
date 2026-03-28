@@ -288,8 +288,8 @@ async function pollUntilDone(
   console.warn(`[poll] Task ${taskId} timed out after ${maxWaitMs}ms, cancelling...`)
   try {
     await fetch(`${apiUrl}/api/tasks/${taskId}/cancel`, { method: 'POST' })
-  } catch {
-    // best-effort cancel
+  } catch (err) {
+    console.warn(`[poll] Failed to cancel task ${taskId}:`, err)
   }
 
   return { status: 'failed', exitCode: null, outputPath: null }
