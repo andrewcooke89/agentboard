@@ -437,7 +437,7 @@ export function createDAGEngine(
         if (projectPath) {
           try {
             projectProfile = loadProjectProfileRaw(projectPath)
-          } catch { /* no profile available */ }
+          } catch (e) { void e; }
         }
         const condCtx: ConditionContext = {
           tier: runTier,
