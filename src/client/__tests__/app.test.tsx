@@ -32,6 +32,18 @@ if (!globalAny.window) {
   } as unknown as Window & typeof globalThis
 }
 
+// Mock fetch to prevent "URL is invalid" errors when App calls authFetch('/api/server-info')
+const originalFetch = globalThis.fetch
+globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  // Return a mock response for any API calls
+  if (url.includes('/api/')) {
+    return Promise.resolve(new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+  }
+  // Fall through to original fetch for other requests (shouldn't happen in tests)
+  return originalFetch(input, init)
+}) as typeof fetch
+
 const originalWindow = globalAny.window
 const originalDocument = globalAny.document
 const originalNavigator = globalAny.navigator
