@@ -282,29 +282,29 @@ export default function TerminalControls({
           const formData = new FormData()
           formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
           const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
-          if (res.ok) {
-            const { path } = await res.json()
-            // Send file path - Claude Code can reference images by path
-            onSendKey(path)
-            if (wasKeyboardVisible) {
-              onRefocus?.()
-            }
-            return
+          if (!res.ok) continue
+          
+          const { path } = await res.json()
+          // Send file path - Claude Code can reference images by path
+          onSendKey(path)
+          if (wasKeyboardVisible) {
+            onRefocus?.()
           }
+          return
         }
 
         // Check for text
-        if (item.types.includes('text/plain')) {
-          const blob = await item.getType('text/plain')
-          const text = await blob.text()
-          if (text) {
-            onSendKey(text)
-            if (wasKeyboardVisible) {
-              onRefocus?.()
-            }
-            return
-          }
+        if (!item.types.includes('text/plain')) continue
+        
+        const blob = await item.getType('text/plain')
+        const text = await blob.text()
+        if (!text) continue
+        
+        onSendKey(text)
+        if (wasKeyboardVisible) {
+          onRefocus?.()
         }
+        return
       }
     } catch {
       // Clipboard API not available - try text fallback
