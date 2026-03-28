@@ -5,6 +5,7 @@
 
 pub mod done;
 pub mod mcp_proxy;
+pub mod read_file;
 pub mod run_command;
 pub mod write_file;
 

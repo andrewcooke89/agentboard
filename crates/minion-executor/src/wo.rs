@@ -303,7 +303,9 @@ impl Default for Escalation {
             enabled: true,
             chain: vec![],
             after_retries: 2,
-            to: "opus".to_string(),
+            // Anthropic API models are not available; leave empty so legacy escalation
+            // is a no-op unless explicitly set in the work order.
+            to: String::new(),
             mode: "attended".to_string(),
             include_error_context: true,
         }
@@ -390,7 +392,9 @@ fn default_timeout() -> u32 {
     15
 }
 fn default_escalation_model() -> String {
-    "opus".to_string()
+    // Anthropic API models (opus/claude) are not available; default to empty so no
+    // escalation target is set by default.
+    String::new()
 }
 fn default_attended() -> String {
     "attended".to_string()
@@ -547,9 +551,10 @@ description: "Test"
 task: implement
 "#;
         let wo: WorkOrder = serde_yaml::from_str(yaml).unwrap();
-        // Default escalation has legacy fields, effective_chain converts them
+        // Default escalation has legacy fields, effective_chain converts them.
+        // Default to field is now empty so effective_chain returns an empty-model tier.
         let chain = wo.escalation.effective_chain();
         assert_eq!(chain.len(), 1);
-        assert_eq!(chain[0].model, "opus"); // default_escalation_model
+        assert_eq!(chain[0].model, ""); // default_escalation_model is empty (Anthropic API unavailable)
     }
 }

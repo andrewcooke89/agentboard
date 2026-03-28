@@ -14,12 +14,13 @@ import { Hono } from 'hono'
 import * as fs from 'fs'
 import * as path from 'path'
 import { spawn } from 'child_process'
+import { fileLockRegistry } from './fileLockRegistry'
 
 const homeDir = process.env.HOME || process.env.USERPROFILE || ''
 const WO_BASE_DIR = process.env.WO_DIR || path.join(homeDir, '.agentboard', 'work-orders')
 const DISPATCH_LOG_DIR = path.join(homeDir, '.agentboard', 'dispatch-logs')
 const EXECUTOR_BINARY = process.env.MINION_EXECUTOR || path.join(homeDir, 'tools', 'agentboard', 'target', 'release', 'minion-executor')
-const EXECUTOR_CONFIG = process.env.MINION_EXECUTOR_CONFIG || ''
+const EXECUTOR_CONFIG = process.env.MINION_EXECUTOR_CONFIG || path.join(homeDir, '.agentboard', 'minion-executor.yaml')
 
 // ── Required WO fields ──────────────────────────────────────────────────────
 
@@ -106,7 +107,9 @@ function woToYaml(wo: Record<string, unknown>): string {
   for (const field of scalarFields) {
     if (wo[field] !== undefined && wo[field] !== null) {
       const val = String(wo[field])
-      lines.push(`${field}: "${val}"`)
+      // Escape internal quotes and backslashes for valid YAML double-quoted strings
+      const escaped = val.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      lines.push(`${field}: "${escaped}"`)
     }
   }
 
@@ -119,7 +122,7 @@ function woToYaml(wo: Record<string, unknown>): string {
   }
 
   // Array fields
-  const arrayFields = ['interface_files', 'reference_files', 'input_files', 'depends_on', 'prefer_after']
+  const arrayFields = ['full_context_files', 'interface_files', 'reference_files', 'input_files', 'depends_on', 'prefer_after']
   for (const field of arrayFields) {
     const val = wo[field]
     if (Array.isArray(val) && val.length > 0) {
@@ -212,6 +215,17 @@ function parseYamlFile(filePath: string): WoFile | null {
         }
         result.depends_on = deps
       }
+      // Parse full_context_files array
+      if (line.trim() === 'full_context_files:') {
+        const files: string[] = []
+        const idx = lines.indexOf(line)
+        for (let i = idx + 1; i < lines.length; i++) {
+          const fileMatch = lines[i].match(/^\s+-\s+(.+)$/)
+          if (fileMatch) files.push(fileMatch[1].trim())
+          else break
+        }
+        result.full_context_files = files
+      }
     }
 
     if (result.id && result.group_id && result.title) {
@@ -286,6 +300,19 @@ export function registerWoRoutes(app: Hono): void {
     return c.json({ work_orders: results, count: results.length })
   })
 
+  // --- Get locked files ---
+  app.get('/api/wo/locks', (c) => {
+    const lockedFiles = fileLockRegistry.getLockedFiles()
+    const locks = Array.from(lockedFiles.entries()).map(([file, entry]) => ({
+      file,
+      dispatchId: entry.dispatchId,
+      woId: entry.woId,
+      ticketId: entry.ticketId,
+      lockedAt: entry.lockedAt,
+    }))
+    return c.json({ locks, count: locks.length })
+  })
+
   // --- Get a single work order ---
   app.get('/api/wo/:id', (c) => {
     const woId = c.req.param('id')
@@ -353,11 +380,33 @@ export function registerWoRoutes(app: Hono): void {
       return c.json({ error: `Group ${groupId} has no work orders` }, 400)
     }
 
+    // Check for file conflicts — parse each WO and lock its full_context_files
+    const dispatchId = generateDispatchId()
+    const lockedForThisDispatch: string[] = []
+    for (const yamlFile of yamlFiles) {
+      const wo = parseYamlFile(path.join(dir, yamlFile))
+      const contextFiles: string[] = Array.isArray((wo as any)?.full_context_files)
+        ? (wo as any).full_context_files as string[]
+        : []
+      for (const file of contextFiles) {
+        if (!file) continue
+        if (!fileLockRegistry.tryLock(file, dispatchId, { woId: wo?.id })) {
+          // Conflict — release all locks we just acquired and return 409
+          fileLockRegistry.releaseByDispatch(dispatchId)
+          const lock = fileLockRegistry.getLock(file)
+          return c.json(
+            { error: 'File conflict', locked_files: [file], locked_by: lock },
+            409,
+          )
+        }
+        lockedForThisDispatch.push(file)
+      }
+    }
+
     const workingDir = body.working_dir ? String(body.working_dir) : process.cwd()
     const concurrency = Number(body.concurrency) || 4
     const maxFailures = Number(body.max_failures) || 3
 
-    const dispatchId = generateDispatchId()
     const logFile = path.join(DISPATCH_LOG_DIR, `${dispatchId}.log`)
     const dbPath = path.join(DISPATCH_LOG_DIR, `${dispatchId}.db`)
 
@@ -400,6 +449,7 @@ export function registerWoRoutes(app: Hono): void {
 
       child.on('close', (code) => {
         logStream.end()
+        fileLockRegistry.releaseByDispatch(dispatchId)
         record.completedAt = new Date().toISOString()
 
         if (code === 0) {
@@ -422,11 +472,13 @@ export function registerWoRoutes(app: Hono): void {
 
       child.on('error', (err) => {
         logStream.end()
+        fileLockRegistry.releaseByDispatch(dispatchId)
         record.status = 'failed'
         record.error = err.message
         record.completedAt = new Date().toISOString()
       })
     } catch (err) {
+      fileLockRegistry.releaseByDispatch(dispatchId)
       record.status = 'failed'
       record.error = err instanceof Error ? err.message : String(err)
       record.completedAt = new Date().toISOString()

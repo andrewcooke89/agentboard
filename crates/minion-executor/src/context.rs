@@ -115,6 +115,28 @@ pub async fn assemble_context(
         }
     }
 
+    // 2b. Safety net: if no files were loaded and this is a fix/implement task,
+    //     try to extract a file path from the description (e.g. "Fix issue in /path/to/file.ts:42").
+    if file_contents.is_empty() {
+        let extracted = extract_file_path_from_description(&work_order.description, working_dir);
+        for file_path in extracted {
+            let abs_path = resolve_path(&file_path, working_dir);
+            match read_full_file(&abs_path).await {
+                Ok(content) => {
+                    info!(path = %file_path, len = content.len(), "Safety net: loaded file from description");
+                    file_contents.push(FileContext {
+                        path: file_path,
+                        content,
+                        source: FileContextSource::InternReadFile,
+                    });
+                }
+                Err(e) => {
+                    warn!(path = %file_path, error = %e, "Safety net: failed to read file from description");
+                }
+            }
+        }
+    }
+
     // 3. Get forward dependencies for scope
     let dependencies = if let Some(scope) = &work_order.scope {
         let abs_scope = resolve_path(scope, working_dir);
@@ -354,6 +376,37 @@ fn looks_like_path(s: &str) -> bool {
             || s.ends_with(".jsx")
             || s.ends_with(".rs")
             || s.ends_with(".py"))
+}
+
+/// Extract file paths from the WO description as a fallback.
+///
+/// Looks for patterns like `/path/to/file.ts:42` or `in src/foo/bar.ts`.
+fn extract_file_path_from_description(description: &str, working_dir: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for word in description.split_whitespace() {
+        // Strip trailing punctuation and line:col suffixes
+        let cleaned = word.trim_matches(|c: char| c == ',' || c == ';' || c == '(' || c == ')');
+        // Remove :linenum suffix  e.g. "file.ts:42"
+        let path_part = cleaned.split(':').next().unwrap_or(cleaned);
+
+        if looks_like_path(path_part) && seen.insert(path_part.to_string()) {
+            // Convert absolute paths to relative if they're under working_dir
+            let rel = if path_part.starts_with('/') {
+                let wd = format!("{}/", working_dir.display());
+                path_part.strip_prefix(&wd).unwrap_or(path_part).to_string()
+            } else {
+                path_part.to_string()
+            };
+            // Verify the file actually exists
+            let abs = resolve_path(&rel, working_dir);
+            if std::path::Path::new(&abs).exists() {
+                paths.push(rel);
+            }
+        }
+    }
+    paths
 }
 
 /// Collect all file paths from the work order (input + interface + reference).

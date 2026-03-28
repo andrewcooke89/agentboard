@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useSwarmStore } from '../../stores/swarmStore'
 import DagGraph from './DagGraph'
 import GroupProgress from './GroupProgress'
@@ -33,6 +34,9 @@ function convertToLogEntry(event: SwarmEvent): EventLogEntry {
 }
 
 export default function SwarmView() {
+  const fetchGroups = useSwarmStore((s) => s.fetchGroups)
+  useEffect(() => { void fetchGroups() }, [fetchGroups])
+
   const groups = useSwarmStore((s) => s.groups)
   const selectedGroupId = useSwarmStore((s) => s.selectedGroupId)
   const selectedWoId = useSwarmStore((s) => s.selectedWoId)

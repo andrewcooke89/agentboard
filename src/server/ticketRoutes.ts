@@ -9,6 +9,7 @@ import path from 'node:path'
 import yaml from 'js-yaml'
 import { FileStorage } from '/home/andrew-cooke/tools/mcp-servers/ticket-system/src/storage/file-storage'
 import { MetricsStore, type NightlyReport } from './metricsStore'
+import { fileLockRegistry } from './fileLockRegistry'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -175,14 +176,20 @@ export function registerTicketRoutes(
     const ticket = storage.getTicket(ticketId)
     if (!ticket) return c.json({ error: 'Ticket not found' }, 404)
 
+    const effort = ticket.effort || 'small'
+    const relPath = ticket.source?.file ? path.relative(projectPath, ticket.source.file) : ''
+    const scope = relPath ? path.dirname(relPath) : ''
+
+    // Check file lock before doing anything irreversible
+    if (relPath && fileLockRegistry.isLocked(relPath)) {
+      const lock = fileLockRegistry.getLock(relPath)
+      return c.json({ ok: false, skipped: true, reason: 'File is locked by another dispatch', locked_by: lock }, 409)
+    }
+
     // Transition to in-progress
     try {
       storage.transitionTicket(ticketId, 'in-progress', { reason: 'On-demand fix dispatch' })
     } catch { /* may already be in-progress */ }
-
-    const effort = ticket.effort || 'small'
-    const relPath = ticket.source?.file ? path.relative(projectPath, ticket.source.file) : ''
-    const scope = relPath ? path.dirname(relPath) : ''
 
     if (effort === 'small' || (project.auto_merge_efforts ?? ['small']).includes(effort)) {
       // Direct WO dispatch

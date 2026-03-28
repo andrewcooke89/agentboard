@@ -306,6 +306,7 @@ async fn run_agent_loop(
     }
 
     registry.register(Box::new(WriteFileTool::new(diff_collector.clone())));
+    registry.register(Box::new(crate::tools::read_file::ReadFileTool::new(working_dir.to_path_buf())));
     registry.register(Box::new(DoneTool::new(
         done_flag.clone(),
         contract_violation.clone(),
@@ -314,6 +315,22 @@ async fn run_agent_loop(
     // Build messages
     let system_prompt = build_system_prompt(work_order);
     let initial_message = build_initial_message(work_order, assembled_context, retry_error_context);
+
+    // ── DEBUG: Log full context sent to model ──
+    info!(wo_id = %work_order.id, "=== SYSTEM PROMPT (first 2000 chars) ===");
+    let sp_preview = if system_prompt.len() > 2000 { &system_prompt[..2000] } else { &system_prompt };
+    info!(wo_id = %work_order.id, prompt = %sp_preview, "system_prompt_preview");
+
+    let initial_text: String = initial_message.content.iter().filter_map(|b| {
+        if let ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
+    }).collect::<Vec<_>>().join("\n");
+    let ctx_preview = if initial_text.len() > 4000 {
+        &initial_text[..4000]
+    } else {
+        &initial_text
+    };
+    info!(wo_id = %work_order.id, context_len = initial_text.len(), "=== INITIAL MESSAGE (first 4000 chars) ===");
+    info!(wo_id = %work_order.id, context = %ctx_preview, "initial_message_preview");
 
     let mut messages: Vec<Message> = vec![initial_message];
     let mut tool_call_log: Vec<ToolCallLog> = Vec::new();
@@ -360,7 +377,9 @@ async fn run_agent_loop(
             let mut tool_results: Vec<ContentBlock> = Vec::new();
             for block in &response.content {
                 if let ContentBlock::ToolUse { id, name, input } = block {
-                    debug!(tool = %name, "Executing tool call");
+                    // ── DEBUG: Log full tool call input ──
+                    let full_input = serde_json::to_string_pretty(input).unwrap_or_else(|_| input.to_string());
+                    info!(wo_id = %work_order.id, tool = %name, input = %full_input, "=== TOOL CALL ===");
                     let output = registry.execute(name, input.clone()).await;
                     let (content, is_error) = match &output {
                         Ok(out) => (out.content.clone(), out.is_error),
@@ -472,6 +491,7 @@ fn build_system_prompt(work_order: &WorkOrder) -> String {
 ## Tools
 
 - **write_file** — Produce file changes (see format below). This is your primary tool.
+- **read_file** — Read a file's contents. Use if you need to see a file not already provided in context.
 - **done** — Signal completion. Call this when all changes are written.
 - **search** — Search the codebase if you need additional context not provided. Use sparingly.
 

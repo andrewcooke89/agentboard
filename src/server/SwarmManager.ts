@@ -9,6 +9,7 @@ import type {
   WoFailedEvent,
   WoStatusChangedEvent,
 } from '../shared/swarmTypes'
+import type { MetricsStore } from './metricsStore'
 
 const MAX_EVENT_LOG_SIZE = 1000
 const GROUP_RETENTION_MS = 24 * 60 * 60 * 1000
@@ -68,6 +69,7 @@ export class SwarmManager {
   private groups: Map<string, SwarmGroupState> = new Map()
   private eventLog: SwarmEvent[] = []
   private listeners: Set<(event: SwarmEvent) => void> = new Set()
+  private metricsStore: MetricsStore | null = null
 
   static getInstance(): SwarmManager {
     if (!SwarmManager.instance) {
@@ -77,6 +79,10 @@ export class SwarmManager {
   }
 
   private constructor() {}
+
+  setMetricsStore(store: MetricsStore): void {
+    this.metricsStore = store
+  }
 
   /** Process an incoming swarm event from the executor. */
   processEvent(event: SwarmEvent): void {
@@ -157,6 +163,18 @@ export class SwarmManager {
       totalDurationSeconds: null,
       totalTokens: { inputTokens: 0, outputTokens: 0 },
     })
+
+    if (this.metricsStore) {
+      // Record a 'started' event for the group itself (woIds not on type)
+      try {
+        this.metricsStore.recordDispatchEvent({
+          groupId: event.groupId,
+          woId: event.groupId,
+          action: 'started',
+          source: 'swarm-ui',
+        })
+      } catch { /* non-fatal */ }
+    }
   }
 
   private handleWoStatusChanged(event: WoStatusChangedEvent): void {
@@ -200,6 +218,21 @@ export class SwarmManager {
     if (!wasCompleted) {
       group.completedWos += 1
     }
+
+    if (this.metricsStore) {
+      try {
+        this.metricsStore.recordDispatchEvent({
+          groupId: event.groupId,
+          woId: event.woId,
+          action: 'completed',
+          model: group.wos[event.woId]?.model || undefined,
+          durationSeconds: event.durationSeconds,
+          inputTokens: event.tokenUsage?.inputTokens ?? 0,
+          outputTokens: event.tokenUsage?.outputTokens ?? 0,
+          source: 'swarm-ui',
+        })
+      } catch { /* non-fatal */ }
+    }
   }
 
   private handleWoFailed(event: WoFailedEvent): void {
@@ -231,6 +264,19 @@ export class SwarmManager {
     if (!wasFailed) {
       group.failedWos += 1
     }
+
+    if (this.metricsStore) {
+      try {
+        this.metricsStore.recordDispatchEvent({
+          groupId: event.groupId,
+          woId: event.woId,
+          action: 'failed',
+          model: event.model,
+          error: event.error,
+          source: 'swarm-ui',
+        })
+      } catch { /* non-fatal */ }
+    }
   }
 
   private handleWoEscalated(event: WoEscalatedEvent): void {
@@ -247,6 +293,19 @@ export class SwarmManager {
         ...current.errorHistory,
         ...event.errorHistory.map((entry) => ({ ...entry })),
       ],
+    }
+
+    if (this.metricsStore) {
+      try {
+        this.metricsStore.recordDispatchEvent({
+          groupId: event.groupId,
+          woId: event.woId,
+          action: 'escalated',
+          model: event.toModel,
+          source: 'swarm-ui',
+          metadata: { fromTier: event.fromTier, toTier: event.toTier },
+        })
+      } catch { /* non-fatal */ }
     }
   }
 

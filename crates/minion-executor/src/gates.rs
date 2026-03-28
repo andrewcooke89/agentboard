@@ -4,7 +4,7 @@
 //! checks against the actual codebase. Results determine whether to accept,
 //! retry, or escalate.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -45,6 +45,58 @@ pub struct GateResult {
     pub output: String,
 }
 
+/// Baseline gate output captured from the clean working tree before the agent runs.
+/// Used to suppress pre-existing errors that aren't caused by the WO.
+#[derive(Debug, Clone, Default)]
+pub struct GateBaseline {
+    /// Gate name → set of non-empty trimmed output lines from the clean tree.
+    pub error_lines: HashMap<String, HashSet<String>>,
+}
+
+/// Run gates against the clean working tree and capture output as a baseline.
+/// Only captures typecheck and lint (not tests, which depend on new code).
+pub async fn capture_baseline(
+    gate_commands: &GateCommands,
+    timeout_secs: u64,
+    gates: &crate::wo::Gates,
+    working_dir: &Path,
+) -> GateBaseline {
+    let mut baseline = GateBaseline::default();
+    let timeout = Duration::from_secs(timeout_secs);
+
+    // Capture typecheck baseline if enabled
+    if gates.compile {
+        let result = run_gate("typecheck", &gate_commands.typecheck, working_dir, timeout).await;
+        if !result.passed {
+            let lines: HashSet<String> = result
+                .output
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            info!(gate = "typecheck", pre_existing_errors = lines.len(), "Captured gate baseline");
+            baseline.error_lines.insert("typecheck".to_string(), lines);
+        }
+    }
+
+    // Capture lint baseline if enabled
+    if gates.lint {
+        let result = run_gate("lint", &gate_commands.lint, working_dir, timeout).await;
+        if !result.passed {
+            let lines: HashSet<String> = result
+                .output
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            info!(gate = "lint", pre_existing_errors = lines.len(), "Captured gate baseline");
+            baseline.error_lines.insert("lint".to_string(), lines);
+        }
+    }
+
+    baseline
+}
+
 /// Apply diffs to disk and run all enabled gates from the work order.
 ///
 /// Returns gate results. If any gate fails, `error_context` contains
@@ -56,6 +108,7 @@ pub async fn run_gates(
     gate_commands: &GateCommands,
     timeout_secs: u64,
     mcp: Option<&McpClient>,
+    baseline: Option<&GateBaseline>,
 ) -> Result<GateResults> {
     info!(
         wo_id = %work_order.id,
@@ -69,7 +122,7 @@ pub async fn run_gates(
         info!(count = diffs.len(), "Diffs applied to disk");
     }
 
-    run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs, mcp).await
+    run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs, mcp, baseline).await
 }
 
 /// Run gates on an already-modified working tree (no diff application needed).
@@ -80,6 +133,7 @@ pub async fn run_gates_in_place(
     gate_commands: &GateCommands,
     timeout_secs: u64,
     mcp: Option<&McpClient>,
+    baseline: Option<&GateBaseline>,
 ) -> Result<GateResults> {
     info!(wo_id = %work_order.id, "Running gates on working tree");
 
@@ -122,7 +176,10 @@ pub async fn run_gates_in_place(
     // Run gates in order: typecheck → lint → tests
     // Each gate only runs if the previous ones passed (fail-fast).
     if gates.compile {
-        let r = run_gate("typecheck", &gate_commands.typecheck, working_dir, timeout).await;
+        let mut r = run_gate("typecheck", &gate_commands.typecheck, working_dir, timeout).await;
+        if !r.passed {
+            r = apply_baseline_to_result(r, "typecheck", baseline);
+        }
         let passed = r.passed;
         results.push(r);
         if !passed {
@@ -131,7 +188,10 @@ pub async fn run_gates_in_place(
     }
 
     if gates.lint {
-        let r = run_gate("lint", &gate_commands.lint, working_dir, timeout).await;
+        let mut r = run_gate("lint", &gate_commands.lint, working_dir, timeout).await;
+        if !r.passed {
+            r = apply_baseline_to_result(r, "lint", baseline);
+        }
         let passed = r.passed;
         results.push(r);
         if !passed {
@@ -145,6 +205,7 @@ pub async fn run_gates_in_place(
             &gates.tests.scope,
             &gates.tests.specific,
         );
+        // No baseline for tests — they depend on new code and should fail normally.
         let r = run_gate("test", &test_cmd, working_dir, timeout).await;
         results.push(r);
     }
@@ -333,6 +394,49 @@ fn build_test_command(template: &str, scope: &str, specific: &[String]) -> Strin
             other => template.replace("{scope}", other),
         }
     }
+}
+
+/// Compare a failed gate result against a baseline.
+///
+/// If all error lines are present in the baseline, the gate is treated as
+/// passing (pre-existing errors suppressed). If only some lines are new, the
+/// output is trimmed to show only the new errors.
+fn apply_baseline_to_result(
+    mut result: GateResult,
+    gate_name: &str,
+    baseline: Option<&GateBaseline>,
+) -> GateResult {
+    let Some(baseline) = baseline else {
+        return result;
+    };
+    let Some(baseline_lines) = baseline.error_lines.get(gate_name) else {
+        // No baseline for this gate — the failure is genuinely new.
+        return result;
+    };
+
+    let new_lines: Vec<&str> = result
+        .output
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .filter(|l| !baseline_lines.contains(*l))
+        .collect();
+
+    if new_lines.is_empty() {
+        // Every error line was present before the WO ran — treat as pass.
+        let suppressed = baseline_lines.len();
+        info!(gate = gate_name, suppressed, "Gate passed via baseline suppression");
+        result.passed = true;
+        result.output = format!("BASELINE: {} pre-existing error lines suppressed", suppressed);
+    } else {
+        // There are genuinely new errors — still fail, but show only new ones.
+        result.output = format!(
+            "New errors (baseline suppressed {} pre-existing):\n{}",
+            baseline_lines.len(),
+            new_lines.join("\n")
+        );
+    }
+    result
 }
 
 /// Build GateResults from individual results.

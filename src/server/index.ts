@@ -22,6 +22,8 @@ import { registerWoRoutes } from './woRoutes'
 import { SwarmManager } from './SwarmManager'
 import { registerSwarmRoutes } from './swarmRoutes'
 import { registerStatsRoutes } from './statsRoutes'
+import { registerTicketRoutes } from './ticketRoutes'
+import { MetricsStore } from './metricsStore'
 import type { DashboardStats } from '../shared/dashboardTypes'
 import { broadcast as broadcastToSockets, send as sendToSocket, handleMessage, wireRegistryEvents } from './wsRouter'
 import { createTerminalHandlers } from './handlers/terminalHandlers'
@@ -408,6 +410,9 @@ function getStats(): DashboardStats {
   }
 }
 registerStatsRoutes(app, getStats)
+const metricsStore = new MetricsStore(db.db)
+swarmManager.setMetricsStore(metricsStore)
+registerTicketRoutes(app, (msg) => broadcast(msg as import('../shared/types').ServerMessage), `http://localhost:${config.port}`, metricsStore)
 
 app.use('/*', serveStatic({ root: './dist/client' }))
 
@@ -553,16 +558,16 @@ const wsHandlers = {
 }
 
 // --- Server ---
-Bun.serve<WSData>({
+const serverOptions = {
   port: config.port,
   hostname: config.hostname,
   ...(tlsEnabled && {
     tls: {
-      cert: Bun.file(config.tlsCert),
-      key: Bun.file(config.tlsKey),
+      cert: Bun.file(config.tlsCert!),
+      key: Bun.file(config.tlsKey!),
     },
   }),
-  fetch(req, server) {
+  fetch(req, server: any) {
     const url = new URL(req.url)
     if (url.pathname === '/ws') {
       if (
@@ -584,7 +589,7 @@ Bun.serve<WSData>({
     return app.fetch(req)
   },
   websocket: {
-    open(ws) {
+    open(ws: any) {
       sockets.add(ws)
       // If no auth configured (dev mode), send initial data immediately
       // Otherwise, wait for auth message before sending session data
@@ -592,7 +597,7 @@ Bun.serve<WSData>({
         sendInitialWsState(ws)
       }
     },
-    message(ws, message) {
+    message(ws: any, message: any) {
       const wasAuthenticated = ws.data.authenticated
       handleMessage(ws, message, wsHandlers, send, config.authToken)
       // If this message just authenticated the connection, send initial data now
@@ -600,14 +605,16 @@ Bun.serve<WSData>({
         sendInitialWsState(ws)
       }
     },
-    close(ws) {
+    close(ws: any) {
       cronHandlers.onClientDisconnect(ws)
       cronAiService.unregisterMcpClient()
       terminalHandlers.cleanupTerminals(ws)
       sockets.delete(ws)
     },
   },
-})
+}
+
+Bun.serve<WSData>(serverOptions)
 
 const protocol = tlsEnabled ? 'https' : 'http'
 const displayHost = config.hostname === '0.0.0.0' ? 'localhost' : config.hostname

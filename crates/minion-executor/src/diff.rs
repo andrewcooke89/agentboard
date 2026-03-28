@@ -7,7 +7,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// A single structured diff operation on a file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,10 +90,139 @@ impl StructuredDiff {
     }
 }
 
+/// Try to find an anchor using exact match first, then fall back to
+/// whitespace-normalized matching if the exact anchor isn't found.
+///
+/// Returns `(start_byte, end_byte)` of the matched region in `file_content`.
+fn find_anchor(file_content: &str, anchor: &str, file_name: &str) -> Result<(usize, usize)> {
+    // Exact match first
+    let count = file_content.matches(anchor).count();
+    if count == 1 {
+        let start = file_content.find(anchor).unwrap();
+        return Ok((start, start + anchor.len()));
+    }
+    if count > 1 {
+        anyhow::bail!(
+            "anchor found {} times in file '{}' (must be unique): '{}'",
+            count,
+            file_name,
+            truncate_for_display(anchor, 120),
+        );
+    }
+
+    // Fallback 1: normalize whitespace in both anchor and content, then match.
+    // This handles cases where the model omits/adds blank lines or comment lines
+    // between anchor lines.
+    let norm_anchor = normalize_whitespace(anchor);
+    if norm_anchor.is_empty() {
+        anyhow::bail!(
+            "anchor not found in file '{}': '{}'",
+            file_name,
+            truncate_for_display(anchor, 120),
+        );
+    }
+
+    // Try to find a contiguous region in file_content whose normalized form matches.
+    // Strategy: find all lines matching the FIRST non-empty anchor line, then
+    // check if the subsequent lines match the rest of the anchor lines.
+    let anchor_lines: Vec<&str> = anchor
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+
+    if anchor_lines.is_empty() {
+        anyhow::bail!(
+            "anchor not found in file '{}': '{}'",
+            file_name,
+            truncate_for_display(anchor, 120),
+        );
+    }
+
+    let file_lines: Vec<&str> = file_content.lines().collect();
+    let first_anchor_line = anchor_lines[0];
+
+    let mut candidates: Vec<(usize, usize)> = Vec::new(); // (start_line_idx, end_line_idx)
+
+    for (i, file_line) in file_lines.iter().enumerate() {
+        if file_line.trim() == first_anchor_line {
+            // Try to match remaining anchor lines forwards
+            let mut anchor_idx = 1;
+            let mut file_idx = i + 1;
+            while anchor_idx < anchor_lines.len() && file_idx < file_lines.len() {
+                let trimmed = file_lines[file_idx].trim();
+                if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with('#') {
+                    // Skip blank lines and comments in the file
+                    file_idx += 1;
+                    continue;
+                }
+                if trimmed == anchor_lines[anchor_idx] {
+                    anchor_idx += 1;
+                    file_idx += 1;
+                } else {
+                    break;
+                }
+            }
+            if anchor_idx == anchor_lines.len() {
+                candidates.push((i, file_idx));
+            }
+        }
+    }
+
+    if candidates.len() == 1 {
+        let (start_line, end_line) = candidates[0];
+        // Convert line indices to byte offsets
+        let byte_start = file_lines[..start_line]
+            .iter()
+            .map(|l| l.len() + 1) // +1 for newline
+            .sum::<usize>();
+        let byte_end = file_lines[..end_line]
+            .iter()
+            .map(|l| l.len() + 1)
+            .sum::<usize>();
+        // Clamp to file length (last line might not have trailing newline)
+        let byte_end = byte_end.min(file_content.len());
+        info!(
+            file = %file_name,
+            "Anchor matched via whitespace-normalized fallback (lines {}-{})",
+            start_line + 1,
+            end_line,
+        );
+        return Ok((byte_start, byte_end));
+    }
+
+    if candidates.len() > 1 {
+        anyhow::bail!(
+            "anchor matched {} locations via fuzzy match in file '{}' (must be unique): '{}'",
+            candidates.len(),
+            file_name,
+            truncate_for_display(anchor, 120),
+        );
+    }
+
+    anyhow::bail!(
+        "anchor not found in file '{}': '{}'",
+        file_name,
+        truncate_for_display(anchor, 120),
+    );
+}
+
+fn normalize_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_for_display(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.replace('\n', "\\n")
+    } else {
+        format!("{}...", s[..max].replace('\n', "\\n"))
+    }
+}
+
 /// Apply a structured diff to file contents using string-anchor matching.
 ///
-/// Phase 1: simple string matching. The anchor is treated as the old string
-/// to find (must appear exactly once); content is the replacement.
+/// Uses exact string matching first, then falls back to whitespace-normalized
+/// line matching (skips comments/blank lines between anchor lines).
 /// Returns the modified file content as a String.
 pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Result<String> {
     diff.validate()?;
@@ -107,51 +236,25 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
             let anchor = diff.anchor.as_ref().unwrap();
             let content = diff.content.as_ref().unwrap();
 
-            let count = file_content.matches(anchor.as_str()).count();
-            anyhow::ensure!(
-                count > 0,
-                "anchor '{}' not found in file '{}'",
-                anchor,
-                diff.file
-            );
-            anyhow::ensure!(
-                count == 1,
-                "anchor '{}' found {} times in file '{}' (must be unique)",
-                anchor,
-                count,
-                diff.file
-            );
+            let (start, end) = find_anchor(file_content, anchor, &diff.file)?;
 
-            Ok(file_content.replacen(anchor.as_str(), content.as_str(), 1))
+            let mut result = String::with_capacity(file_content.len() + content.len());
+            result.push_str(&file_content[..start]);
+            result.push_str(content);
+            result.push_str(&file_content[end..]);
+            Ok(result)
         }
         DiffAction::InsertAfter => {
             let anchor = diff.anchor.as_ref().unwrap();
             let content = diff.content.as_ref().unwrap();
 
-            let count = file_content.matches(anchor.as_str()).count();
-            anyhow::ensure!(
-                count > 0,
-                "anchor '{}' not found in file '{}'",
-                anchor,
-                diff.file
-            );
-            anyhow::ensure!(
-                count == 1,
-                "anchor '{}' found {} times in file '{}' (must be unique)",
-                anchor,
-                count,
-                diff.file
-            );
-
-            // Find the end of the line that contains the anchor
-            let anchor_start = file_content.find(anchor.as_str()).unwrap();
-            let anchor_end = anchor_start + anchor.len();
+            let (_start, end) = find_anchor(file_content, anchor, &diff.file)?;
 
             // Advance to end of the line (just past the newline, or EOF)
-            let line_end = file_content[anchor_end..]
+            let line_end = file_content[end..]
                 .find('\n')
-                .map(|pos| anchor_end + pos + 1) // include the '\n'
-                .unwrap_or(file_content.len()); // anchor is on the last line
+                .map(|pos| end + pos + 1)
+                .unwrap_or(file_content.len());
 
             let mut result = String::with_capacity(file_content.len() + content.len() + 1);
             result.push_str(&file_content[..line_end]);
@@ -165,35 +268,17 @@ pub fn apply_diff_to_content(file_content: &str, diff: &StructuredDiff) -> Resul
         DiffAction::Delete => {
             let anchor = diff.anchor.as_ref().unwrap();
 
-            let count = file_content.matches(anchor.as_str()).count();
-            anyhow::ensure!(
-                count > 0,
-                "anchor '{}' not found in file '{}'",
-                anchor,
-                diff.file
-            );
-            anyhow::ensure!(
-                count == 1,
-                "anchor '{}' found {} times in file '{}' (must be unique)",
-                anchor,
-                count,
-                diff.file
-            );
+            let (start, end) = find_anchor(file_content, anchor, &diff.file)?;
 
-            let anchor_start = file_content.find(anchor.as_str()).unwrap();
-
-            // Start of the line containing the anchor
-            let line_start = file_content[..anchor_start]
+            // Expand to full lines
+            let line_start = file_content[..start]
                 .rfind('\n')
                 .map(|pos| pos + 1)
                 .unwrap_or(0);
 
-            let anchor_end = anchor_start + anchor.len();
-
-            // End of the line (include the newline so we don't leave a blank line)
-            let line_end = file_content[anchor_end..]
+            let line_end = file_content[end..]
                 .find('\n')
-                .map(|pos| anchor_end + pos + 1)
+                .map(|pos| end + pos + 1)
                 .unwrap_or(file_content.len());
 
             let mut result = String::with_capacity(file_content.len());
@@ -240,10 +325,23 @@ pub fn apply_diff(diff: &StructuredDiff, working_dir: &Path) -> Result<()> {
                 .with_context(|| format!("failed to write file '{}'", diff.file))?;
         }
         DiffAction::Replace | DiffAction::InsertAfter | DiffAction::Delete => {
-            debug!(file = %diff.file, action = ?diff.action, "Applying diff to existing file");
+            info!(file = %diff.file, action = ?diff.action, anchor = ?diff.anchor, "Applying diff to existing file");
             let file_content = std::fs::read_to_string(&file_path)
                 .with_context(|| format!("failed to read file '{}'", diff.file))?;
-            let new_content = apply_diff_to_content(&file_content, diff)?;
+            info!(file = %diff.file, file_len = file_content.len(), "Read file for diff");
+            let new_content = match apply_diff_to_content(&file_content, diff) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(file = %diff.file, anchor = ?diff.anchor, error = %e, "Diff apply FAILED — anchor not found or not unique");
+                    let content_preview = if diff.content.as_ref().map_or(0, |c| c.len()) > 500 {
+                        format!("{}...", &diff.content.as_ref().unwrap()[..500])
+                    } else {
+                        diff.content.clone().unwrap_or_default()
+                    };
+                    warn!(file = %diff.file, content_preview = %content_preview, "Diff content that failed");
+                    return Err(e);
+                }
+            };
             std::fs::write(&file_path, new_content)
                 .with_context(|| format!("failed to write file '{}'", diff.file))?;
         }

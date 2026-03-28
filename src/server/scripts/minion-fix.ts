@@ -35,6 +35,7 @@ interface ProjectConfig {
   typecheck_cmd: string
   test_cmd: string
   fix_model: string
+  fix_model_medium?: string
   auto_merge_efforts?: string[]  // efforts that get auto-merged (default: ['small'])
 }
 
@@ -190,8 +191,25 @@ async function fixViaSwarm(
   const results = new Map<string, boolean>()
   if (tickets.length === 0) return results
 
-  // Create one WO per ticket via API
+  // Deduplicate by file — if two tickets target the same file, only include the first
+  // (highest severity, since fetchTickets sorts by severity desc). This prevents
+  // concurrent WOs from clobbering each other's changes on the same file.
+  const seenFiles = new Set<string>()
+  const deduped: typeof tickets = []
   for (const ticket of tickets) {
+    const file = ticket.source?.file
+      ? path.relative(project.path, ticket.source.file)
+      : ''
+    if (file && seenFiles.has(file)) {
+      console.log(`[minion-fix] Skipping ${ticket.id} — file ${file} already in batch`)
+      continue
+    }
+    if (file) seenFiles.add(file)
+    deduped.push(ticket)
+  }
+
+  // Create one WO per ticket via API
+  for (const ticket of deduped) {
     const woId = `WO-${ticket.id}`
     const prompt = buildPrompt(ticket, project.language)
     const relPath = ticket.source?.file
@@ -208,7 +226,7 @@ async function fixViaSwarm(
       scope: scope || undefined,
       full_context_files: relPath ? [relPath] : [],
       gates: { compile: true, lint: true, typecheck: true, tests: { run: false } },
-      execution: { model: 'glm-5', max_retries: 2, timeout_minutes: 5 },
+      execution: { model: project.fix_model || 'glm-5', max_retries: 2, timeout_minutes: 5 },
       isolation: { type: 'none' },
       output: { commit: true, commit_prefix: 'fix' },
     }
@@ -240,13 +258,13 @@ async function fixViaSwarm(
         group_id: groupId,
         working_dir: project.path,
         concurrency: 4,
-        max_failures: Math.max(2, Math.ceil(tickets.length / 2)),
+        max_failures: Math.max(2, Math.ceil(deduped.length / 2)),
       }),
     })
 
     if (!dispatchResp.ok) {
       console.log(`[minion-fix] Failed to dispatch group ${groupId}: ${dispatchResp.status}`)
-      for (const t of tickets) results.set(t.id, false)
+      for (const t of deduped) results.set(t.id, false)
       return results
     }
 
@@ -263,7 +281,7 @@ async function fixViaSwarm(
 
       if (record.status === 'completed') {
         console.log(`[minion-fix] Dispatch ${dispatch_id} completed`)
-        for (const t of tickets) {
+        for (const t of deduped) {
           if (!results.has(t.id)) results.set(t.id, true)
         }
         return results
@@ -271,7 +289,7 @@ async function fixViaSwarm(
 
       if (record.status === 'failed') {
         console.log(`[minion-fix] Dispatch ${dispatch_id} failed`)
-        for (const t of tickets) {
+        for (const t of deduped) {
           if (!results.has(t.id)) results.set(t.id, false)
         }
         return results
@@ -279,12 +297,12 @@ async function fixViaSwarm(
     }
 
     console.log(`[minion-fix] Dispatch ${dispatch_id} timed out`)
-    for (const t of tickets) {
+    for (const t of deduped) {
       if (!results.has(t.id)) results.set(t.id, false)
     }
   } catch (err) {
     console.log(`[minion-fix] Dispatch error: ${err}`)
-    for (const t of tickets) results.set(t.id, false)
+    for (const t of deduped) results.set(t.id, false)
   }
 
   return results
@@ -303,7 +321,7 @@ async function fixViaPlanDispatch(
   console.log(`[minion-fix] Running plan-dispatch for ticket ${ticket.id}`)
 
   const result = Bun.spawnSync(
-    ['bun', 'run', scriptPath, '--ticket-id', ticket.id, '--project', project.path, '--api-url', apiUrl],
+    ['bun', 'run', scriptPath, '--ticket-id', ticket.id, '--project', project.path, '--api-url', apiUrl, '--model', project.fix_model_medium || project.fix_model || 'glm-5.1'],
     { cwd: project.path, stdout: 'pipe', stderr: 'pipe', timeout: 45 * 60 * 1000 }, // 45 min — generous for plan+execute
   )
 
@@ -566,7 +584,7 @@ async function processProject(
   } catch { /* ignore */ }
 
   // Get backlog stats
-  const stats = storage.getStats()
+  const _stats = storage.getStats()
   const byEffort: Record<string, number> = {}
   const byCategory: Record<string, number> = {}
   const openTickets = storage.listTickets({ status: 'open', limit: 1000, offset: 0, sort_by: 'created', sort_order: 'desc' })

@@ -14,6 +14,7 @@ import { CronManager } from './components/cron/CronManager'
 import { CronAiDrawer } from './components/cron/CronAiDrawer'
 import { CronAiTerminal } from './components/cron/CronAiTerminal'
 import SwarmView from './components/swarm/SwarmView'
+import TicketView from './components/tickets/TicketView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastViewport, toastManager } from './components/Toast'
 import { useSessionStore } from './stores/sessionStore'
@@ -41,6 +42,7 @@ import { usePoolStore } from './stores/poolStore'
 import { useCronStore } from './stores/cronStore'
 import { useCronAiStore } from './stores/cronAiStore'
 import { useSwarmStore } from './stores/swarmStore'
+import { useTicketStore } from './stores/ticketStore'
 import { useStatsStore } from './stores/statsStore'
 import type { SwarmStateMessage, SwarmUpdateMessage } from '@shared/swarmTypes'
 import type { DashboardStats } from '@shared/dashboardTypes'
@@ -57,7 +59,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null)
-  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews' | 'cron-manager' | 'swarm'>('sessions')
+  const [activeView, setActiveView] = useState<'sessions' | 'workflow-list' | 'workflow-detail' | 'workflow-editor' | 'pending-reviews' | 'cron-manager' | 'swarm' | 'tickets'>('sessions')
   const [activeWorkflowId, setActiveWorkflowId] = useState<string | null>(null)
   const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false)
   const [dismissedPermissionBanners, setDismissedPermissionBanners] = useState<Set<string>>(new Set())
@@ -570,6 +572,13 @@ export default function App() {
       if (typedMessage.type === 'swarm-state') {
         useSwarmStore.getState().handleSwarmState(typedMessage.groups)
       }
+      if (typedMessage.type === 'nightly-report') {
+        useTicketStore.getState().handleNightlyReport((typedMessage as any).report)
+        toastManager.add({ title: 'Nightly Report', description: `${(typedMessage as any).report.fix.fixed} fixed, ${(typedMessage as any).report.fix.failed} failed`, type: 'info', timeout: 10000 })
+      }
+      if (typedMessage.type === 'ticket-update') {
+        useTicketStore.getState().handleTicketUpdate((typedMessage as any).ticket, (typedMessage as any).action)
+      }
       if (typedMessage.type === 'stats-update') {
         useStatsStore.getState().setStats((typedMessage as { stats: DashboardStats }).stats)
       }
@@ -769,6 +778,13 @@ export default function App() {
       if (isShortcut && event.shiftKey && code === 'KeyS') {
         event.preventDefault()
         setActiveView((prev) => (prev === 'swarm' ? 'sessions' : 'swarm'))
+        return
+      }
+
+      // Toggle tickets: [mod]+Shift+D
+      if (isShortcut && event.shiftKey && code === 'KeyD') {
+        event.preventDefault()
+        setActiveView((prev) => (prev === 'tickets' ? 'sessions' : 'tickets'))
         return
       }
 
@@ -1001,13 +1017,15 @@ export default function App() {
           onToggleHistory={() => setShowHistory(!showHistory)}
           historyActive={showHistory}
           onToggleWorkflows={() => setActiveView((prev) => (prev === 'workflow-list' ? 'sessions' : 'workflow-list'))}
-          workflowsActive={activeView !== 'sessions' && activeView !== 'cron-manager' && activeView !== 'swarm'}
+          workflowsActive={activeView !== 'sessions' && activeView !== 'cron-manager' && activeView !== 'swarm' && activeView !== 'tickets'}
           onToggleWorkflowPanel={() => setWorkflowPanelOpen((prev) => !prev)}
           workflowPanelActive={workflowPanelOpen}
           onToggleCronManager={() => setActiveView(prev => prev === 'cron-manager' ? 'sessions' : 'cron-manager')}
           cronManagerActive={activeView === 'cron-manager'}
           onToggleSwarm={() => setActiveView((prev) => (prev === 'swarm' ? 'sessions' : 'swarm'))}
           swarmActive={activeView === 'swarm'}
+          onToggleTickets={() => setActiveView((prev) => (prev === 'tickets' ? 'sessions' : 'tickets'))}
+          ticketsActive={activeView === 'tickets'}
         />
         <PoolStatusIndicator poolStatus={poolStatus} />
         <StatsCards stats={dashboardStats} />
@@ -1136,6 +1154,11 @@ export default function App() {
       {activeView === 'swarm' && (
         <div className="flex-1 overflow-hidden">
           <SwarmView />
+        </div>
+      )}
+      {activeView === 'tickets' && (
+        <div className="flex-1 overflow-hidden">
+          <TicketView />
         </div>
       )}
 
