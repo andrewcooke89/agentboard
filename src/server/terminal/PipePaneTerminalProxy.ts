@@ -255,9 +255,10 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
             }
           }
           const tail = decoder.decode()
-          if (tail && sequence === this.tailSequence && !this.outputSuppressed) {
-            this.options.onData(tail)
+          if (!tail || sequence !== this.tailSequence || this.outputSuppressed) {
+            return
           }
+          this.options.onData(tail)
         } catch (err) {
           console.error('tail read error:', err)
         }
