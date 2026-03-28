@@ -14,6 +14,40 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+/// Extract a line number hint from a WO description.
+/// Looks for patterns like "file.ts:123" or "line_start: 123".
+fn extract_line_hint_from_description(description: &str) -> Option<u32> {
+    // Pattern 1: "file.ext:LINE" (e.g., "src/server/foo.ts:248")
+    for line in description.lines() {
+        if let Some(caps) = line.find(':') {
+            let before = &line[..caps];
+            let after = line[caps + 1..].trim();
+            // Check if before looks like a file path and after is a number
+            if before.contains('.') && !before.contains(' ') {
+                if let Ok(n) = after.split(|c: char| !c.is_ascii_digit()).next().unwrap_or("").parse::<u32>() {
+                    if n > 0 {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    // Pattern 2: "Line: 123" or "line_start: 123"
+    for line in description.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("line") {
+            for word in line.split_whitespace() {
+                if let Ok(n) = word.trim_matches(|c: char| !c.is_ascii_digit()).parse::<u32>() {
+                    if n > 0 {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 use crate::config::GateCommands;
 use crate::diff::StructuredDiff;
 use crate::mcp_client::McpClient;
@@ -116,10 +150,41 @@ pub async fn run_gates(
         "Applying diffs and running gates"
     );
 
-    // Apply diffs to disk
+    // Apply diffs to disk — on failure, auto-inject line_hint and retry once
     if !diffs.is_empty() {
-        crate::diff::apply_diffs(diffs, working_dir).context("Failed to apply diffs to disk")?;
-        info!(count = diffs.len(), "Diffs applied to disk");
+        match crate::diff::apply_diffs(diffs, working_dir) {
+            Ok(_) => {
+                info!(count = diffs.len(), "Diffs applied to disk");
+            }
+            Err(e) => {
+                let err_msg = e.to_string();
+                // If failure is due to duplicate anchors, try again with line_hint
+                if err_msg.contains("found") && err_msg.contains("times") || err_msg.contains("matched") && err_msg.contains("locations") {
+                    // Extract line number from WO description (format: "file.ts:123")
+                    let line_hint = extract_line_hint_from_description(&work_order.description);
+                    if let Some(hint) = line_hint {
+                        warn!(
+                            wo_id = %work_order.id,
+                            line_hint = hint,
+                            "Duplicate anchor detected, retrying with auto line_hint"
+                        );
+                        let mut hinted_diffs: Vec<crate::diff::StructuredDiff> = diffs.to_vec();
+                        for d in &mut hinted_diffs {
+                            if d.line_hint.is_none() {
+                                d.line_hint = Some(hint);
+                            }
+                        }
+                        crate::diff::apply_diffs(&hinted_diffs, working_dir)
+                            .context("Failed to apply diffs to disk (with auto line_hint)")?;
+                        info!(count = diffs.len(), "Diffs applied with auto line_hint");
+                    } else {
+                        return Err(e).context("Failed to apply diffs to disk");
+                    }
+                } else {
+                    return Err(e).context("Failed to apply diffs to disk");
+                }
+            }
+        }
     }
 
     run_gates_in_place(work_order, working_dir, gate_commands, timeout_secs, mcp, baseline).await
