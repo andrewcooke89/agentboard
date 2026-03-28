@@ -124,19 +124,24 @@ export function extractModelRoutingConfig(profile: Record<string, unknown>): Mod
   // Parse escalation rules
   const escalation: ModelRoutingConfig['escalation'] = []
   const escalationRaw = r.escalation
-  if (Array.isArray(escalationRaw)) {
-    for (const rule of escalationRaw) {
-      if (typeof rule === 'object' && rule !== null) {
-        const r = rule as Record<string, unknown>
-        if (typeof r.from === 'string' && typeof r.to === 'string') {
-          escalation.push({
-            from: r.from,
-            to: r.to,
-            condition: (r.condition as string) ?? 'retry_count >= 2',
-          })
-        }
-      }
+  if (!Array.isArray(escalationRaw)) {
+    return {
+      enabled,
+      default_model: defaultModel,
+      complexity_routing: complexityRouting,
+      escalation: escalation.length > 0 ? escalation : undefined,
     }
+  }
+
+  for (const rule of escalationRaw) {
+    if (typeof rule !== 'object' || rule === null) continue
+    const r = rule as Record<string, unknown>
+    if (typeof r.from !== 'string' || typeof r.to !== 'string') continue
+    escalation.push({
+      from: r.from,
+      to: r.to,
+      condition: (r.condition as string) ?? 'retry_count >= 2',
+    })
   }
 
   return {
