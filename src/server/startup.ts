@@ -48,8 +48,9 @@ export function getTailscaleIp(): string | null {
         const ip = result.stdout.toString().trim()
         if (ip) return ip
       }
-    } catch {
-      // Try next path
+    } catch (error) {
+      // Try next path - error ignored as we iterate through fallback paths
+      void error
     }
   }
   return null
