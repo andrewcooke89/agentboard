@@ -549,7 +549,7 @@ async function processProject(
           prsOpened.push(prUrl)
           try {
             Bun.spawnSync(['gh', 'pr', 'merge', '--auto', '--squash', prUrl], { cwd: projectPath })
-          } catch { /* auto-merge not available */ }
+          } catch (e) { console.log(`${tag} Auto-merge not available: ${e}`) }
         } else {
           console.error(`${tag} PR creation failed: ${pr.stderr.toString().slice(0, 200)}`)
         }
