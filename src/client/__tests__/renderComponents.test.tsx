@@ -162,6 +162,14 @@ function setupDom() {
 setupDom()
 globalAny.localStorage = createStorage()
 
+// Mock global fetch to prevent network calls with invalid URLs
+;(globalAny as any).fetch = () =>
+  Promise.resolve({
+    json: () => Promise.resolve({ port: 4040, tailscaleIp: null, protocol: 'http' }),
+    ok: true,
+    status: 200,
+  } as Response)
+
 // Mock fetch to prevent network calls during component rendering
 mock.module('../utils/api', () => ({
   authFetch: () => Promise.resolve({
