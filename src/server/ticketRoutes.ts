@@ -181,7 +181,9 @@ export function registerTicketRoutes(
     const scope = relPath ? path.dirname(relPath) : ''
 
     // Check file lock before doing anything irreversible
-    if (relPath && fileLockRegistry.isLocked(relPath)) {
+    if (!relPath || !fileLockRegistry.isLocked(relPath)) {
+      // File not locked - continue with dispatch
+    } else {
       const lock = fileLockRegistry.getLock(relPath)
       return c.json({ ok: false, skipped: true, reason: 'File is locked by another dispatch', locked_by: lock }, 409)
     }
