@@ -748,6 +748,10 @@ describe('compile-time exhaustiveness', () => {
         case 'cron-ai-context-update': return msg.type
         case 'cron-ai-proposal-resolved': return msg.type
         case 'cron-ai-mcp-register': return msg.type
+        // Stats and misc
+        case 'stats-update': return msg.type
+        case 'nightly-report': return msg.type
+        case 'ticket-update': return msg.type
         default: {
           const _exhaustive: never = msg
           throw new Error(`Unhandled: ${(_exhaustive as ServerMessage).type}`)
