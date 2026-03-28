@@ -141,8 +141,8 @@ export function createWorkflowFileWatcher(
         if (stat.isFile()) {
           handleFileChange(filePath)
         }
-      } catch {
-        // Skip files we can't stat
+      } catch (err) {
+        ctx.logger.warn('workflow_file_stat_error', { filePath: sanitizeForLog(filePath), error: String(err) })
       }
     }
   }
