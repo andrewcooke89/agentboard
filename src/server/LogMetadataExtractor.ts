@@ -76,13 +76,15 @@ export async function extractLogMetadata(
         }
       } catch {
         // Skip unparseable lines
+        console.error('Failed to parse log line:', trimmed)
       }
     }
 
     result.messageCount = messageCount
     if (firstUserMessage) result.firstMessage = firstUserMessage
-  } catch {
+  } catch (error) {
     // Return defaults on read error
+    console.error('Failed to read log file:', error)
   } finally {
     if (fileHandle) {
       try { await fileHandle.close() } catch { /* ignore */ }
