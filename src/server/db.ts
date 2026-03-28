@@ -544,7 +544,8 @@ export function reconcilePoolSlots(db: SQLiteDatabase): void {
       "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('tasks', 'workflow_runs')"
     ).all() as Array<{ name: string }>
     tablesExist = result.length === 2
-  } catch {
+  } catch (e) {
+    console.error(e)
     tablesExist = false
   }
 
