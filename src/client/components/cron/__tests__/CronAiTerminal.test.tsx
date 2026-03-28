@@ -182,7 +182,7 @@ function findByProp(root: ReactTestInstance, prop: string, value: unknown): Reac
 /* ------------------------------------------------------------------ */
 
 describe('CronAiTerminal', () => {
-  let React: typeof import('react')
+  let _React: typeof import('react')
   let act: typeof TestRenderer.act
   let create: typeof TestRenderer.create
   let CronAiTerminal: React.ComponentType<{
@@ -205,7 +205,7 @@ describe('CronAiTerminal', () => {
     mockSetTmuxCopyMode.mockClear()
 
     // Dynamic import after globals are set up
-    React = await import('react')
+    _React = await import('react')
     const renderer = await import('react-test-renderer')
     act = renderer.act
     create = renderer.create
