@@ -257,24 +257,26 @@ export function validateSpec(
         : [])
     : []
 
-  if (spec.acceptance && Array.isArray(spec.acceptance)) {
+  if (!spec.acceptance || !Array.isArray(spec.acceptance)) {
+    // No acceptance criteria to validate
+  } else {
     for (let i = 0; i < (spec.acceptance as unknown[]).length; i++) {
       const criterion = (spec.acceptance as unknown[])[i]
-      if (criterion && typeof criterion === 'object' && !Array.isArray(criterion)) {
-        const crit = criterion as Record<string, unknown>
-        if (!('type' in crit) || !crit.type) {
-          report.warnings.push({
-            field: `acceptance[${i}]`,
-            message: `Acceptance criterion at index ${i} is missing a "type" field`,
-            type: 'untyped_criterion',
-          })
-        } else if (validAcceptanceTypes.length > 0 && !validAcceptanceTypes.includes(String(crit.type))) {
-          report.warnings.push({
-            field: `acceptance[${i}].type`,
-            message: `Acceptance criterion type "${crit.type}" not in valid types: ${validAcceptanceTypes.join(', ')}`,
-            type: 'constraint',
-          })
-        }
+      if (!criterion || typeof criterion !== 'object' || Array.isArray(criterion)) continue
+      
+      const crit = criterion as Record<string, unknown>
+      if (!('type' in crit) || !crit.type) {
+        report.warnings.push({
+          field: `acceptance[${i}]`,
+          message: `Acceptance criterion at index ${i} is missing a "type" field`,
+          type: 'untyped_criterion',
+        })
+      } else if (validAcceptanceTypes.length > 0 && !validAcceptanceTypes.includes(String(crit.type))) {
+        report.warnings.push({
+          field: `acceptance[${i}].type`,
+          message: `Acceptance criterion type "${crit.type}" not in valid types: ${validAcceptanceTypes.join(', ')}`,
+          type: 'constraint',
+        })
       }
     }
   }
