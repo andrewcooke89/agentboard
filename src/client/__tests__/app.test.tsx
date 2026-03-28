@@ -96,6 +96,23 @@ const _useWorkflowStore = Object.assign(
 )
 mock.module('../stores/workflowStore', () => ({ useWorkflowStore: _useWorkflowStore }))
 
+// Mock poolStore to avoid fetch returning {} which causes poolStatus.activeSlots to be undefined
+const _poolState = {
+  poolStatus: null,
+  loading: false,
+}
+const _usePoolStore = Object.assign(
+  (selector?: (s: typeof _poolState) => unknown) =>
+    typeof selector === 'function' ? selector(_poolState) : _poolState,
+  {
+    getState: () => _poolState,
+    setState: (partial: Partial<typeof _poolState>) => {
+      Object.assign(_poolState, partial)
+    },
+  }
+)
+mock.module('../stores/poolStore', () => ({ usePoolStore: _usePoolStore }))
+
 mock.module('@xterm/xterm', () => ({ Terminal: TerminalMock }))
 mock.module('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
 mock.module('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {} }))
