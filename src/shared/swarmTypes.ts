@@ -35,6 +35,8 @@ export interface WoCompletedEvent {
     inputTokens: number
     outputTokens: number
   }
+  gateResults?: GateResultSummary | null
+  filesChanged: string[]
   unifiedDiff?: string
 }
 
