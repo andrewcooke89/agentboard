@@ -519,7 +519,7 @@ const wsHandlers = {
   onCronAiProposalResponse: (_ws: ServerWebSocket<WSData>, id: string, approved: boolean, feedback?: string) => {
     const result = cronAiService.resolveProposal(id, approved, feedback)
     broadcast({ type: 'cron-ai-proposal-resolved', id, status: approved ? 'accepted' : 'rejected', feedback })
-    cronAiService.forwardToMcp({ type: 'proposal_resolved', id, ...result })
+    cronAiService.forwardToMcp({ type: 'proposal_resolved', id, success: result.success, rejected: result.rejected, expired: result.expired, feedback: result.feedback, error: result.error })
   },
   onCronAiDrawerOpen: (_ws: ServerWebSocket<WSData>) => {
     broadcast({ type: 'cron-ai-session-status', status: 'starting' })
