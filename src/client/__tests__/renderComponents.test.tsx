@@ -162,6 +162,16 @@ function setupDom() {
 setupDom()
 globalAny.localStorage = createStorage()
 
+// Mock fetch to prevent network calls during component rendering
+mock.module('../utils/api', () => ({
+  authFetch: () => Promise.resolve({
+    json: () => Promise.resolve({ port: 4040, tailscaleIp: null, protocol: 'http' }),
+    ok: true,
+    status: 200,
+  } as Response),
+  checkAuth: () => Promise.resolve({ authenticated: false, authRequired: false }),
+}))
+
 mock.module('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80
