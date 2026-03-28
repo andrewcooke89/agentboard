@@ -13,6 +13,8 @@ export interface GroupStartedEvent {
   groupId: string
   timestamp: number
   totalWos: number
+  woIds: string[]
+  edges: Array<{ from: string; to: string }>
 }
 
 export interface WoStatusChangedEvent {
