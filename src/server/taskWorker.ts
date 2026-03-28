@@ -192,7 +192,12 @@ export function createTaskWorker(
           let pathOk = true
           try { fs.accessSync(task.projectPath, fs.constants.R_OK) } catch { pathOk = false }
 
-          if (pathOk) {
+          if (!pathOk) {
+            ctx.logger.warn('task_follow_up_skipped', {
+              parentId: task.id,
+              reason: 'project_path_inaccessible',
+            })
+          } else {
             const childTask = taskStore.createTask({
               projectPath: task.projectPath,
               prompt: task.followUpPrompt.trim(),
@@ -209,11 +214,6 @@ export function createTaskWorker(
             ctx.logger.info('task_follow_up_created', {
               parentId: task.id,
               childId: childTask.id,
-            })
-          } else {
-            ctx.logger.warn('task_follow_up_skipped', {
-              parentId: task.id,
-              reason: 'project_path_inaccessible',
             })
           }
         }
