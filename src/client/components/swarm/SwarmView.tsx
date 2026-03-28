@@ -28,8 +28,10 @@ function convertToLogEntry(event: SwarmEvent): EventLogEntry {
       return { ...base, type: 'wo_failed', woId: event.woId, model: event.model, tier: event.tier, message: `${event.woId} failed: ${event.error.slice(0, 80)}`, severity: 'error' }
     case 'wo_escalated':
       return { ...base, type: 'wo_escalated', woId: event.woId, tier: event.toTier, message: `${event.woId} escalated tier ${event.fromTier}→${event.toTier} (${event.toModel})`, severity: 'warning' }
-    case 'group_completed':
-      return { ...base, type: 'group_completed', message: `Group ${event.groupId} ${event.status} (${event.completedWos} done, ${event.failedWos} failed, ${event.totalDurationSeconds.toFixed(0)}s)`, severity: event.status === 'completed' ? 'success' : 'error' }
+    case 'group_completed': {
+      const severity: 'success' | 'error' = event.status === 'completed' ? 'success' : 'error'
+      return { ...base, type: 'group_completed', message: `Group ${event.groupId} ${event.status} (${event.completedWos} done, ${event.failedWos} failed, ${event.totalDurationSeconds.toFixed(0)}s)`, severity }
+    }
   }
 }
 
