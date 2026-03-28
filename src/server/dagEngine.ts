@@ -1495,6 +1495,52 @@ export function createDAGEngine(
   /**
    * Monitor a running step for completion.
    */
+
+  /**
+   * Process review_routing_validation checks for a native_step.
+   * Extracted from monitorStep to reduce nesting depth.
+   */
+  function processReviewRoutingValidation(
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+    run: WorkflowRun,
+    condCtx: ConditionContext,
+    checkResults: Array<{ name: string; passed: boolean; message?: string }>,
+  ): { paused: boolean } {
+    const rrv = stepDef.review_routing_validation
+    if (!rrv) return { paused: false }
+
+    let rrvEnabled = true
+    if (rrv.when) {
+      rrvEnabled = evaluateExpressionForChecks(rrv.when, condCtx)
+    }
+    if (!rrvEnabled || !rrv.checks) return { paused: false }
+
+    let paused = false
+    for (const rrvCheck of rrv.checks) {
+      if (!rrvCheck.check) continue
+
+      const exprResult = evaluateExpressionForChecks(rrvCheck.check, condCtx)
+      if (exprResult) {
+        checkResults.push({ name: rrvCheck.name, passed: true })
+        continue
+      }
+
+      const failAction = rrvCheck.on_failure?.action ?? 'pause'
+      const failMsg = rrvCheck.on_failure?.message ?? `review routing check "${rrvCheck.name}" failed`
+      checkResults.push({ name: rrvCheck.name, passed: false, message: failMsg })
+      if (failAction === 'fail') {
+        stepState.status = 'failed'
+        stepState.errorMessage = failMsg
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        break
+      }
+      paused = true
+    }
+    return { paused }
+  }
+
   function monitorStep(
     run: WorkflowRun,
     stepDef: WorkflowStep,
@@ -1865,33 +1911,10 @@ export function createDAGEngine(
           }
 
           // Process review_routing_validation if present
-          if (stepDef.review_routing_validation && !stepState.status?.startsWith('failed')) {
-            const rrv = stepDef.review_routing_validation
-            let rrvEnabled = true
-            if (rrv.when) {
-              rrvEnabled = evaluateExpressionForChecks(rrv.when, condCtx)
-            }
-            if (rrvEnabled && rrv.checks) {
-              for (const rrvCheck of rrv.checks) {
-                if (rrvCheck.check) {
-                  const exprResult = evaluateExpressionForChecks(rrvCheck.check, condCtx)
-                  if (!exprResult) {
-                    const failAction = rrvCheck.on_failure?.action ?? 'pause'
-                    const failMsg = rrvCheck.on_failure?.message ?? `review routing check "${rrvCheck.name}" failed`
-                    checkResults.push({ name: rrvCheck.name, passed: false, message: failMsg })
-                    if (failAction === 'fail') {
-                      stepState.status = 'failed'
-                      stepState.errorMessage = failMsg
-                      stepState.completedAt = new Date().toISOString()
-                      saveAndBroadcast(run)
-                      break
-                    }
-                    paused = true
-                  } else {
-                    checkResults.push({ name: rrvCheck.name, passed: true })
-                  }
-                }
-              }
+          if (!stepState.status?.startsWith('failed')) {
+            const rrvResult = processReviewRoutingValidation(stepDef, stepState, run, condCtx, checkResults)
+            if (rrvResult.paused) {
+              paused = true
             }
           }
 
