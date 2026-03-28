@@ -105,8 +105,8 @@ export class CronManager {
     try {
       const text = await Bun.file('/etc/crontab').text()
       jobs.push(...this.parseCrontabLines(text, 'system-crontab', true))
-    } catch {
-      // ENOENT or EACCES — skip silently
+    } catch (err) {
+      console.error('[CronManager] Failed to read /etc/crontab:', err)
     }
 
     // Parse /etc/cron.d/*
@@ -116,12 +116,12 @@ export class CronManager {
         try {
           const text = await Bun.file(filePath).text()
           jobs.push(...this.parseCrontabLines(text, 'system-crontab', true))
-        } catch {
-          // Skip unreadable files
+        } catch (err) {
+          console.error(`[CronManager] Failed to read ${filePath}:`, err)
         }
       }
-    } catch {
-      // /etc/cron.d may not exist
+    } catch (err) {
+      console.error('[CronManager] Failed to scan /etc/cron.d:', err)
     }
 
     return jobs
@@ -212,8 +212,8 @@ export class CronManager {
             linkedSessionId: null,
           }
           jobs.push(job)
-        } catch {
-          // Skip individual timer errors
+        } catch (err) {
+          console.error(`[CronManager] Failed to process timer ${unitName}:`, err)
         }
       }
       return jobs
