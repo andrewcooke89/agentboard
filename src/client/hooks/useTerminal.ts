@@ -71,8 +71,8 @@ class SafeClipboardProvider implements IClipboardProvider {
     if (selection !== 'c' || !text?.trim()) return
     try {
       await navigator.clipboard.writeText(text)
-    } catch {
-      // Clipboard write failed (permissions, etc.)
+    } catch (error) {
+      console.error('Clipboard write failed:', error)
     }
   }
 }
@@ -511,8 +511,8 @@ export function useTerminal({
       if (webglAddonRef.current) {
         try {
           webglAddonRef.current.dispose()
-        } catch {
-          // Ignore
+        } catch (error) {
+          console.error('WebGL addon disposal failed:', error)
         }
         webglAddonRef.current = null
       }
