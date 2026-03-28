@@ -6,7 +6,6 @@
 import { describe, it, expect, afterEach, mock } from 'bun:test'
 import type {
   CronJob,
-  CronJobDetail,
   UiContext,
   ScheduleConflict,
   ScheduleLoadAnalysis,
