@@ -232,7 +232,8 @@ function parseYamlFile(filePath: string): WoFile | null {
       return result as unknown as WoFile
     }
     return null
-  } catch {
+  } catch (e) {
+    console.error('Error parsing YAML file:', e)
     return null
   }
 }
@@ -293,8 +294,9 @@ export function registerWoRoutes(app: Hono): void {
           if (wo) results.push(wo)
         }
       }
-    } catch {
+    } catch (e) {
       // Directory might not exist yet
+      console.error('Error listing work orders:', e)
     }
 
     return c.json({ work_orders: results, count: results.length })
@@ -328,8 +330,8 @@ export function registerWoRoutes(app: Hono): void {
           return c.json({ ...wo, raw_yaml: content })
         }
       }
-    } catch {
-      // Directory might not exist
+    } catch (e) {
+      console.error('Error reading work order:', e)
     }
 
     return c.json({ error: `Work order ${woId} not found` }, 404)
@@ -348,8 +350,8 @@ export function registerWoRoutes(app: Hono): void {
           return c.json({ deleted: woId, group })
         }
       }
-    } catch {
-      // Directory might not exist
+    } catch (e) {
+      console.error('Error deleting work order:', e)
     }
 
     return c.json({ error: `Work order ${woId} not found` }, 404)
@@ -465,7 +467,7 @@ export function registerWoRoutes(app: Hono): void {
           try {
             record.result = JSON.parse(stdout)
           } catch {
-            // stdout wasn't valid JSON
+            record.result = { raw_output: stdout }
           }
         }
       })
