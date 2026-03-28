@@ -1020,8 +1020,8 @@ process.on('exit', (code) => {
       }
       const finalPath = path.join(signalDir, 'implement_completed.yaml')
       fs.writeFileSync(finalPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
-    } catch {
-      // best-effort
+    } catch (e) {
+      throw e
     }
   }
 })
