@@ -579,8 +579,8 @@ export default function App() {
       if (typedMessage.type === 'ticket-update') {
         useTicketStore.getState().handleTicketUpdate((typedMessage as any).ticket, (typedMessage as any).action)
       }
-      if (typedMessage.type === 'stats-update') {
-        useStatsStore.getState().setStats((typedMessage as { stats: DashboardStats }).stats)
+      if (message.type === 'stats-update') {
+        useStatsStore.getState().setStats(message.stats)
       }
 
       // Phase 15: Step paused (REQ-32)
