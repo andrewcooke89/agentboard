@@ -49,24 +49,22 @@ export interface SessionPool {
  * 2. AGENTBOARD_SESSION_POOL_SIZE env var
  * 3. Default: 2
  */
+function getPoolSizeFromProfile(projectDir: string): number | null {
+  const profilePath = path.join(projectDir, 'project_profile.yaml')
+  if (!fs.existsSync(profilePath)) return null
+  
+  const content = fs.readFileSync(profilePath, 'utf-8')
+  const profile = yaml.load(content) as any
+  const size = Number(profile?.machine_capacity?.session_pool_size)
+  
+  return Number.isFinite(size) && size > 0 ? Math.floor(size) : null
+}
+
 export function resolvePoolSize(projectDir?: string): number {
   // Priority 1: Check project_profile.yaml if projectDir is provided
   if (projectDir) {
-    try {
-      const profilePath = path.join(projectDir, 'project_profile.yaml')
-      if (fs.existsSync(profilePath)) {
-        const content = fs.readFileSync(profilePath, 'utf-8')
-        const profile = yaml.load(content) as any
-        if (profile?.machine_capacity?.session_pool_size != null) {
-          const size = Number(profile.machine_capacity.session_pool_size)
-          if (Number.isFinite(size) && size > 0) {
-            return Math.floor(size)
-          }
-        }
-      }
-    } catch (error) {
-      throw error
-    }
+    const size = getPoolSizeFromProfile(projectDir)
+    if (size !== null) return size
   }
 
   // Priority 2: Check environment variable
