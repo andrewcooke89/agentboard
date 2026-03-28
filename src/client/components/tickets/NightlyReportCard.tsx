@@ -46,7 +46,7 @@ export default function NightlyReportCard() {
           </div>
           {r.fix.prs_opened.length > 0 && (
             <div>
-              PRs: {r.fix.prs_opened.map((pr) => (
+              PRs: {r.fix.prs_opened.map((pr, _i) => (
                 <a key={pr} href={pr} target="_blank" rel="noopener" className="text-accent hover:underline ml-1">{pr.split('/').pop()}</a>
               ))}
             </div>
