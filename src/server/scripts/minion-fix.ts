@@ -51,6 +51,36 @@ interface CliArgs {
   dryRun: boolean
 }
 
+interface NightlyReport {
+  date: string
+  project: string
+  startedAt: string
+  completedAt: string
+  durationMinutes: number
+  detect: {
+    detectors_run: string[]
+    findings_total: number
+    tickets_created: number
+    tickets_stale_resolved: number
+  }
+  fix: {
+    cycles: number
+    fixed: number
+    failed: number
+    skipped_blocked: number
+    small: { dispatched: number; succeeded: number; failed: number }
+    medium: { dispatched: number; succeeded: number; failed: number }
+    prs_opened: string[]
+  }
+  backlog: {
+    total_open: number
+    by_effort: Record<string, number>
+    by_category: Record<string, number>
+    blocked: number
+  }
+  notable_failures: Array<{ ticket_id: string; title: string; reason: string }>
+}
+
 // ─── CLI Parsing ─────────────────────────────────────────────────────────────
 
 function parseArgs(): CliArgs {
@@ -223,8 +253,8 @@ async function fixViaSwarm(
     const { dispatch_id } = await dispatchResp.json() as { dispatch_id: string }
     console.log(`[minion-fix] Dispatched group ${groupId} as ${dispatch_id}`)
 
-    // Poll dispatch until complete (60 min timeout)
-    const deadline = Date.now() + 60 * 60 * 1000
+    // Poll dispatch until complete (90 min timeout — relaxed for batches of 8)
+    const deadline = Date.now() + 90 * 60 * 1000
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 15_000))
       const statusResp = await fetch(`${apiUrl}/api/wo/dispatch/${dispatch_id}`)
@@ -274,7 +304,7 @@ async function fixViaPlanDispatch(
 
   const result = Bun.spawnSync(
     ['bun', 'run', scriptPath, '--ticket-id', ticket.id, '--project', project.path, '--api-url', apiUrl],
-    { cwd: project.path, stdout: 'pipe', stderr: 'pipe', timeout: 3_600_000_000_000 },
+    { cwd: project.path, stdout: 'pipe', stderr: 'pipe', timeout: 45 * 60 * 1000 }, // 45 min — generous for plan+execute
   )
 
   if (result.exitCode === 0) {
@@ -288,6 +318,18 @@ async function fixViaPlanDispatch(
   return false
 }
 
+// ─── Stuck Ticket Detection ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Count failure notes on a ticket (notes containing 'fix failed' or 'dispatch failed') */
+function countFailureNotes(ticket: Ticket): number {
+  if (!ticket.notes || ticket.notes.length === 0) return 0
+  return ticket.notes.filter(n =>
+    n.content.includes('fix failed') || n.content.includes('dispatch failed')
+  ).length
+}
+
+const STUCK_THRESHOLD = 3
+
 // ─── Ticket Fetching ────────────────────────────────────────────────────────
 
 /** Fetch the next batch of eligible tickets, split by effort */
@@ -295,7 +337,7 @@ function fetchTickets(
   storage: FileStorage,
   autoMergeEfforts: Set<string>,
   smallLimit: number,
-): { small: Ticket[]; medium: Ticket[] } {
+): { small: Ticket[]; medium: Ticket[]; skippedBlocked: number } {
   const listResult = storage.listTickets({
     status: 'open',
     sort_by: 'severity',
@@ -306,11 +348,23 @@ function fetchTickets(
 
   const small: Ticket[] = []
   const medium: Ticket[] = []
+  let skippedBlocked = 0
 
   for (const summary of listResult.tickets) {
     const full = storage.getTicket(summary.id)
     if (!full) continue
     if (full.found_by !== 'minion-detect' && !full.found_by?.includes('minion')) continue
+
+    // Stuck ticket detection: auto-block after 3+ failures with no source change
+    if (countFailureNotes(full) >= STUCK_THRESHOLD) {
+      try {
+        storage.transitionTicket(full.id, 'in-progress', {
+          reason: `Auto-blocked: failed ${countFailureNotes(full)} times with no source change`
+        })
+      } catch { /* already transitioned */ }
+      skippedBlocked++
+      continue
+    }
 
     if (autoMergeEfforts.has(full.effort)) {
       if (small.length < smallLimit) small.push(full)
@@ -319,7 +373,7 @@ function fetchTickets(
     }
   }
 
-  return { small, medium }
+  return { small, medium, skippedBlocked }
 }
 
 // ─── Iterative Processing Loop ──────────────────────────────────────────────
@@ -327,7 +381,7 @@ function fetchTickets(
 async function processProject(
   project: ProjectConfig,
   args: CliArgs,
-): Promise<{ fixed: number; failed: number; cycles: number }> {
+): Promise<{ fixed: number; failed: number; cycles: number; report: NightlyReport }> {
   const projectPath = project.path
   const tag = `[minion-fix][${path.basename(projectPath)}]`
   const autoMergeEfforts = new Set(project.auto_merge_efforts ?? ['small'])
@@ -342,6 +396,12 @@ async function processProject(
   let cycle = 0
   let fixBranchCreated = false
   const prCommitMessages: string[] = []
+  const smallStats = { dispatched: 0, succeeded: 0, failed: 0 }
+  const mediumStats = { dispatched: 0, succeeded: 0, failed: 0 }
+  let skippedBlocked = 0
+  const notableFailures: Array<{ ticket_id: string; title: string; reason: string }> = []
+  const prsOpened: string[] = []
+  const startedAt = new Date().toISOString()
 
   while (!pastDeadline(args)) {
     cycle++
@@ -349,7 +409,8 @@ async function processProject(
     console.log(`\n${tag} ── Cycle ${cycle} (${now}) ──`)
 
     // Re-fetch tickets each cycle (resolved ones disappear, new detections appear)
-    const { small, medium } = fetchTickets(storage, autoMergeEfforts, args.smallBatch)
+    const { small, medium, skippedBlocked: blocked } = fetchTickets(storage, autoMergeEfforts, args.smallBatch)
+    skippedBlocked += blocked
     const remaining = small.length + medium.length
 
     if (remaining === 0) {
@@ -376,6 +437,7 @@ async function processProject(
       console.log(`${tag} Dispatching ${small.length} small ticket(s) as group ${groupId}`)
 
       const swarmResults = await fixViaSwarm(small, project, args.apiUrl, groupId)
+      smallStats.dispatched += small.length
 
       for (const ticket of small) {
         const success = swarmResults.get(ticket.id) ?? false
@@ -383,12 +445,17 @@ async function processProject(
           storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-fix-swarm' })
           console.log(`${tag} Resolved ${ticket.id}`)
           fixed++
+          smallStats.succeeded++
         } else {
           // Mark as in-progress so we don't retry it next cycle
           // (it'll get swept back to open by staleness sweep if the code changes)
           try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'swarm fix failed, skipping for tonight' }) } catch { /* already transitioned */ }
           console.log(`${tag} Failed ${ticket.id}, skipping for tonight`)
           failed++
+          smallStats.failed++
+          if (notableFailures.length < 10) {
+            notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'swarm fix failed' })
+          }
         }
       }
     }
@@ -417,6 +484,7 @@ async function processProject(
 
       if (fixBranchCreated) {
         console.log(`${tag} Plan-dispatching medium ticket ${ticket.id}`)
+        mediumStats.dispatched++
         const success = await fixViaPlanDispatch(ticket, project, args.apiUrl)
 
         if (success) {
@@ -424,10 +492,15 @@ async function processProject(
           prCommitMessages.push(`- ${ticket.id}: ${ticket.title}`)
           console.log(`${tag} Resolved ${ticket.id} via plan-dispatch`)
           fixed++
+          mediumStats.succeeded++
         } else {
           try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'plan-dispatch failed, skipping for tonight' }) } catch { /* already transitioned */ }
           console.log(`${tag} Plan-dispatch failed for ${ticket.id}`)
           failed++
+          mediumStats.failed++
+          if (notableFailures.length < 10) {
+            notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'plan-dispatch failed' })
+          }
         }
       }
     }
@@ -455,6 +528,7 @@ async function processProject(
         if (pr.exitCode === 0) {
           const prUrl = pr.stdout.toString().trim()
           console.log(`${tag} PR created: ${prUrl}`)
+          prsOpened.push(prUrl)
           try {
             Bun.spawnSync(['gh', 'pr', 'merge', '--auto', '--squash', prUrl], { cwd: projectPath })
           } catch { /* auto-merge not available */ }
@@ -476,7 +550,85 @@ async function processProject(
   }
 
   console.log(`\n${tag} Summary: ${fixed} fixed, ${failed} failed, ${cycle} cycles`)
-  return { fixed, failed, cycles: cycle }
+
+  // ── Generate nightly report ───────────────────────────────────────────────────────────────────
+  const reportDir = path.join(process.env.HOME ?? '/root', '.agentboard', 'reports')
+  fs.mkdirSync(reportDir, { recursive: true })
+
+  // Try to read detect summary from earlier phase
+  let detectSummary = { detectors_run: [] as string[], findings_total: 0, tickets_created: 0, tickets_stale_resolved: 0 }
+  const projectSlug = path.basename(projectPath)
+  const detectFile = path.join(reportDir, `detect-${today}-${projectSlug}.json`)
+  try {
+    if (fs.existsSync(detectFile)) {
+      detectSummary = JSON.parse(fs.readFileSync(detectFile, 'utf8'))
+    }
+  } catch { /* ignore */ }
+
+  // Get backlog stats
+  const stats = storage.getStats()
+  const byEffort: Record<string, number> = {}
+  const byCategory: Record<string, number> = {}
+  const openTickets = storage.listTickets({ status: 'open', limit: 1000, offset: 0, sort_by: 'created', sort_order: 'desc' })
+  for (const t of openTickets.tickets) {
+    const full = storage.getTicket(t.id)
+    if (full) {
+      byEffort[full.effort] = (byEffort[full.effort] ?? 0) + 1
+      byCategory[full.category] = (byCategory[full.category] ?? 0) + 1
+    }
+  }
+  const inProgressTickets = storage.listTickets({ status: 'in-progress', limit: 1000, offset: 0, sort_by: 'created', sort_order: 'desc' })
+  let blockedCount = 0
+  for (const t of inProgressTickets.tickets) {
+    const full = storage.getTicket(t.id)
+    if (full?.notes?.some(n => n.content.includes('Auto-blocked'))) blockedCount++
+  }
+
+  const completedAt = new Date().toISOString()
+  const durationMinutes = Math.round((new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 60_000)
+
+  const report: NightlyReport = {
+    date: today,
+    project: projectPath,
+    startedAt,
+    completedAt,
+    durationMinutes,
+    detect: detectSummary,
+    fix: {
+      cycles: cycle,
+      fixed,
+      failed,
+      skipped_blocked: skippedBlocked,
+      small: smallStats,
+      medium: mediumStats,
+      prs_opened: prsOpened,
+    },
+    backlog: {
+      total_open: openTickets.total,
+      by_effort: byEffort,
+      by_category: byCategory,
+      blocked: blockedCount,
+    },
+    notable_failures: notableFailures.slice(0, 10),
+  }
+
+  const reportPath = path.join(reportDir, `nightly-${today}.json`)
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2))
+  console.log(`${tag} Report written to ${reportPath}`)
+
+  // Try to POST report to agentboard server for WS broadcast
+  try {
+    await fetch(`${args.apiUrl}/api/nightly/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    })
+    console.log(`${tag} Report posted to agentboard`)
+  } catch (err) {
+    console.log(`${tag} Failed to post report: ${err}`)
+  }
+
+  return { fixed, failed, cycles: cycle, report }
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -503,6 +655,7 @@ async function main(): Promise<void> {
     totalFixed += fixed
     totalFailed += failed
   }
+  // Note: each processProject() writes its own nightly report to ~/.agentboard/reports/
 
   console.log(`[minion-fix] Done — total: ${totalFixed} fixed, ${totalFailed} failed`)
 }
