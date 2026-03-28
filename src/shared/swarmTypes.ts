@@ -23,6 +23,7 @@ export interface WoStatusChangedEvent {
   model: string
   tier: number
   newStatus: string
+  attempt: number
 }
 
 export interface WoCompletedEvent {
@@ -60,6 +61,7 @@ export interface WoEscalatedEvent {
   fromTier: number
   toTier: number
   toModel: string
+  errorHistory: ErrorHistoryEntry[]
 }
 
 export interface GroupCompletedEvent {
