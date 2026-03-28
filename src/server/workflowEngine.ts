@@ -87,7 +87,11 @@ export function createWorkflowEngine(
     if (run.variables && Object.keys(run.variables).length > 0) {
       try {
         return substituteVariables(parsed.steps, run.variables)
-      } catch {
+      } catch (err) {
+        ctx.logger.warn('workflow_variable_substitution_failed', {
+          runId: run.id,
+          error: String(err),
+        })
         return null // Substitution failed (e.g., path traversal) — treated as unparseable
       }
     }
