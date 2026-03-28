@@ -120,8 +120,8 @@ export function createTerminalHandlers(
         return null
       }
       return output
-    } catch {
-      return null
+    } catch (e) {
+      throw e
     }
   }
 
@@ -251,8 +251,8 @@ export function createTerminalHandlers(
           stdout: 'pipe',
           stderr: 'pipe',
         })
-      } catch {
-        // Ignore errors - copy-mode may not be active
+      } catch (error) {
+        console.error('Failed to cancel copy-mode:', error)
       }
     },
 
