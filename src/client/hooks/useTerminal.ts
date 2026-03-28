@@ -518,8 +518,8 @@ export function useTerminal({
       }
       try {
         terminal.dispose()
-      } catch {
-        // Ignore
+      } catch (error) {
+        console.error('Terminal disposal failed:', error)
       }
       if (container) {
         container.innerHTML = ''
