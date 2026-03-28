@@ -1,3 +1,5 @@
+import type { DashboardStats } from './dashboardTypes'
+
 export type SessionStatus = 'working' | 'waiting' | 'permission' | 'unknown'
 
 export type SessionSource = 'managed' | 'external'
@@ -135,7 +137,7 @@ export type ServerMessage =
   | { type: 'cron-ai-context-update'; context: UiContext }
   | { type: 'cron-ai-proposal-resolved'; id: string; status: CronAiProposal['status']; feedback?: string }
   | { type: 'cron-ai-mcp-register'; success: boolean }
-  | { type: 'stats-update'; stats: import('./dashboardTypes').DashboardStats }
+  | { type: 'stats-update'; stats: DashboardStats }
   | { type: 'nightly-report'; report: Record<string, unknown> }
   | { type: 'ticket-update'; ticket: { id: string; status: string }; action: string }
 
