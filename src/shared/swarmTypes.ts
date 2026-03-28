@@ -46,6 +46,8 @@ export interface WoFailedEvent {
   model: string
   tier: number
   error: string
+  attempt: number
+  gateDetail: string | null
 }
 
 export interface WoEscalatedEvent {
