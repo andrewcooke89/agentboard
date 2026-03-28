@@ -701,36 +701,36 @@ export default function Terminal({
       }
 
       const minVelocity = 0.12 // pixels per ms
-      if (Math.abs(endVelocity) > minVelocity) {
-        let currentVelocity = endVelocity
-        let lastFrameTime = performance.now()
+      if (Math.abs(endVelocity) <= minVelocity) return
 
-        const animateMomentum = () => {
-          const now = performance.now()
-          const deltaTime = now - lastFrameTime
-          lastFrameTime = now
+    const animateMomentum = () => {
+      const now = performance.now()
+      const deltaTime = now - lastFrameTime
+      lastFrameTime = now
 
-          const distance = currentVelocity * deltaTime
-          accumulatedDelta += distance
-          const threshold = Math.max(6, lineHeightPx * 0.6)
-          const scrollEvents = Math.trunc(accumulatedDelta / threshold)
-          if (scrollEvents !== 0) {
-            sendScrollToTmux(scrollEvents)
-            accumulatedDelta -= scrollEvents * threshold
-          }
+      const distance = currentVelocity * deltaTime
+      accumulatedDelta += distance
+      const threshold = Math.max(6, lineHeightPx * 0.6)
+      const scrollEvents = Math.trunc(accumulatedDelta / threshold)
+      if (scrollEvents !== 0) {
+        sendScrollToTmux(scrollEvents)
+        accumulatedDelta -= scrollEvents * threshold
+      }
 
-          currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
+      currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
 
-          if (Math.abs(currentVelocity) > 0.02) {
-            momentumAnimationId = requestAnimationFrame(animateMomentum)
-          } else {
-            momentumAnimationId = null
-          }
-        }
-
+      if (Math.abs(currentVelocity) > 0.02) {
         momentumAnimationId = requestAnimationFrame(animateMomentum)
+      } else {
+        momentumAnimationId = null
       }
     }
+
+    let currentVelocity = endVelocity
+    let lastFrameTime = performance.now()
+
+    momentumAnimationId = requestAnimationFrame(animateMomentum)
+  }
 
     // Swallow synthetic mouse events after iOS selection dismissal to protect tmux
     const handleMouseDown = (e: MouseEvent) => {
