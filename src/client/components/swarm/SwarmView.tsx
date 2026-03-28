@@ -4,13 +4,13 @@ import DagGraph from './DagGraph'
 import GroupProgress from './GroupProgress'
 import WoDetail from './WoDetail'
 import EventLog from './EventLog'
-import type { EventLogEntry } from '../../shared/dashboardTypes'
+import type { EventLogEntry, BaseEventLogEntry } from '../../shared/dashboardTypes'
 import type { SwarmEvent } from '../../shared/swarmTypes'
 
 function convertToLogEntry(event: SwarmEvent): EventLogEntry {
-  const base = {
+  const base: Omit<BaseEventLogEntry, 'type' | 'message' | 'severity'> = {
     id: `${event.groupId}-${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
-    timestamp: String(event.timestamp),
+    timestamp: Number(event.timestamp),
     groupId: event.groupId,
   }
 
