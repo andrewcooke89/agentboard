@@ -179,8 +179,8 @@ async function gatherCodebaseSource(projectPath: string, maxFiles: number): Prom
   try {
     const structure = await getDirectoryStructure(projectPath, 3)
     sections.push(`## Directory Structure\n\n\`\`\`\n${structure}\n\`\`\`\n`)
-  } catch {
-    // Directory access failed
+  } catch (e) {
+    logger.error('directory_access_failed', { error: e })
   }
 
   // MED-004: Use async fs.promises for file operations
