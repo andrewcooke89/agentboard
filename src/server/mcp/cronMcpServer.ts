@@ -353,7 +353,9 @@ async function createMcpServer(): Promise<void> {
     if (trimmed) {
       try {
         const req = JSON.parse(trimmed) as JsonRpcRequest
-        handleRequest(req).catch(() => {})
+        handleRequest(req).catch((err) => {
+          process.stderr.write(`[cron-mcp] Unhandled error: ${err}\n`)
+        })
       } catch {
         // ignore parse errors at EOF
       }
