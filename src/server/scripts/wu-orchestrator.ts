@@ -77,6 +77,38 @@ interface VerifyResult {
   message: string
 }
 
+interface OrchestratorState {
+  testContext: TestContext | null
+  sorted: WorkUnit[]
+  specExcerpt: string
+  baseline: TestBaseline
+}
+
+interface TestWriterResult {
+  testTaskId: string | null
+  passed: boolean
+}
+
+interface ImplResult {
+  implTaskId: string | null
+  greenPassed: boolean
+  retries: number
+  greenMessage: string
+}
+
+interface EscalationResult {
+  passed: boolean
+  taskId: string | null
+  greenMessage: string
+  escalatedTo: string
+}
+
+// ─── Module-Level Constants ─────────────────────────────────────────────────
+
+const MAX_IMPL_RETRIES = 2
+const MAX_RATE_LIMIT_RETRIES = 5
+const RATE_LIMIT_BASE_DELAY_MS = 30_000 // 30s, doubles each retry (30s, 60s, 120s, 240s, 480s)
+
 // ─── CLI Argument Parsing ───────────────────────────────────────────────────
 
 function parseArgs(): Config {
@@ -613,12 +645,9 @@ function writeSignalFile(outputDir: string, verdict: string, runId: string): voi
   console.log(`[signal] Wrote implement_completed.yaml (signal_type=${signal.signal_type})`)
 }
 
-// ─── Main ───────────────────────────────────────────────────────────────────
+// ─── Orchestrator Helpers ────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-  const config = parseArgs()
-  signalDir = path.join(config.outputDir, 'signals')
-
+async function initializeOrchestrator(config: Config): Promise<OrchestratorState> {
   // Load project profile for test context and model routing
   const profile = loadProjectProfileRaw(config.projectPath)
   const testContext = extractTestContext(profile)
@@ -682,7 +711,7 @@ async function main(): Promise<void> {
 
   // 4. Capture global test baseline
   console.log('[baseline] Capturing initial test baseline...')
-  let baseline = await captureTestBaseline(config.testDir, config.testCommand)
+  const baseline = await captureTestBaseline(config.testDir, config.testCommand)
   console.log(
     `[baseline] ${baseline.totalTests} tests: ${baseline.passing} pass, ${baseline.failing} fail, ${baseline.skipped} skip, ${baseline.errors} error(s) [exit=${baseline.exitCode}]`,
   )
@@ -695,285 +724,211 @@ async function main(): Promise<void> {
   }
   console.log()
 
-  // 5. Process each WU in sorted order
-  const results: WUResult[] = []
-  const MAX_IMPL_RETRIES = 2
-  const MAX_RATE_LIMIT_RETRIES = 5
-  const RATE_LIMIT_BASE_DELAY_MS = 30_000 // 30s, doubles each retry (30s, 60s, 120s, 240s, 480s)
+  return { testContext, sorted, specExcerpt, baseline }
+}
 
-  for (const wu of sorted) {
-    console.log(`=== WU ${wu.id}: ${wu.scope} ===`)
+async function runTestWriterPhase(
+  wu: WorkUnit,
+  config: Config,
+  wuYaml: string,
+  specExcerpt: string,
+  testContext: TestContext | null,
+): Promise<TestWriterResult> {
+  let testTaskId: string | null = null
+  let testPassed = false
 
-    const wuYaml = readWorkUnitFile(config.outputDir, wu.id)
-    if (!wuYaml) {
-      console.warn(`[${wu.id}] Skipping: no work unit file found`)
-      results.push({
-        id: wu.id,
-        status: 'skipped',
-        testTaskId: null,
-        implTaskId: null,
-        retries: 0,
-        message: 'Work unit file not found',
-      })
+  for (let rlAttempt = 0; rlAttempt <= MAX_RATE_LIMIT_RETRIES; rlAttempt++) {
+    if (rlAttempt > 0) {
+      const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, rlAttempt - 1)
+      await sleepWithLog(wu.id, delay)
+    }
+
+    console.log(`[${wu.id}] Creating test-writer task${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt}/${MAX_RATE_LIMIT_RETRIES})` : ''}...`)
+    try {
+      const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework, testContext)
+      testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt, 3600, config.model)
+      console.log(`[${wu.id}] Test task created: ${testTaskId}`)
+    } catch (err) {
+      console.error(`[${wu.id}] Failed to create test task: ${err}`)
       continue
     }
 
-    // ── Step A: Test Writer (with rate-limit retry) ───────────────────────
-    let testTaskId: string | null = null
-    let testPassed = false
+    console.log(`[${wu.id}] Waiting for test-writer task to complete...`)
+    const testResult = await pollUntilDone(config.apiUrl, testTaskId)
+    if (testResult.status === 'completed') {
+      testPassed = true
+      break
+    }
 
+    // Check if failure was due to rate limiting
+    if (testResult.status === 'failed' && isRateLimitFailure(testResult.outputPath)) {
+      console.warn(`[${wu.id}] Test task rate-limited: ${testTaskId}`)
+      continue // retry with backoff
+    }
+
+    // Non-rate-limit failure — don't retry
+    console.error(`[${wu.id}] Test task ${testResult.status}: ${testTaskId}`)
+    break
+  }
+
+  if (!testPassed) {
+    console.error(`[${wu.id}] Test-writer failed after ${MAX_RATE_LIMIT_RETRIES + 1} attempts`)
+    return { testTaskId, passed: false }
+  }
+  console.log(`[${wu.id}] Test-writer task completed`)
+  return { testTaskId, passed: true }
+}
+
+async function runImplementorPhase(
+  wu: WorkUnit,
+  config: Config,
+  wuYaml: string,
+  specExcerpt: string,
+  baseline: TestBaseline,
+): Promise<ImplResult> {
+  let implTaskId: string | null = null
+  let greenPassed = false
+  let retries = 0
+  let greenMessage = ''
+
+  for (let attempt = 0; attempt <= MAX_IMPL_RETRIES; attempt++) {
+    if (attempt > 0) {
+      console.log(`[${wu.id}] Retry ${attempt}/${MAX_IMPL_RETRIES}...`)
+      retries = attempt
+    }
+
+    // Create implementor task (with rate-limit retry)
+    let implCompleted = false
     for (let rlAttempt = 0; rlAttempt <= MAX_RATE_LIMIT_RETRIES; rlAttempt++) {
       if (rlAttempt > 0) {
         const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, rlAttempt - 1)
         await sleepWithLog(wu.id, delay)
       }
 
-      console.log(`[${wu.id}] Creating test-writer task${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt}/${MAX_RATE_LIMIT_RETRIES})` : ''}...`)
+      console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
       try {
-        const testPrompt = buildTestPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework, testContext)
-        testTaskId = await createTask(config.apiUrl, config.projectPath, testPrompt, 3600, config.model)
-        console.log(`[${wu.id}] Test task created: ${testTaskId}`)
+        let implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+        if (attempt > 0 && greenMessage) {
+          implPrompt += `\n\n## Retry Context\nPrevious attempt failed:\n${greenMessage}\nFix the implementation to make all tests pass.`
+        }
+        implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
+        console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
       } catch (err) {
-        console.error(`[${wu.id}] Failed to create test task: ${err}`)
+        console.error(`[${wu.id}] Failed to create impl task: ${err}`)
+        greenMessage = `Impl task creation failed: ${err}`
         continue
       }
 
-      console.log(`[${wu.id}] Waiting for test-writer task to complete...`)
-      const testResult = await pollUntilDone(config.apiUrl, testTaskId)
-      if (testResult.status === 'completed') {
-        testPassed = true
+      console.log(`[${wu.id}] Waiting for implementor task to complete...`)
+      const implResult = await pollUntilDone(config.apiUrl, implTaskId)
+      if (implResult.status === 'completed') {
+        implCompleted = true
         break
       }
 
-      // Check if failure was due to rate limiting
-      if (testResult.status === 'failed' && isRateLimitFailure(testResult.outputPath)) {
-        console.warn(`[${wu.id}] Test task rate-limited: ${testTaskId}`)
+      if (implResult.status === 'failed' && isRateLimitFailure(implResult.outputPath)) {
+        console.warn(`[${wu.id}] Impl task rate-limited: ${implTaskId}`)
         continue // retry with backoff
       }
 
-      // Non-rate-limit failure — don't retry
-      console.error(`[${wu.id}] Test task ${testResult.status}: ${testTaskId}`)
+      console.error(`[${wu.id}] Impl task ${implResult.status}: ${implTaskId}`)
+      greenMessage = `Impl task ${implResult.status}`
       break
     }
 
-    if (!testPassed) {
-      console.error(`[${wu.id}] Test-writer failed after ${MAX_RATE_LIMIT_RETRIES + 1} attempts`)
-      results.push({
-        id: wu.id,
-        status: 'fail',
-        testTaskId,
-        implTaskId: null,
-        retries: 0,
-        message: 'Test task failed (rate limit exhausted)',
-      })
-      continue
+    if (!implCompleted) {
+      greenMessage = greenMessage || 'Impl task failed (rate limit exhausted)'
+      continue // next impl retry attempt
     }
-    console.log(`[${wu.id}] Test-writer task completed`)
+    console.log(`[${wu.id}] Implementor task completed`)
 
-    // ── Step B: Verify RED ───────────────────────────────────────────────
-    console.log(`[${wu.id}] Verifying RED (new test failures expected)...`)
-    const redResult = await verifyRed(config.testDir, config.testCommand, baseline)
-    console.log(`[${wu.id}] ${redResult.message}`)
-    if (!redResult.pass) {
-      console.warn(`[${wu.id}] RED verification failed, continuing anyway`)
+    // Shift-left: auto-fix lint + typecheck before running tests
+    console.log(`[${wu.id}] Running shift-left lint + typecheck...`)
+    const lintResult = shiftLeftLint(config.projectPath, wu.id)
+    console.log(`[${wu.id}] ${lintResult.message}`)
+    if (!lintResult.pass) {
+      greenMessage = lintResult.message
+      continue // skip expensive test suite, go to next impl retry
     }
 
-    // ── Step C+D: Implementor with retries ───────────────────────────────
-    let implTaskId: string | null = null
-    let greenPassed = false
-    let retries = 0
-    let greenMessage = ''
+    // Verify GREEN
+    console.log(`[${wu.id}] Verifying GREEN (no new failures expected)...`)
+    const greenResult = await verifyGreen(config.testDir, config.testCommand, baseline)
+    console.log(`[${wu.id}] ${greenResult.message}`)
+    greenMessage = greenResult.message
 
-    for (let attempt = 0; attempt <= MAX_IMPL_RETRIES; attempt++) {
-      if (attempt > 0) {
-        console.log(`[${wu.id}] Retry ${attempt}/${MAX_IMPL_RETRIES}...`)
-        retries = attempt
-      }
-
-      // Create implementor task (with rate-limit retry)
-      let implCompleted = false
-      for (let rlAttempt = 0; rlAttempt <= MAX_RATE_LIMIT_RETRIES; rlAttempt++) {
-        if (rlAttempt > 0) {
-          const delay = RATE_LIMIT_BASE_DELAY_MS * Math.pow(2, rlAttempt - 1)
-          await sleepWithLog(wu.id, delay)
-        }
-
-        console.log(`[${wu.id}] Creating implementor task (attempt ${attempt + 1})${rlAttempt > 0 ? ` (rate-limit retry ${rlAttempt})` : ''}...`)
-        try {
-          let implPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
-          if (attempt > 0 && greenMessage) {
-            implPrompt += `\n\n## Retry Context\nPrevious attempt failed:\n${greenMessage}\nFix the implementation to make all tests pass.`
-          }
-          implTaskId = await createTask(config.apiUrl, config.projectPath, implPrompt, 3600, config.model)
-          console.log(`[${wu.id}] Impl task created: ${implTaskId}`)
-        } catch (err) {
-          console.error(`[${wu.id}] Failed to create impl task: ${err}`)
-          greenMessage = `Impl task creation failed: ${err}`
-          continue
-        }
-
-        console.log(`[${wu.id}] Waiting for implementor task to complete...`)
-        const implResult = await pollUntilDone(config.apiUrl, implTaskId)
-        if (implResult.status === 'completed') {
-          implCompleted = true
-          break
-        }
-
-        if (implResult.status === 'failed' && isRateLimitFailure(implResult.outputPath)) {
-          console.warn(`[${wu.id}] Impl task rate-limited: ${implTaskId}`)
-          continue // retry with backoff
-        }
-
-        console.error(`[${wu.id}] Impl task ${implResult.status}: ${implTaskId}`)
-        greenMessage = `Impl task ${implResult.status}`
-        break
-      }
-
-      if (!implCompleted) {
-        greenMessage = greenMessage || 'Impl task failed (rate limit exhausted)'
-        continue // next impl retry attempt
-      }
-      console.log(`[${wu.id}] Implementor task completed`)
-
-      // Shift-left: auto-fix lint + typecheck before running tests
-      console.log(`[${wu.id}] Running shift-left lint + typecheck...`)
-      const lintResult = shiftLeftLint(config.projectPath, wu.id)
-      console.log(`[${wu.id}] ${lintResult.message}`)
-      if (!lintResult.pass) {
-        greenMessage = lintResult.message
-        continue // skip expensive test suite, go to next impl retry
-      }
-
-      // Verify GREEN
-      console.log(`[${wu.id}] Verifying GREEN (no new failures expected)...`)
-      const greenResult = await verifyGreen(config.testDir, config.testCommand, baseline)
-      console.log(`[${wu.id}] ${greenResult.message}`)
-      greenMessage = greenResult.message
-
-      if (greenResult.pass) {
-        greenPassed = true
-        break
-      }
+    if (greenResult.pass) {
+      greenPassed = true
+      break
     }
-
-    if (greenPassed) {
-      console.log(`[${wu.id}] PASS`)
-      results.push({
-        id: wu.id,
-        status: 'pass',
-        testTaskId,
-        implTaskId,
-        retries,
-        message: greenMessage,
-      })
-      // Commit passing WU
-      const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
-      console.log(`[${wu.id}] ${commitResult.message}`)
-
-      // Update baseline to incorporate new tests
-      console.log(`[${wu.id}] Updating baseline...`)
-      baseline = await captureTestBaseline(config.testDir, config.testCommand)
-      console.log(
-        `[${wu.id}] New baseline: ${baseline.totalTests} tests, ${baseline.passing} pass, ${baseline.failing} fail`,
-      )
-    } else if (shouldEscalate(config.model, retries + 1)) {
-      // ── Escalation: GLM exhausted retries, try with a stronger model ────
-      const escalatedModel = getEscalatedModel(config.model)
-      if (escalatedModel && escalatedModel !== 'human') {
-        console.log(`[${wu.id}] Escalating from '${config.model}' to '${escalatedModel}'...`)
-
-        const escalationPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
-          + `\n\n## Escalation Context\nPrevious ${retries + 1} attempt(s) with '${config.model}' failed.\nLast error: ${greenMessage}\nFix the implementation to make all tests pass.`
-
-        let escalationPassed = false
-        let escalationTaskId: string | null = null
-        try {
-          escalationTaskId = await createTask(config.apiUrl, config.projectPath, escalationPrompt, 3600, escalatedModel)
-          console.log(`[${wu.id}] Escalation task created: ${escalationTaskId}`)
-
-          const escResult = await pollUntilDone(config.apiUrl, escalationTaskId)
-          if (escResult.status === 'completed') {
-            // Shift-left: auto-fix lint + typecheck before running tests
-            console.log(`[${wu.id}] Running shift-left lint + typecheck (escalation)...`)
-            const escLintResult = shiftLeftLint(config.projectPath, wu.id)
-            console.log(`[${wu.id}] ${escLintResult.message}`)
-            if (!escLintResult.pass) {
-              greenMessage = escLintResult.message
-            } else {
-              console.log(`[${wu.id}] Escalation task completed, verifying GREEN...`)
-              const escGreen = await verifyGreen(config.testDir, config.testCommand, baseline)
-              console.log(`[${wu.id}] ${escGreen.message}`)
-              if (escGreen.pass) {
-                escalationPassed = true
-                greenMessage = escGreen.message
-              } else {
-                greenMessage = escGreen.message
-              }
-            }
-          } else {
-            greenMessage = `Escalation task ${escResult.status}`
-          }
-        } catch (err) {
-          greenMessage = `Escalation failed: ${err}`
-        }
-
-        if (escalationPassed) {
-          console.log(`[${wu.id}] PASS (after escalation to ${escalatedModel})`)
-          results.push({
-            id: wu.id,
-            status: 'pass',
-            testTaskId,
-            implTaskId: escalationTaskId,
-            retries: retries + 1,
-            message: greenMessage,
-            escalatedTo: escalatedModel,
-          })
-          // Commit passing WU (escalation)
-          const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
-          console.log(`[${wu.id}] ${commitResult.message}`)
-          console.log(`[${wu.id}] Updating baseline...`)
-          baseline = await captureTestBaseline(config.testDir, config.testCommand)
-        } else {
-          console.error(`[${wu.id}] NEEDS_HUMAN: escalation to '${escalatedModel}' also failed`)
-          results.push({
-            id: wu.id,
-            status: 'needs_human',
-            testTaskId,
-            implTaskId: escalationTaskId ?? implTaskId,
-            retries: retries + 1,
-            message: greenMessage,
-            escalatedTo: escalatedModel,
-          })
-        }
-      } else {
-        // Escalation target is 'human' or no escalation path
-        console.error(`[${wu.id}] NEEDS_HUMAN: no automated escalation path remaining`)
-        results.push({
-          id: wu.id,
-          status: 'needs_human',
-          testTaskId,
-          implTaskId,
-          retries,
-          message: greenMessage,
-          escalatedTo: 'human',
-        })
-      }
-    } else {
-      console.error(`[${wu.id}] FAIL after ${retries + 1} attempt(s): ${greenMessage}`)
-      results.push({
-        id: wu.id,
-        status: 'fail',
-        testTaskId,
-        implTaskId,
-        retries,
-        message: greenMessage,
-      })
-    }
-
-    console.log()
   }
 
-  // 6. Write report and signal
+  return { implTaskId, greenPassed, retries, greenMessage }
+}
+
+async function runEscalation(
+  wu: WorkUnit,
+  config: Config,
+  wuYaml: string,
+  specExcerpt: string,
+  baseline: TestBaseline,
+  retries: number,
+  greenMessage: string,
+): Promise<EscalationResult> {
+  const escalatedModel = getEscalatedModel(config.model)
+  if (escalatedModel && escalatedModel !== 'human') {
+    console.log(`[${wu.id}] Escalating from '${config.model}' to '${escalatedModel}'...`)
+
+    const escalationPrompt = buildImplPrompt(wu, wuYaml, specExcerpt, config.projectPath, config.language, config.framework)
+      + `\n\n## Escalation Context\nPrevious ${retries + 1} attempt(s) with '${config.model}' failed.\nLast error: ${greenMessage}\nFix the implementation to make all tests pass.`
+
+    let escalationPassed = false
+    let escalationTaskId: string | null = null
+    try {
+      escalationTaskId = await createTask(config.apiUrl, config.projectPath, escalationPrompt, 3600, escalatedModel)
+      console.log(`[${wu.id}] Escalation task created: ${escalationTaskId}`)
+
+      const escResult = await pollUntilDone(config.apiUrl, escalationTaskId)
+      if (escResult.status === 'completed') {
+        // Shift-left: auto-fix lint + typecheck before running tests
+        console.log(`[${wu.id}] Running shift-left lint + typecheck (escalation)...`)
+        const escLintResult = shiftLeftLint(config.projectPath, wu.id)
+        console.log(`[${wu.id}] ${escLintResult.message}`)
+        if (!escLintResult.pass) {
+          greenMessage = escLintResult.message
+        } else {
+          console.log(`[${wu.id}] Escalation task completed, verifying GREEN...`)
+          const escGreen = await verifyGreen(config.testDir, config.testCommand, baseline)
+          console.log(`[${wu.id}] ${escGreen.message}`)
+          if (escGreen.pass) {
+            escalationPassed = true
+            greenMessage = escGreen.message
+          } else {
+            greenMessage = escGreen.message
+          }
+        }
+      } else {
+        greenMessage = `Escalation task ${escResult.status}`
+      }
+    } catch (err) {
+      greenMessage = `Escalation failed: ${err}`
+    }
+
+    if (escalationPassed) {
+      console.log(`[${wu.id}] PASS (after escalation to ${escalatedModel})`)
+      return { passed: true, taskId: escalationTaskId, greenMessage, escalatedTo: escalatedModel }
+    } else {
+      console.error(`[${wu.id}] NEEDS_HUMAN: escalation to '${escalatedModel}' also failed`)
+      return { passed: false, taskId: escalationTaskId, greenMessage, escalatedTo: escalatedModel }
+    }
+  } else {
+    // Escalation target is 'human' or no escalation path
+    console.error(`[${wu.id}] NEEDS_HUMAN: no automated escalation path remaining`)
+    return { passed: false, taskId: null, greenMessage, escalatedTo: 'human' }
+  }
+}
+
+function computeAndWriteVerdict(config: Config, results: WUResult[]): void {
   const passed = results.filter(r => r.status === 'pass').length
   const failed = results.filter(r => r.status === 'fail').length
   const skipped = results.filter(r => r.status === 'skipped').length
@@ -1000,6 +955,142 @@ async function main(): Promise<void> {
   if (failed > 0 || needsHuman > 0) {
     process.exit(1)
   }
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  const config = parseArgs()
+  signalDir = path.join(config.outputDir, 'signals')
+
+  const { testContext, sorted, specExcerpt, baseline: initialBaseline } = await initializeOrchestrator(config)
+  let baseline = initialBaseline
+
+  // 5. Process each WU in sorted order
+  const results: WUResult[] = []
+
+  for (const wu of sorted) {
+    console.log(`=== WU ${wu.id}: ${wu.scope} ===`)
+
+    const wuYaml = readWorkUnitFile(config.outputDir, wu.id)
+    if (!wuYaml) {
+      console.warn(`[${wu.id}] Skipping: no work unit file found`)
+      results.push({
+        id: wu.id,
+        status: 'skipped',
+        testTaskId: null,
+        implTaskId: null,
+        retries: 0,
+        message: 'Work unit file not found',
+      })
+      continue
+    }
+
+    // ── Step A: Test Writer (with rate-limit retry) ───────────────────────
+    const twResult = await runTestWriterPhase(wu, config, wuYaml, specExcerpt, testContext)
+    const { testTaskId } = twResult
+
+    if (!twResult.passed) {
+      results.push({
+        id: wu.id,
+        status: 'fail',
+        testTaskId,
+        implTaskId: null,
+        retries: 0,
+        message: 'Test task failed (rate limit exhausted)',
+      })
+      continue
+    }
+
+    // ── Step B: Verify RED ───────────────────────────────────────────────
+    console.log(`[${wu.id}] Verifying RED (new test failures expected)...`)
+    const redResult = await verifyRed(config.testDir, config.testCommand, baseline)
+    console.log(`[${wu.id}] ${redResult.message}`)
+    if (!redResult.pass) {
+      console.warn(`[${wu.id}] RED verification failed, continuing anyway`)
+    }
+
+    // ── Step C+D: Implementor with retries ───────────────────────────────
+    const implResult = await runImplementorPhase(wu, config, wuYaml, specExcerpt, baseline)
+    const { implTaskId, greenPassed, retries, greenMessage } = implResult
+
+    if (greenPassed) {
+      console.log(`[${wu.id}] PASS`)
+      results.push({
+        id: wu.id,
+        status: 'pass',
+        testTaskId,
+        implTaskId,
+        retries,
+        message: greenMessage,
+      })
+      // Commit passing WU
+      const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
+      console.log(`[${wu.id}] ${commitResult.message}`)
+
+      // Update baseline to incorporate new tests
+      console.log(`[${wu.id}] Updating baseline...`)
+      baseline = await captureTestBaseline(config.testDir, config.testCommand)
+      console.log(
+        `[${wu.id}] New baseline: ${baseline.totalTests} tests, ${baseline.passing} pass, ${baseline.failing} fail`,
+      )
+    } else if (shouldEscalate(config.model, retries + 1)) {
+      // ── Escalation: GLM exhausted retries, try with a stronger model ────
+      const escResult = await runEscalation(wu, config, wuYaml, specExcerpt, baseline, retries, greenMessage)
+
+      if (escResult.passed) {
+        results.push({
+          id: wu.id,
+          status: 'pass',
+          testTaskId,
+          implTaskId: escResult.taskId,
+          retries: retries + 1,
+          message: escResult.greenMessage,
+          escalatedTo: escResult.escalatedTo,
+        })
+        // Commit passing WU (escalation)
+        const commitResult = commitWU(config.projectPath, wu.id, wu.scope, wu.files)
+        console.log(`[${wu.id}] ${commitResult.message}`)
+        console.log(`[${wu.id}] Updating baseline...`)
+        baseline = await captureTestBaseline(config.testDir, config.testCommand)
+      } else if (escResult.escalatedTo !== 'human') {
+        results.push({
+          id: wu.id,
+          status: 'needs_human',
+          testTaskId,
+          implTaskId: escResult.taskId ?? implTaskId,
+          retries: retries + 1,
+          message: escResult.greenMessage,
+          escalatedTo: escResult.escalatedTo,
+        })
+      } else {
+        results.push({
+          id: wu.id,
+          status: 'needs_human',
+          testTaskId,
+          implTaskId,
+          retries,
+          message: escResult.greenMessage,
+          escalatedTo: 'human',
+        })
+      }
+    } else {
+      console.error(`[${wu.id}] FAIL after ${retries + 1} attempt(s): ${greenMessage}`)
+      results.push({
+        id: wu.id,
+        status: 'fail',
+        testTaskId,
+        implTaskId,
+        retries,
+        message: greenMessage,
+      })
+    }
+
+    console.log()
+  }
+
+  // 6. Write report and signal
+  computeAndWriteVerdict(config, results)
 }
 
 // ─── Entry ──────────────────────────────────────────────────────────────────
