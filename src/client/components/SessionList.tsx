@@ -968,8 +968,8 @@ function SessionRow({
         const runs = useWorkflowStore.getState().workflowRuns
         const run = runs.find(r => r.id === meta.workflow_run_id)
         return {
-          workflowId: run?.workflow_id ?? null,
-          workflowName: run?.workflow_name ?? null,
+          workflowId: run?.workflow_id,
+          workflowName: run?.workflow_name,
           stepName: meta.workflow_step_name as string,
         }
       }
