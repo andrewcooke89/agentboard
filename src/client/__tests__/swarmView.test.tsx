@@ -9,6 +9,8 @@ describe('convertToLogEntry', () => {
       groupId: 'grp-1',
       timestamp: 1000,
       totalWos: 5,
+      woIds: ['WO-001', 'WO-002', 'WO-003', 'WO-004', 'WO-005'],
+      edges: [],
     }
     const entry = convertToLogEntry(event)
     expect(entry.type).toBe('group_started')
