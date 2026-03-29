@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_PROJECT_DIR,
   MAX_PRESETS,
-  FONT_OPTIONS,
   useSettingsStore,
   type CommandPreset,
   type FontOption,
@@ -12,9 +11,12 @@ import {
 } from '../stores/settingsStore'
 import { useThemeStore, type Theme } from '../stores/themeStore'
 import { getEffectiveModifier, getModifierDisplay } from '../utils/device'
-import { Switch } from './Switch'
-import { playPermissionSound, playIdleSound, primeAudio } from '../utils/sound'
-import { requestNotificationPermission, getNotificationPermission, showNotification } from '../utils/notification'
+import CronSettingsSection from './settings/CronSettingsSection'
+import NotificationSettingsSection from './settings/NotificationSettingsSection'
+import TerminalSettingsSection from './settings/TerminalSettingsSection'
+import CommandPresetsSection from './settings/CommandPresetsSection'
+import SessionListSettingsSection from './settings/SessionListSettingsSection'
+import GeneralSettingsSection from './settings/GeneralSettingsSection'
 
 interface SettingsChangeFlags {
   webglChanged: boolean
@@ -417,838 +419,112 @@ export default function SettingsModal({
         </p>
 
         <div className="mt-5 space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs text-secondary">
-              Default Project Directory
-            </label>
-            <input
-              value={draftDir}
-              onChange={(event) => setDraftDir(event.target.value)}
-              placeholder={DEFAULT_PROJECT_DIR}
-              className="input"
-              autoFocus
-            />
-          </div>
+          <GeneralSettingsSection
+            draftDir={draftDir}
+            setDraftDir={setDraftDir}
+            projectPathPresets={projectPathPresets}
+            newPresetPath={newPresetPath}
+            setNewPresetPath={setNewPresetPath}
+            addProjectPathPreset={addProjectPathPreset}
+            removeProjectPathPreset={removeProjectPathPreset}
+            draftShortcutModifier={draftShortcutModifier}
+            setDraftShortcutModifier={setDraftShortcutModifier}
+          />
 
-          {/* Project Path Presets Section */}
-          <div className="border-t border-border pt-4">
-            <label className="mb-2 block text-xs text-secondary">
-              Favorite Project Paths
-            </label>
-            <p className="text-[10px] text-muted mb-3">
-              Quick-select buttons shown in the new session dialog.
-            </p>
-            {projectPathPresets.length > 0 && (
-              <div className="space-y-1.5 mb-3">
-                {projectPathPresets.map((preset) => (
-                  <div
-                    key={preset}
-                    className="flex items-center gap-2 border border-border p-2"
-                  >
-                    <span className="flex-1 text-xs font-mono truncate" title={preset}>
-                      {preset}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn text-xs px-2 py-0.5"
-                      onClick={() => removeProjectPathPreset(preset)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <input
-                value={newPresetPath}
-                onChange={(e) => setNewPresetPath(e.target.value)}
-                placeholder="~/projects/my-project"
-                className="input flex-1 text-xs font-mono"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault()
-                    if (newPresetPath.trim()) {
-                      addProjectPathPreset(newPresetPath.trim())
-                      setNewPresetPath('')
-                    }
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="btn text-xs"
-                onClick={() => {
-                  if (newPresetPath.trim()) {
-                    addProjectPathPreset(newPresetPath.trim())
-                    setNewPresetPath('')
-                  }
-                }}
-              >
-                Add
-              </button>
-            </div>
-          </div>
+          <CommandPresetsSection
+            draftPresets={draftPresets}
+            draftDefaultPresetId={draftDefaultPresetId}
+            setDraftDefaultPresetId={setDraftDefaultPresetId}
+            handleUpdatePreset={handleUpdatePreset}
+            handleDeletePreset={handleDeletePreset}
+            handleAddPreset={handleAddPreset}
+            canAddPreset={canAddPreset}
+            showAddForm={showAddForm}
+            setShowAddForm={setShowAddForm}
+            newLabel={newLabel}
+            setNewLabel={setNewLabel}
+            newBaseCommand={newBaseCommand}
+            setNewBaseCommand={setNewBaseCommand}
+            newModifiers={newModifiers}
+            setNewModifiers={setNewModifiers}
+            newAgentType={newAgentType}
+            setNewAgentType={setNewAgentType}
+          />
 
-          {/* Command Presets Section */}
-          <div className="border-t border-border pt-4">
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs text-secondary">
-                Command Presets
-              </label>
-              <select
-                value={draftDefaultPresetId}
-                onChange={(e) => setDraftDefaultPresetId(e.target.value)}
-                className="input text-xs py-1 px-2 w-auto"
-              >
-                {draftPresets.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <p className="text-[10px] text-muted mb-3">
-              Default preset is pre-selected when creating new sessions.
-            </p>
+          <SessionListSettingsSection
+            draftSortMode={draftSortMode}
+            setDraftSortMode={setDraftSortMode}
+            draftSortDirection={draftSortDirection}
+            setDraftSortDirection={setDraftSortDirection}
+            draftSessionGroupMode={draftSessionGroupMode}
+            setDraftSessionGroupMode={setDraftSessionGroupMode}
+            draftShowProjectName={draftShowProjectName}
+            setDraftShowProjectName={setDraftShowProjectName}
+            draftShowLastUserMessage={draftShowLastUserMessage}
+            setDraftShowLastUserMessage={setDraftShowLastUserMessage}
+            draftShowSessionIdPrefix={draftShowSessionIdPrefix}
+            setDraftShowSessionIdPrefix={setDraftShowSessionIdPrefix}
+          />
 
-            <div className="space-y-3">
-              {draftPresets.map(preset => (
-                <div
-                  key={preset.id}
-                  className="border border-border p-3 space-y-2"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      {preset.isBuiltIn && (
-                        <span className="text-[10px] text-muted">🔒</span>
-                      )}
-                      <input
-                        value={preset.label}
-                        onChange={(e) => handleUpdatePreset(preset.id, { label: e.target.value })}
-                        className="input text-sm py-1 px-2 w-32"
-                        placeholder="Label"
-                      />
-                    </div>
-                    {!preset.isBuiltIn && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeletePreset(preset.id)}
-                        className="btn text-xs px-2 py-1 text-error hover:bg-error/10"
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
+          <NotificationSettingsSection
+            draftSoundOnPermission={draftSoundOnPermission}
+            setDraftSoundOnPermission={setDraftSoundOnPermission}
+            draftSoundOnIdle={draftSoundOnIdle}
+            setDraftSoundOnIdle={setDraftSoundOnIdle}
+            draftNotifyOnPermission={draftNotifyOnPermission}
+            setDraftNotifyOnPermission={setDraftNotifyOnPermission}
+            draftNotifyOnIdle={draftNotifyOnIdle}
+            setDraftNotifyOnIdle={setDraftNotifyOnIdle}
+          />
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-muted block mb-1">Base Command</label>
-                      <input
-                        value={preset.baseCommand}
-                        onChange={(e) => handleUpdatePreset(preset.id, { baseCommand: e.target.value })}
-                        className="input text-xs py-1 px-2 font-mono"
-                        placeholder="command"
-                        disabled={preset.isBuiltIn}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-muted block mb-1">Modifiers</label>
-                      <input
-                        value={preset.modifiers}
-                        onChange={(e) => handleUpdatePreset(preset.id, { modifiers: e.target.value })}
-                        className="input text-xs py-1 px-2 font-mono"
-                        placeholder="--flag value"
-                      />
-                    </div>
-                  </div>
+          <TerminalSettingsSection
+            draftUseWebGL={draftUseWebGL}
+            setDraftUseWebGL={setDraftUseWebGL}
+            useWebGL={useWebGL}
+            draftFontSize={draftFontSize}
+            setDraftFontSize={setDraftFontSize}
+            draftLineHeight={draftLineHeight}
+            setDraftLineHeight={setDraftLineHeight}
+            draftLetterSpacing={draftLetterSpacing}
+            setDraftLetterSpacing={setDraftLetterSpacing}
+            draftFontOption={draftFontOption}
+            setDraftFontOption={setDraftFontOption}
+            draftCustomFontFamily={draftCustomFontFamily}
+            setDraftCustomFontFamily={setDraftCustomFontFamily}
+            draftTheme={draftTheme}
+            setDraftTheme={setDraftTheme}
+          />
 
-                  {!preset.isBuiltIn && (
-                    <div>
-                      <label className="text-[10px] text-muted block mb-1">Icon</label>
-                      <select
-                        value={preset.agentType || ''}
-                        onChange={(e) => handleUpdatePreset(preset.id, {
-                          agentType: e.target.value as 'claude' | 'codex' | undefined || undefined
-                        })}
-                        className="input text-xs py-1 px-2 w-auto"
-                      >
-                        <option value="">Terminal</option>
-                        <option value="claude">Claude</option>
-                        <option value="codex">Codex</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Add Preset Form */}
-            {showAddForm ? (
-              <div className="mt-3 border border-border p-3 space-y-2">
-                <div className="text-xs text-secondary mb-2">New Preset</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    value={newLabel}
-                    onChange={(e) => setNewLabel(e.target.value)}
-                    className="input text-xs py-1 px-2"
-                    placeholder="Label"
-                  />
-                  <input
-                    value={newBaseCommand}
-                    onChange={(e) => setNewBaseCommand(e.target.value)}
-                    className="input text-xs py-1 px-2 font-mono"
-                    placeholder="command"
-                  />
-                </div>
-                <input
-                  value={newModifiers}
-                  onChange={(e) => setNewModifiers(e.target.value)}
-                  className="input text-xs py-1 px-2 font-mono w-full"
-                  placeholder="Modifiers (optional)"
-                />
-                <div className="flex items-center gap-2">
-                  <select
-                    value={newAgentType}
-                    onChange={(e) => setNewAgentType(e.target.value as 'claude' | 'codex' | '')}
-                    className="input text-xs py-1 px-2 w-auto"
-                  >
-                    <option value="">Terminal Icon</option>
-                    <option value="claude">Claude Icon</option>
-                    <option value="codex">Codex Icon</option>
-                  </select>
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => setShowAddForm(false)}
-                    className="btn text-xs px-2 py-1"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAddPreset}
-                    disabled={!newLabel.trim() || !newBaseCommand.trim()}
-                    className="btn btn-primary text-xs px-2 py-1"
-                  >
-                    Add
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowAddForm(true)}
-                disabled={!canAddPreset}
-                className="btn text-xs mt-3 w-full"
-              >
-                {canAddPreset ? '+ Add Preset' : `Max ${MAX_PRESETS} presets`}
-              </button>
-            )}
-          </div>
-
-          <div className="border-t border-border pt-4">
-            <label className="mb-2 block text-xs text-secondary">
-              Session List Order
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={`btn flex-1 ${draftSortMode === 'created' ? 'btn-primary' : ''}`}
-                onClick={() => setDraftSortMode('created')}
-              >
-                Created
-              </button>
-              <button
-                type="button"
-                className={`btn flex-1 ${draftSortMode === 'status' ? 'btn-primary' : ''}`}
-                onClick={() => setDraftSortMode('status')}
-              >
-                Status
-              </button>
-              <button
-                type="button"
-                className={`btn flex-1 ${draftSortMode === 'manual' ? 'btn-primary' : ''}`}
-                onClick={() => setDraftSortMode('manual')}
-              >
-                Manual
-              </button>
-            </div>
-            <p className="mt-1.5 text-[10px] text-muted">
-              {draftSortMode === 'status'
-                ? 'Sessions auto-resort by status (waiting, working, unknown)'
-                : draftSortMode === 'manual'
-                  ? 'Drag sessions to reorder manually'
-                  : 'Sessions stay in creation order'}
-            </p>
-          </div>
-
-          {draftSortMode === 'created' && (
-            <div>
-              <label className="mb-2 block text-xs text-secondary">
-                Sort Direction
-              </label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className={`btn flex-1 ${draftSortDirection === 'desc' ? 'btn-primary' : ''}`}
-                  onClick={() => setDraftSortDirection('desc')}
-                >
-                  Newest First
-                </button>
-                <button
-                  type="button"
-                  className={`btn flex-1 ${draftSortDirection === 'asc' ? 'btn-primary' : ''}`}
-                  onClick={() => setDraftSortDirection('asc')}
-                >
-                  Oldest First
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="border-t border-border pt-4">
-            <label className="mb-2 block text-xs text-secondary">
-              Group Sessions By
-            </label>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={`btn flex-1 ${draftSessionGroupMode === 'none' ? 'btn-primary' : ''}`}
-                onClick={() => setDraftSessionGroupMode('none')}
-              >
-                None
-              </button>
-              <button
-                type="button"
-                className={`btn flex-1 ${draftSessionGroupMode === 'project' ? 'btn-primary' : ''}`}
-                onClick={() => setDraftSessionGroupMode('project')}
-              >
-                Project
-              </button>
-            </div>
-            <p className="mt-1.5 text-[10px] text-muted">
-              {draftSessionGroupMode === 'project'
-                ? 'Sessions grouped by project folder with collapsible headers'
-                : 'Sessions shown as a flat list'}
-            </p>
-          </div>
-
-          <div className="border-t border-border pt-4 space-y-3">
-            <label className="mb-1 block text-xs text-secondary">
-              Session List Details
-            </label>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Project Name</div>
-                <div className="text-[10px] text-muted">
-                  Show the project folder name under each session.
-                </div>
-              </div>
-              <Switch
-                checked={draftShowProjectName}
-                onCheckedChange={setDraftShowProjectName}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Last User Message</div>
-                <div className="text-[10px] text-muted">
-                  Show the most recent user input next to the project name.
-                </div>
-              </div>
-              <Switch
-                checked={draftShowLastUserMessage}
-                onCheckedChange={setDraftShowLastUserMessage}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Session ID Prefix</div>
-                <div className="text-[10px] text-muted">
-                  Show first 5 characters of agent session IDs in the list.
-                </div>
-              </div>
-              <Switch
-                checked={draftShowSessionIdPrefix}
-                onCheckedChange={setDraftShowSessionIdPrefix}
-              />
-            </div>
-          </div>
-
-          <div className="border-t border-border pt-4 space-y-3">
-            <label className="mb-1 block text-xs text-secondary">
-              Notifications
-            </label>
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <div className="text-sm text-primary">Permission Sound</div>
-                <div className="text-[10px] text-muted">
-                  Play a ping when any session needs permission.
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void playPermissionSound()}
-                  className="btn text-xs px-2 py-1"
-                >
-                  Test
-                </button>
-                <Switch
-                  checked={draftSoundOnPermission}
-                  onCheckedChange={(checked) => {
-                    setDraftSoundOnPermission(checked)
-                    if (checked) void primeAudio() // Unlock audio on user gesture
-                  }}
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <div className="text-sm text-primary">Idle Sound</div>
-                <div className="text-[10px] text-muted">
-                  Play a chime when a session finishes working.
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => void playIdleSound()}
-                  className="btn text-xs px-2 py-1"
-                >
-                  Test
-                </button>
-                <Switch
-                  checked={draftSoundOnIdle}
-                  onCheckedChange={(checked) => {
-                    setDraftSoundOnIdle(checked)
-                    if (checked) void primeAudio() // Unlock audio on user gesture
-                  }}
-                />
-              </div>
-            </div>
-            {/* Browser Notifications */}
-            <div className="flex items-center justify-between mt-3">
-              <div className="flex-1">
-                <div className="text-sm text-primary">Permission Notification</div>
-                <div className="text-[10px] text-muted">
-                  Show OS notification when a session needs permission.
-                  {getNotificationPermission() === 'denied' && (
-                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
-                  className="btn text-xs px-2 py-1"
-                >
-                  Test
-                </button>
-                <Switch
-                  checked={draftNotifyOnPermission}
-                  onCheckedChange={async (checked) => {
-                    if (checked) {
-                      const perm = await requestNotificationPermission()
-                      if (perm !== 'granted') return
-                    }
-                    setDraftNotifyOnPermission(checked)
-                  }}
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between mt-3">
-              <div className="flex-1">
-                <div className="text-sm text-primary">Idle Notification</div>
-                <div className="text-[10px] text-muted">
-                  Show OS notification when a session finishes working.
-                  {getNotificationPermission() === 'denied' && (
-                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
-                  className="btn text-xs px-2 py-1"
-                >
-                  Test
-                </button>
-                <Switch
-                  checked={draftNotifyOnIdle}
-                  onCheckedChange={async (checked) => {
-                    if (checked) {
-                      const perm = await requestNotificationPermission()
-                      if (perm !== 'granted') return
-                    }
-                    setDraftNotifyOnIdle(checked)
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-border pt-4">
-            <label className="mb-2 block text-xs text-secondary">
-              Terminal Rendering
-            </label>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">WebGL Acceleration</div>
-                <div className="text-[10px] text-muted">
-                  GPU rendering for better performance. Disable if you see flickering.
-                </div>
-              </div>
-              <Switch
-                checked={draftUseWebGL}
-                onCheckedChange={setDraftUseWebGL}
-              />
-            </div>
-            {draftUseWebGL !== useWebGL && (
-              <p className="mt-2 text-[10px] text-approval">
-                Terminal will reload when saved
-              </p>
-            )}
-
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Font Size</div>
-                <div className="text-[10px] text-muted">
-                  Terminal text size in pixels (6-24)
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDraftFontSize(Math.max(6, draftFontSize - 1))}
-                  className="flex h-7 w-7 items-center justify-center rounded bg-surface border border-border text-secondary hover:bg-hover"
-                >
-                  <span className="text-sm font-bold">−</span>
-                </button>
-                <span className="text-sm text-secondary w-6 text-center">{draftFontSize}</span>
-                <button
-                  type="button"
-                  onClick={() => setDraftFontSize(Math.min(24, draftFontSize + 1))}
-                  className="flex h-7 w-7 items-center justify-center rounded bg-surface border border-border text-secondary hover:bg-hover"
-                >
-                  <span className="text-sm font-bold">+</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Line Height</div>
-                <div className="text-[10px] text-muted">
-                  Vertical spacing (1.0 = compact, 2.0 = spacious)
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="1.0"
-                  max="2.0"
-                  step="0.1"
-                  value={draftLineHeight}
-                  onChange={(e) => setDraftLineHeight(parseFloat(e.target.value))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-8 text-right">{draftLineHeight.toFixed(1)}</span>
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Letter Spacing</div>
-                <div className="text-[10px] text-muted">
-                  Horizontal spacing between characters in pixels
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="-3"
-                  max="3"
-                  step="1"
-                  value={draftLetterSpacing}
-                  onChange={(e) => setDraftLetterSpacing(parseInt(e.target.value, 10))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-8 text-right">{draftLetterSpacing}px</span>
-              </div>
-            </div>
-
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm text-primary">Font Family</div>
-                  <div className="text-[10px] text-muted">
-                    Terminal typeface
-                  </div>
-                </div>
-                <select
-                  value={draftFontOption}
-                  onChange={(e) => setDraftFontOption(e.target.value as FontOption)}
-                  className="input text-xs py-1 px-2 w-auto"
-                >
-                  {FONT_OPTIONS.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {draftFontOption === 'custom' && (
-                <input
-                  value={draftCustomFontFamily}
-                  onChange={(e) => setDraftCustomFontFamily(e.target.value)}
-                  placeholder='"Fira Code", monospace'
-                  className="input text-xs mt-2 font-mono"
-                />
-              )}
-            </div>
-
-            <div className="mt-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Dark Mode</div>
-                <div className="text-[10px] text-muted">
-                  Switch between dark and light themes.
-                </div>
-              </div>
-              <Switch
-                checked={draftTheme === 'dark'}
-                onCheckedChange={(checked) => setDraftTheme(checked ? 'dark' : 'light')}
-              />
-            </div>
-          </div>
-
-          {/* Cron Manager Section */}
-          <div className="border-t border-border pt-4 space-y-3">
-            <label className="mb-1 block text-xs text-secondary">Cron Manager</label>
-
-            {/* Poll Interval */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Poll Interval</div>
-                <div className="text-[10px] text-muted">How often to refresh job status (2–30s)</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="2"
-                  max="30"
-                  step="1"
-                  value={draftCronPollInterval}
-                  onChange={(e) => setDraftCronPollInterval(parseInt(e.target.value, 10))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-8 text-right">{draftCronPollInterval}s</span>
-              </div>
-            </div>
-
-            {/* Avatar Style */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Avatar Style</div>
-                <div className="text-[10px] text-muted">Dicebear style for job avatars</div>
-              </div>
-              <select
-                value={draftCronAvatarStyle}
-                onChange={(e) => setDraftCronAvatarStyle(e.target.value)}
-                className="input text-xs py-1 px-2 w-auto"
-              >
-                {['bottts', 'identicon', 'thumbs', 'avataaars', 'micah', 'pixel-art'].map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Sudo Grace Period */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Sudo Grace Period</div>
-                <div className="text-[10px] text-muted">How long sudo credentials are cached (seconds)</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="60"
-                  max="3600"
-                  step="60"
-                  value={draftCronSudoGracePeriod}
-                  onChange={(e) => setDraftCronSudoGracePeriod(parseInt(e.target.value, 10))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-12 text-right">{draftCronSudoGracePeriod}s</span>
-              </div>
-            </div>
-
-            {/* Show system/user job toggles */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Show System Jobs</div>
-                <div className="text-[10px] text-muted">Include system-level cron jobs</div>
-              </div>
-              <Switch checked={draftCronShowSystemJobs} onCheckedChange={setDraftCronShowSystemJobs} />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Show User Jobs</div>
-                <div className="text-[10px] text-muted">Include user-level cron jobs</div>
-              </div>
-              <Switch checked={draftCronShowUserJobs} onCheckedChange={setDraftCronShowUserJobs} />
-            </div>
-
-            {/* Default Timeline */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Timeline Visible by Default</div>
-                <div className="text-[10px] text-muted">Show schedule timeline on open</div>
-              </div>
-              <Switch checked={draftCronDefaultTimelineVisible} onCheckedChange={setDraftCronDefaultTimelineVisible} />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Default Timeline Range</div>
-                <div className="text-[10px] text-muted">24h view or 7-day view</div>
-              </div>
-              <div className="flex gap-1">
-                {(['24h', '7d'] as const).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setDraftCronDefaultTimelineRange(r)}
-                    className={`btn text-xs px-2 py-0.5 ${draftCronDefaultTimelineRange === r ? 'btn-primary' : ''}`}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Notification categories */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Notify on Failure</div>
-                <div className="text-[10px] text-muted">Alert when a cron job fails</div>
-              </div>
-              <Switch checked={draftCronNotifyFailure} onCheckedChange={setDraftCronNotifyFailure} />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Notify on Missed Run</div>
-                <div className="text-[10px] text-muted">Alert when a scheduled run is missed</div>
-              </div>
-              <Switch checked={draftCronNotifyMissedRun} onCheckedChange={setDraftCronNotifyMissedRun} />
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Notify on Manual Run</div>
-                <div className="text-[10px] text-muted">Alert when a manually triggered run completes</div>
-              </div>
-              <Switch checked={draftCronNotifyManualRun} onCheckedChange={setDraftCronNotifyManualRun} />
-            </div>
-
-            {/* Desktop Notifications */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Desktop Notifications</div>
-                <div className="text-[10px] text-muted">
-                  Show OS notifications for cron events (max 1 per job per 5 min)
-                  {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
-                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
-                  )}
-                </div>
-              </div>
-              <Switch
-                checked={draftCronDesktopNotifications}
-                onCheckedChange={async (checked) => {
-                  if (checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-                    const perm = await requestNotificationPermission()
-                    if (perm !== 'granted') return
-                  }
-                  setDraftCronDesktopNotifications(checked)
-                }}
-              />
-            </div>
-
-            {/* Auto-tag suggestions */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Auto-tag Suggestions</div>
-                <div className="text-[10px] text-muted">Suggest tags based on command patterns</div>
-              </div>
-              <Switch checked={draftCronAutoTagSuggestions} onCheckedChange={setDraftCronAutoTagSuggestions} />
-            </div>
-
-            {/* Max History Days */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Max History Days</div>
-                <div className="text-[10px] text-muted">How many days of run history to retain</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="7"
-                  max="365"
-                  step="7"
-                  value={draftCronMaxHistoryDays}
-                  onChange={(e) => setDraftCronMaxHistoryDays(parseInt(e.target.value, 10))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-10 text-right">{draftCronMaxHistoryDays}d</span>
-              </div>
-            </div>
-
-            {/* Max History Per Job */}
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-sm text-primary">Max History Per Job</div>
-                <div className="text-[10px] text-muted">Maximum run history entries per job</div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="50"
-                  max="2000"
-                  step="50"
-                  value={draftCronMaxHistoryPerJob}
-                  onChange={(e) => setDraftCronMaxHistoryPerJob(parseInt(e.target.value, 10))}
-                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-                />
-                <span className="text-xs text-secondary w-12 text-right">{draftCronMaxHistoryPerJob}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-border pt-4">
-            <label className="mb-2 block text-xs text-secondary">
-              Keyboard Shortcut Modifier
-            </label>
-            <div className="grid grid-cols-5 gap-1">
-              {(
-                ['auto', 'ctrl-option', 'ctrl-shift', 'cmd-option', 'cmd-shift'] as const
-              ).map((mod) => (
-                <button
-                  key={mod}
-                  type="button"
-                  className={`btn text-xs px-2 ${draftShortcutModifier === mod ? 'btn-primary' : ''}`}
-                  onClick={() => setDraftShortcutModifier(mod)}
-                >
-                  {mod === 'auto'
-                    ? 'Auto'
-                    : getModifierDisplay(mod)}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1.5 text-[10px] text-muted">
-              {draftShortcutModifier === 'auto'
-                ? `Platform default: ${getModifierDisplay(getEffectiveModifier('auto'))}`
-                : `Shortcuts: ${getModifierDisplay(draftShortcutModifier)}+[N/X/[/]]`}
-            </p>
-          </div>
+          <CronSettingsSection
+            draftCronPollInterval={draftCronPollInterval}
+            setDraftCronPollInterval={setDraftCronPollInterval}
+            draftCronAvatarStyle={draftCronAvatarStyle}
+            setDraftCronAvatarStyle={setDraftCronAvatarStyle}
+            draftCronSudoGracePeriod={draftCronSudoGracePeriod}
+            setDraftCronSudoGracePeriod={setDraftCronSudoGracePeriod}
+            draftCronShowSystemJobs={draftCronShowSystemJobs}
+            setDraftCronShowSystemJobs={setDraftCronShowSystemJobs}
+            draftCronShowUserJobs={draftCronShowUserJobs}
+            setDraftCronShowUserJobs={setDraftCronShowUserJobs}
+            draftCronDefaultTimelineVisible={draftCronDefaultTimelineVisible}
+            setDraftCronDefaultTimelineVisible={setDraftCronDefaultTimelineVisible}
+            draftCronDefaultTimelineRange={draftCronDefaultTimelineRange}
+            setDraftCronDefaultTimelineRange={setDraftCronDefaultTimelineRange}
+            draftCronNotifyFailure={draftCronNotifyFailure}
+            setDraftCronNotifyFailure={setDraftCronNotifyFailure}
+            draftCronNotifyMissedRun={draftCronNotifyMissedRun}
+            setDraftCronNotifyMissedRun={setDraftCronNotifyMissedRun}
+            draftCronNotifyManualRun={draftCronNotifyManualRun}
+            setDraftCronNotifyManualRun={setDraftCronNotifyManualRun}
+            draftCronDesktopNotifications={draftCronDesktopNotifications}
+            setDraftCronDesktopNotifications={setDraftCronDesktopNotifications}
+            draftCronAutoTagSuggestions={draftCronAutoTagSuggestions}
+            setDraftCronAutoTagSuggestions={setDraftCronAutoTagSuggestions}
+            draftCronMaxHistoryDays={draftCronMaxHistoryDays}
+            setDraftCronMaxHistoryDays={setDraftCronMaxHistoryDays}
+            draftCronMaxHistoryPerJob={draftCronMaxHistoryPerJob}
+            setDraftCronMaxHistoryPerJob={setDraftCronMaxHistoryPerJob}
+          />
         </div>
 
         <div className="mt-6 flex justify-end gap-2">
