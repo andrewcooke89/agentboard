@@ -117,7 +117,7 @@ describe('validateWorkflowYaml', () => {
   test('returns errors for invalid step type', () => {
     const result = validateWorkflowYaml(INVALID_YAML_BAD_STEP)
     expect(result.valid).toBe(false)
-    expect(result.errors.some((e) => e.includes('"type" must be one of'))).toBe(true)
+    expect(result.errors.some((e: string) => e.includes('"type" must be one of'))).toBe(true)
   })
 
   test('returns errors for missing workflow name', () => {
