@@ -1,17 +1,17 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { AgentSession } from '@shared/types'
 
 const globalAny = globalThis as typeof globalThis & {
-  fetch?: typeof fetch
   window?: Window & typeof globalThis
 }
 
-const originalFetch = globalAny.fetch
 const originalWindow = globalAny.window
 let SessionPreviewModal: typeof import('../components/SessionPreviewModal').default
 
 let keyHandlers = new Map<string, EventListener>()
+let authFetchMock: ReturnType<typeof mock>
+let originalAuthFetch: typeof import('../utils/api').authFetch
 
 function setupWindow() {
   keyHandlers = new Map()
@@ -66,6 +66,7 @@ async function cleanup(renderer: TestRenderer.ReactTestRenderer) {
 
 function createFetchController(responses: Response[], calls: string[] = []) {
   const pending: Array<(value: Response) => void> = []
+  
   const fetchImpl = (input: RequestInfo | URL, init?: RequestInit) => {
     let url: string
     if (typeof input === 'string') {
@@ -81,12 +82,10 @@ function createFetchController(responses: Response[], calls: string[] = []) {
         pending.push(resolve)
       })
     }
-    if (typeof originalFetch === 'function') {
-      return originalFetch(input as RequestInfo, init as RequestInit)
-    }
-    return Promise.reject(new Error('fetch is not available'))
+    return Promise.reject(new Error('Unexpected fetch'))
   }
-  globalAny.fetch = fetchImpl as unknown as typeof fetch
+  
+  authFetchMock.mockImplementation(fetchImpl)
 
   const resolveNext = () => {
     const resolve = pending.shift()
@@ -113,15 +112,30 @@ const baseSession: AgentSession = {
 
 beforeEach(async () => {
   setupWindow()
-  if (!SessionPreviewModal) {
-    SessionPreviewModal = (await import('../components/SessionPreviewModal')).default
-  }
+  
+  // Store original authFetch
+  const apiModule = await import('../utils/api')
+  originalAuthFetch = apiModule.authFetch
+  
+  // Create mock
+  authFetchMock = mock(() => Promise.reject(new Error('authFetch not mocked')))
+  
+  // Replace authFetch in module cache
+  const module = await import('../utils/api')
+  ;(module as unknown as Record<string, unknown>).authFetch = authFetchMock
+  
+  // Always re-import to pick up the mocked authFetch
+  SessionPreviewModal = (await import('../components/SessionPreviewModal')).default
 })
 
 afterEach(() => {
-  globalAny.fetch = originalFetch
   globalAny.window = originalWindow
   keyHandlers.clear()
+  
+  // Restore original authFetch
+  import('../utils/api').then((module) => {
+    ;(module as unknown as Record<string, unknown>).authFetch = originalAuthFetch
+  })
 })
 
 describe('SessionPreviewModal', () => {
