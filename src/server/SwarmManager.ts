@@ -159,7 +159,7 @@ export class SwarmManager {
       failedWos: 0,
       edges: event.edges.map((edge) => ({ ...edge })),
       wos,
-      startedAt: event.timestamp,
+      startedAt: new Date(event.timestamp).toISOString(),
       totalDurationSeconds: null,
       totalTokens: { inputTokens: 0, outputTokens: 0 },
     })
