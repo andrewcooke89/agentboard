@@ -567,7 +567,7 @@ const serverOptions = {
       key: Bun.file(config.tlsKey!),
     },
   }),
-  fetch(req, server: any) {
+  fetch(req: Request, server: any) {
     const url = new URL(req.url)
     if (url.pathname === '/ws') {
       if (
