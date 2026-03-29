@@ -16,6 +16,71 @@ interface TaskQueueProps {
   onNavigateToWorkflow?: (workflowId: string) => void
 }
 
+function TaskOutputViewer({ isLoading, content, taskId, onClose }: {
+  isLoading: boolean
+  content: string | null
+  taskId: string | null
+  onClose: () => void
+}) {
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center justify-center h-32 text-xs text-white/30 animate-pulse">
+          Loading output...
+        </div>
+      </div>
+    )
+  }
+  if (content !== null && taskId) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
+          <span className="text-xs text-white/60">Output: {taskId.slice(0, 12)}</span>
+          <button onClick={onClose} className="text-xs text-white/40 hover:text-white/60">Close</button>
+        </div>
+        <pre className="flex-1 overflow-auto p-3 text-xs text-white/70 font-mono whitespace-pre-wrap">
+          {content}
+        </pre>
+      </div>
+    )
+  }
+  return null
+}
+
+function TaskListSection({ label, tasks, selectedTaskId, onSelect, onCancel, onRetry, onViewOutput, onWatch, onNavigateToWorkflow }: {
+  label: string
+  tasks: Task[]
+  selectedTaskId: string | null
+  onSelect: (id: string) => void
+  onCancel: (id: string) => void
+  onRetry: (id: string) => void
+  onViewOutput: (id: string) => void
+  onWatch?: (task: Task) => void
+  onNavigateToWorkflow?: (workflowId: string) => void
+}) {
+  if (tasks.length === 0) return null
+  return (
+    <div>
+      <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">{label}</div>
+      <AnimatePresence initial={false}>
+        {tasks.map((task) => (
+          <TaskItem
+            key={task.id}
+            task={task}
+            isSelected={task.id === selectedTaskId}
+            onSelect={onSelect}
+            onCancel={onCancel}
+            onRetry={onRetry}
+            onViewOutput={onViewOutput}
+            onWatch={onWatch}
+            onNavigateToWorkflow={onNavigateToWorkflow}
+          />
+        ))}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask, onNavigateToWorkflow }: TaskQueueProps) {
   const _prefersReducedMotion = useReducedMotion()
   const tasks = useTaskStore((s) => s.tasks)
@@ -74,34 +139,15 @@ export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask
     )
   }
 
-  // Output loading state
-  if (isLoadingOutput) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="flex items-center justify-center h-32 text-xs text-white/30 animate-pulse">
-          Loading output...
-        </div>
-      </div>
-    )
-  }
-
   // Output viewer
-  if (outputContent !== null && outputTaskId) {
+  if (isLoadingOutput || (outputContent !== null && outputTaskId)) {
     return (
-      <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-          <span className="text-xs text-white/60">Output: {outputTaskId.slice(0, 12)}</span>
-          <button
-            onClick={() => { setOutputContent(null); setOutputTaskId(null) }}
-            className="text-xs text-white/40 hover:text-white/60"
-          >
-            Close
-          </button>
-        </div>
-        <pre className="flex-1 overflow-auto p-3 text-xs text-white/70 font-mono whitespace-pre-wrap">
-          {outputContent}
-        </pre>
-      </div>
+      <TaskOutputViewer
+        isLoading={isLoadingOutput}
+        content={outputContent}
+        taskId={outputTaskId}
+        onClose={() => { setOutputContent(null); setOutputTaskId(null) }}
+      />
     )
   }
 
@@ -141,70 +187,15 @@ export default function TaskQueue({ sendMessage, defaultProjectPath, onWatchTask
             No tasks yet. Click "+ New Task" to queue one.
           </div>
         )}
-
-        {/* Running */}
-        {runningTasks.length > 0 && (
-          <div>
-            <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Running</div>
-            <AnimatePresence initial={false}>
-              {runningTasks.map((task) => (
-                <TaskItem
-                  key={task.id}
-                  task={task}
-                  isSelected={task.id === selectedTaskId}
-                  onSelect={setSelectedTaskId}
-                  onCancel={handleCancel}
-                  onRetry={handleRetry}
-                  onViewOutput={handleViewOutput}
-                  onWatch={onWatchTask}
-                  onNavigateToWorkflow={onNavigateToWorkflow}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
-
-        {/* Queued */}
-        {queuedTasks.length > 0 && (
-          <div>
-            <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Queued</div>
-            <AnimatePresence initial={false}>
-              {queuedTasks.map((task) => (
-                <TaskItem
-                  key={task.id}
-                  task={task}
-                  isSelected={task.id === selectedTaskId}
-                  onSelect={setSelectedTaskId}
-                  onCancel={handleCancel}
-                  onRetry={handleRetry}
-                  onViewOutput={handleViewOutput}
-                  onNavigateToWorkflow={onNavigateToWorkflow}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
-
-        {/* Recent */}
-        {recentTasks.length > 0 && (
-          <div>
-            <div className="px-3 py-1.5 text-[10px] text-white/40 uppercase tracking-wider">Recent</div>
-            <AnimatePresence initial={false}>
-              {recentTasks.slice(0, 20).map((task) => (
-                <TaskItem
-                  key={task.id}
-                  task={task}
-                  isSelected={task.id === selectedTaskId}
-                  onSelect={setSelectedTaskId}
-                  onCancel={handleCancel}
-                  onRetry={handleRetry}
-                  onViewOutput={handleViewOutput}
-                  onNavigateToWorkflow={onNavigateToWorkflow}
-                />
-              ))}
-            </AnimatePresence>
-          </div>
-        )}
+        <TaskListSection label="Running" tasks={runningTasks} selectedTaskId={selectedTaskId}
+          onSelect={setSelectedTaskId} onCancel={handleCancel} onRetry={handleRetry}
+          onViewOutput={handleViewOutput} onWatch={onWatchTask} onNavigateToWorkflow={onNavigateToWorkflow} />
+        <TaskListSection label="Queued" tasks={queuedTasks} selectedTaskId={selectedTaskId}
+          onSelect={setSelectedTaskId} onCancel={handleCancel} onRetry={handleRetry}
+          onViewOutput={handleViewOutput} onNavigateToWorkflow={onNavigateToWorkflow} />
+        <TaskListSection label="Recent" tasks={recentTasks.slice(0, 20)} selectedTaskId={selectedTaskId}
+          onSelect={setSelectedTaskId} onCancel={handleCancel} onRetry={handleRetry}
+          onViewOutput={handleViewOutput} onNavigateToWorkflow={onNavigateToWorkflow} />
       </div>
 
       {/* Footer stats */}
