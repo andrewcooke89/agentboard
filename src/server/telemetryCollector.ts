@@ -125,20 +125,9 @@ let stepsSinceLastCleanup = 0
 const CLEANUP_THRESHOLD = 100 // Cleanup every 100 step operations
 
 /**
- * Create the telemetry store with database operations.
- *
- * @param db - SQLite database instance for persisting telemetry data
- * @returns Store interface for recording pipeline runs, steps, and daily aggregates
- *
- * @example
- * ```ts
- * const db = new Database('agentboard.db');
- * const store = createTelemetryStore(db);
- * await recordPipelineStart('run-123', { pipeline_type: 'spec', tier: 2 }, store, '/output');
- * ```
+ * Initialize telemetry database schema (tables + indexes).
  */
-export function createTelemetryStore(db: SQLiteDatabase): TelemetryStore {
-  // Create tables
+function initTelemetrySchema(db: SQLiteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS telemetry_runs (
       run_id TEXT PRIMARY KEY,
@@ -178,7 +167,12 @@ export function createTelemetryStore(db: SQLiteDatabase): TelemetryStore {
       avg_quality_score REAL
     );
   `)
+}
 
+/**
+ * Prepare all telemetry SQL statements.
+ */
+function prepareTelemetryStatements(db: SQLiteDatabase) {
   // Run statements
   const insertRunStmt = db.prepare(
     `INSERT INTO telemetry_runs (run_id, pipeline_type, tier, total_tokens, estimated_cost_usd, wall_clock_ms, quality_score, started_at, completed_at)
@@ -223,6 +217,48 @@ export function createTelemetryStore(db: SQLiteDatabase): TelemetryStore {
   const getDailyRangeStmt = db.prepare(
     'SELECT * FROM telemetry_daily WHERE date >= $startDate AND date <= $endDate ORDER BY date'
   )
+
+  return {
+    insertRunStmt,
+    updateRunStmt,
+    getRunStmt,
+    getRunsByDateRangeStmt,
+    insertStepStmt,
+    updateStepStmt,
+    getStepsByRunStmt,
+    upsertDailyStmt,
+    getDailyStmt,
+    getDailyRangeStmt,
+  }
+}
+
+/**
+ * Create the telemetry store with database operations.
+ *
+ * @param db - SQLite database instance for persisting telemetry data
+ * @returns Store interface for recording pipeline runs, steps, and daily aggregates
+ *
+ * @example
+ * ```ts
+ * const db = new Database('agentboard.db');
+ * const store = createTelemetryStore(db);
+ * await recordPipelineStart('run-123', { pipeline_type: 'spec', tier: 2 }, store, '/output');
+ * ```
+ */
+export function createTelemetryStore(db: SQLiteDatabase): TelemetryStore {
+  initTelemetrySchema(db)
+  const {
+    insertRunStmt,
+    updateRunStmt,
+    getRunStmt,
+    getRunsByDateRangeStmt,
+    insertStepStmt,
+    updateStepStmt,
+    getStepsByRunStmt,
+    upsertDailyStmt,
+    getDailyStmt,
+    getDailyRangeStmt,
+  } = prepareTelemetryStatements(db)
 
   return {
     insertRun: (record) => {
