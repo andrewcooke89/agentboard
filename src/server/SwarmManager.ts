@@ -258,7 +258,7 @@ export class SwarmManager {
         },
       ],
       completedAt: event.timestamp,
-      startedAt: current.startedAt ?? event.timestamp,
+      startedAt: current.startedAt ?? new Date(event.timestamp).toISOString(),
     }
 
     if (!wasFailed) {
