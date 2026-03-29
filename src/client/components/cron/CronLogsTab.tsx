@@ -3,6 +3,142 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useCronStore } from '../../stores/cronStore'
 
+// ─── LogLine ─────────────────────────────────────────────────────────────────
+
+function LogLine({ line, idx, showLineNumbers, searchRe, searchQuery }: {
+  line: string; idx: number; showLineNumbers: boolean;
+  searchRe: RegExp | null; searchQuery: string;
+}): React.ReactElement {
+  if (!searchRe || !searchQuery) {
+    return (
+      <div className="flex gap-0">
+        {showLineNumbers && (
+          <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
+            {idx + 1}
+          </span>
+        )}
+        <span className="whitespace-pre-wrap break-all flex-1">{line}</span>
+      </div>
+    )
+  }
+
+  // Reset lastIndex before use (global flag)
+  searchRe.lastIndex = 0
+
+  // Highlight search matches
+  const parts = line.split(searchRe)
+  return (
+    <div className="flex gap-0">
+      {showLineNumbers && (
+        <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
+          {idx + 1}
+        </span>
+      )}
+      <span className="whitespace-pre-wrap break-all flex-1">
+        {parts.map((part, pi) => {
+          searchRe.lastIndex = 0
+          return searchRe.test(part) ? (
+            <mark key={pi} className="bg-yellow-400/40 text-inherit rounded-sm">
+              {part}
+            </mark>
+          ) : (
+            <span key={pi}>{part}</span>
+          )
+        })}
+      </span>
+    </div>
+  )
+}
+
+// ─── LogToolbar ──────────────────────────────────────────────────────────────
+
+function LogToolbar({ liveTail, setLiveTail, showLineNumbers, setShowLineNumbers,
+  searchOpen, setSearchOpen, matchCount, copyAll }: {
+  liveTail: boolean; setLiveTail: (fn: (v: boolean) => boolean) => void;
+  showLineNumbers: boolean; setShowLineNumbers: (fn: (v: boolean) => boolean) => void;
+  searchOpen: boolean; setSearchOpen: (fn: (v: boolean) => boolean) => void;
+  matchCount: number; copyAll: () => void;
+}): React.ReactElement {
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border)] shrink-0 text-xs">
+      {/* Live tail */}
+      <button
+        onClick={() => setLiveTail((v) => !v)}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded ${
+          liveTail ? 'bg-green-900/40 text-green-400' : 'hover:bg-white/5 text-[var(--text-muted)]'
+        }`}
+        title="Toggle live tail"
+      >
+        {liveTail && (
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+        )}
+        Live
+      </button>
+
+      {/* Line numbers toggle */}
+      <button
+        onClick={() => setShowLineNumbers((v) => !v)}
+        className={`px-2 py-1 rounded ${
+          showLineNumbers ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
+        } hover:bg-white/5`}
+        title="Toggle line numbers"
+      >
+        #
+      </button>
+
+      {/* Search toggle */}
+      <button
+        onClick={() => setSearchOpen((v) => !v)}
+        className={`px-2 py-1 rounded hover:bg-white/5 ${searchOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+        title="Search (Ctrl+F)"
+      >
+        ⌕
+      </button>
+
+      {searchOpen && matchCount > 0 && (
+        <span className="text-[var(--text-muted)]">{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>
+      )}
+
+      {/* Copy all */}
+      <button
+        onClick={copyAll}
+        className="px-2 py-1 rounded hover:bg-white/5 text-[var(--text-muted)] ml-auto"
+        title="Copy all"
+      >
+        Copy all
+      </button>
+    </div>
+  )
+}
+
+// ─── LogSearchBar ────────────────────────────────────────────────────────────
+
+function LogSearchBar({ searchInputRef, searchQuery, setSearchQuery,
+  setSearchOpen }: {
+  searchInputRef: React.RefObject<HTMLInputElement>;
+  searchQuery: string; setSearchQuery: (v: string) => void;
+  setSearchOpen: (fn: (v: boolean) => boolean) => void;
+}): React.ReactElement {
+  return (
+    <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--border)] shrink-0">
+      <input
+        ref={searchInputRef}
+        type="text"
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder="Search logs..."
+        className="flex-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-[var(--accent)]"
+      />
+      <button
+        onClick={() => { setSearchOpen(false); setSearchQuery('') }}
+        className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
 // ─── CronLogsTab ─────────────────────────────────────────────────────────────
 
 export default function CronLogsTab(): React.ReactElement {
@@ -40,7 +176,7 @@ export default function CronLogsTab(): React.ReactElement {
         setSearchOpen((v) => !v)
       }
       if (e.key === 'Escape' && searchOpen) {
-        setSearchOpen(false)
+        setSearchOpen(() => false)
         setSearchQuery('')
       }
     },
@@ -70,122 +206,32 @@ export default function CronLogsTab(): React.ReactElement {
   let matchCount = 0
   if (searchRe) {
     for (const line of lines) {
+      searchRe.lastIndex = 0
       const m = line.match(searchRe)
       if (m) matchCount += m.length
     }
   }
 
-  function renderLine(line: string, idx: number): React.ReactElement {
-    if (!searchRe || !searchQuery) {
-      return (
-        <div key={idx} className="flex gap-0">
-          {showLineNumbers && (
-            <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
-              {idx + 1}
-            </span>
-          )}
-          <span className="whitespace-pre-wrap break-all flex-1">{line}</span>
-        </div>
-      )
-    }
-
-    // Highlight search matches
-    const parts = line.split(searchRe)
-    return (
-      <div key={idx} className="flex gap-0">
-        {showLineNumbers && (
-          <span className="select-none text-right pr-4 text-[var(--text-muted)] w-10 shrink-0 tabular-nums">
-            {idx + 1}
-          </span>
-        )}
-        <span className="whitespace-pre-wrap break-all flex-1">
-          {parts.map((part, pi) =>
-            searchRe.test(part) ? (
-              <mark key={pi} className="bg-yellow-400/40 text-inherit rounded-sm">
-                {part}
-              </mark>
-            ) : (
-              <span key={pi}>{part}</span>
-            )
-          )}
-        </span>
-      </div>
-    )
-  }
-
-  // Reset regex lastIndex after each use (global flag)
-  if (searchRe) searchRe.lastIndex = 0
-
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--border)] shrink-0 text-xs">
-        {/* Live tail */}
-        <button
-          onClick={() => setLiveTail((v) => !v)}
-          className={`flex items-center gap-1.5 px-2 py-1 rounded ${
-            liveTail ? 'bg-green-900/40 text-green-400' : 'hover:bg-white/5 text-[var(--text-muted)]'
-          }`}
-          title="Toggle live tail"
-        >
-          {liveTail && (
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-          )}
-          Live
-        </button>
+      <LogToolbar
+        liveTail={liveTail}
+        setLiveTail={setLiveTail}
+        showLineNumbers={showLineNumbers}
+        setShowLineNumbers={setShowLineNumbers}
+        searchOpen={searchOpen}
+        setSearchOpen={setSearchOpen}
+        matchCount={matchCount}
+        copyAll={copyAll}
+      />
 
-        {/* Line numbers toggle */}
-        <button
-          onClick={() => setShowLineNumbers((v) => !v)}
-          className={`px-2 py-1 rounded ${
-            showLineNumbers ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'
-          } hover:bg-white/5`}
-          title="Toggle line numbers"
-        >
-          #
-        </button>
-
-        {/* Search toggle */}
-        <button
-          onClick={() => setSearchOpen((v) => !v)}
-          className={`px-2 py-1 rounded hover:bg-white/5 ${searchOpen ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
-          title="Search (Ctrl+F)"
-        >
-          ⌕
-        </button>
-
-        {searchOpen && matchCount > 0 && (
-          <span className="text-[var(--text-muted)]">{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>
-        )}
-
-        {/* Copy all */}
-        <button
-          onClick={copyAll}
-          className="px-2 py-1 rounded hover:bg-white/5 text-[var(--text-muted)] ml-auto"
-          title="Copy all"
-        >
-          Copy all
-        </button>
-      </div>
-
-      {/* Search bar */}
       {searchOpen && (
-        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--border)] shrink-0">
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search logs..."
-            className="flex-1 bg-[var(--bg-surface)] border border-[var(--border)] rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-[var(--accent)]"
-          />
-          <button
-            onClick={() => { setSearchOpen(false); setSearchQuery('') }}
-            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs"
-          >
-            ✕
-          </button>
-        </div>
+        <LogSearchBar
+          searchInputRef={searchInputRef}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          setSearchOpen={setSearchOpen}
+        />
       )}
 
       {/* Log output */}
@@ -196,7 +242,16 @@ export default function CronLogsTab(): React.ReactElement {
         {lines.length === 0 ? (
           <span className="text-[var(--text-muted)] italic">No logs available</span>
         ) : (
-          lines.map((line, i) => renderLine(line, i))
+          lines.map((line, i) => (
+            <LogLine
+              key={i}
+              line={line}
+              idx={i}
+              showLineNumbers={showLineNumbers}
+              searchRe={searchRe}
+              searchQuery={searchQuery}
+            />
+          ))
         )}
       </div>
     </div>
