@@ -176,33 +176,44 @@ describe('SessionList component', () => {
   })
 
   test('renames session on enter after long press', () => {
-    globalAny.setTimeout = ((callback: () => void, delay?: number) => {
+    const originalSetTimeout = globalThis.setTimeout
+    const originalClearTimeout = globalThis.clearTimeout
+
+    globalThis.setTimeout = ((callback: () => void, delay?: number) => {
       if (delay === 500) {
         callback()
       }
       return 1 as unknown as ReturnType<typeof setTimeout>
     }) as typeof setTimeout
-    globalAny.clearTimeout = (() => {}) as typeof clearTimeout
+    globalThis.clearTimeout = (() => {}) as typeof clearTimeout
 
     const renameCalls: Array<{ id: string; name: string }> = []
 
-    const renderer = TestRenderer.create(
-      <SessionList
-        sessions={[baseSession]}
-        selectedSessionId={null}
-        loading={false}
-        error={null}
-        onSelect={() => {}}
-        onRename={(sessionId, newName) => {
-          renameCalls.push({ id: sessionId, name: newName })
-        }}
-      />
-    )
+    let renderer!: TestRenderer.ReactTestRenderer
+
+    act(() => {
+      renderer = TestRenderer.create(
+        <SessionList
+          sessions={[baseSession]}
+          selectedSessionId={null}
+          loading={false}
+          error={null}
+          onSelect={() => {}}
+          onRename={(sessionId, newName) => {
+            renameCalls.push({ id: sessionId, name: newName })
+          }}
+        />
+      )
+    })
 
     const card = renderer.root.findByProps({ 'data-testid': 'session-card' })
 
     act(() => {
       card.props.onTouchStart()
+    })
+
+    act(() => {
+      card.props.onTouchEnd()
     })
 
     // Find the rename input - it's the one with value equal to the session name
@@ -225,36 +236,50 @@ describe('SessionList component', () => {
     act(() => {
       renderer.unmount()
     })
+
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
   })
 
   test('cancels rename on escape', () => {
-    globalAny.setTimeout = ((callback: () => void, delay?: number) => {
+    const originalSetTimeout = globalThis.setTimeout
+    const originalClearTimeout = globalThis.clearTimeout
+
+    globalThis.setTimeout = ((callback: () => void, delay?: number) => {
       if (delay === 500) {
         callback()
       }
       return 1 as unknown as ReturnType<typeof setTimeout>
     }) as typeof setTimeout
-    globalAny.clearTimeout = (() => {}) as typeof clearTimeout
+    globalThis.clearTimeout = (() => {}) as typeof clearTimeout
 
     const renameCalls: Array<{ id: string; name: string }> = []
 
-    const renderer = TestRenderer.create(
-      <SessionList
-        sessions={[baseSession]}
-        selectedSessionId={null}
-        loading={false}
-        error={null}
-        onSelect={() => {}}
-        onRename={(sessionId, newName) => {
-          renameCalls.push({ id: sessionId, name: newName })
-        }}
-      />
-    )
+    let renderer!: TestRenderer.ReactTestRenderer
+
+    act(() => {
+      renderer = TestRenderer.create(
+        <SessionList
+          sessions={[baseSession]}
+          selectedSessionId={null}
+          loading={false}
+          error={null}
+          onSelect={() => {}}
+          onRename={(sessionId, newName) => {
+            renameCalls.push({ id: sessionId, name: newName })
+          }}
+        />
+      )
+    })
 
     const card = renderer.root.findByProps({ 'data-testid': 'session-card' })
 
     act(() => {
       card.props.onTouchStart()
+    })
+
+    act(() => {
+      card.props.onTouchEnd()
     })
 
     // Find the rename input - it's the one with value equal to the session name
@@ -281,6 +306,9 @@ describe('SessionList component', () => {
     act(() => {
       renderer.unmount()
     })
+
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
   })
 
   test('refresh interval registers and clears on unmount', () => {
