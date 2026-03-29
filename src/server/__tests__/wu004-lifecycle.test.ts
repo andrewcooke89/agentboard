@@ -281,12 +281,14 @@ describe('WU-004: CronAiService config wiring in index.ts', () => {
 
 describe('WU-004: WS close handler calls unregisterMcpClient', () => {
   it('unregisterMcpClient is called in the WS close handler', () => {
-    // Find the close(ws) handler and verify unregisterMcpClient is inside it
-    const closeMatch = INDEX_SOURCE.match(/close\s*\(\s*ws\s*\)\s*\{([\s\S]*?)\n\s*\}/)
-    expect(closeMatch).not.toBeNull()
-    if (closeMatch) {
-      expect(closeMatch[1]).toMatch(/unregisterMcpClient/)
-    }
+    // Find the close(ws) handler in the websocket config and verify unregisterMcpClient is inside it
+    // The pattern captures from close(ws) to the matching closing brace
+    const websocketStart = INDEX_SOURCE.indexOf('websocket:')
+    const closeStart = INDEX_SOURCE.indexOf('close(ws:', websocketStart)
+    expect(closeStart).toBeGreaterThan(-1)
+    // Extract from close( to several lines after to capture the method body
+    const closeSection = INDEX_SOURCE.slice(closeStart, closeStart + 500)
+    expect(closeSection).toMatch(/unregisterMcpClient/)
   })
 })
 
