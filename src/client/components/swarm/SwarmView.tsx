@@ -7,7 +7,7 @@ import EventLog from './EventLog'
 import type { EventLogEntry, BaseEventLogEntry, EventSeverity } from '../../shared/dashboardTypes'
 import type { SwarmEvent } from '../../../shared/swarmTypes'
 
-function convertToLogEntry(event: SwarmEvent): EventLogEntry {
+export function convertToLogEntry(event: SwarmEvent): EventLogEntry {
   const base: Omit<BaseEventLogEntry, 'type' | 'message' | 'severity'> = {
     id: `${event.groupId}-${event.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
     timestamp: Number(event.timestamp),
