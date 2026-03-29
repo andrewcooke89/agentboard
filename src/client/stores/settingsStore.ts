@@ -188,8 +188,8 @@ interface SettingsState {
   setCronShowUserJobs: (v: boolean) => void
   cronDefaultTimelineVisible: boolean
   setCronDefaultTimelineVisible: (v: boolean) => void
-  cronDefaultTimelineRange: string
-  setCronDefaultTimelineRange: (v: string) => void
+  cronDefaultTimelineRange: '24h' | '7d'
+  setCronDefaultTimelineRange: (v: '24h' | '7d') => void
   cronNotifyFailure: boolean
   setCronNotifyFailure: (v: boolean) => void
   cronNotifyMissedRun: boolean
