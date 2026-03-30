@@ -5321,26 +5321,6 @@ export function createDAGEngine(
     return 'started'
   }
 
-  /**
-   * Monitor a running or waiting_signal step with error handling.
-   */
-  function monitorRunningStep(run: WorkflowRun, stepDef: WorkflowStep, stepState: StepRunState): void {
-    try {
-      monitorStep(run, stepDef, stepState)
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err)
-      stepState.status = 'failed'
-      stepState.errorMessage = `monitor error: ${errorMsg}`
-      stepState.completedAt = new Date().toISOString()
-      releasePoolSlotIfHeld(stepState, run) // P0-8: release slot on monitor exception
-      saveAndBroadcast(run)
-      ctx.logger.error('dag_monitor_step_exception', {
-        runId: run.id,
-        step: sanitizeForLog(stepDef.name),
-        error: sanitizeForLog(errorMsg),
-      })
-    }
-  }
 
   /**
    * Ensure standard pipeline variables are populated in run.variables.
