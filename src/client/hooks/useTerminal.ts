@@ -60,7 +60,8 @@ class SafeClipboardProvider implements IClipboardProvider {
     if (selection !== 'c') return ''
     try {
       return await navigator.clipboard.readText()
-    } catch {
+    } catch (error) {
+      console.error('Clipboard read failed:', error)
       return ''
     }
   }
