@@ -49,20 +49,20 @@ export async function extractLogMetadata(
         }
 
         // Extract first user message
-        if (!firstUserMessage) {
-          if (entry.type === 'human' && typeof entry.message === 'string') {
-            firstUserMessage = entry.message.slice(0, 200)
-          } else if (entry.role === 'user' && typeof entry.content === 'string') {
-            firstUserMessage = entry.content.slice(0, 200)
-          } else if (entry.type === 'human' && entry.message?.content) {
-            let text = ''
-            if (typeof entry.message.content === 'string') {
-              text = entry.message.content
-            } else if (Array.isArray(entry.message.content)) {
-              text = entry.message.content.find((b: any) => b.type === 'text')?.text ?? ''
-            }
-            if (text) firstUserMessage = text.slice(0, 200)
-          }
+        if (firstUserMessage) continue
+        
+        if (entry.type === 'human' && typeof entry.message === 'string') {
+          firstUserMessage = entry.message.slice(0, 200)
+        } else if (entry.role === 'user' && typeof entry.content === 'string') {
+          firstUserMessage = entry.content.slice(0, 200)
+        } else if (entry.type === 'human' && entry.message?.content) {
+          const content = entry.message.content
+          const text = typeof content === 'string' 
+            ? content 
+            : Array.isArray(content) 
+              ? content.find((b: any) => b.type === 'text')?.text ?? '' 
+              : ''
+          if (text) firstUserMessage = text.slice(0, 200)
         }
 
         // Detect session type
