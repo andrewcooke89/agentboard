@@ -558,7 +558,7 @@ const wsHandlers = {
 }
 
 // --- Server ---
-const serverOptions = {
+const serverOptions: Parameters<typeof Bun.serve<WSData>>[0] = {
   port: config.port,
   hostname: config.hostname,
   ...(tlsEnabled && {
@@ -567,7 +567,7 @@ const serverOptions = {
       key: Bun.file(config.tlsKey!),
     },
   }),
-  fetch(req, server: any) {
+  fetch(req, server) {
     const url = new URL(req.url)
     if (url.pathname === '/ws') {
       if (
