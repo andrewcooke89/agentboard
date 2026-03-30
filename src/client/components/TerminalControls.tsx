@@ -264,6 +264,34 @@ export default function TerminalControls({
     onSendKey(output)
   }
 
+  const handleClipboardItem = async (
+    item: ClipboardItem,
+    sendAndRefocus: (content: string) => void
+  ): Promise<boolean> => {
+    const imageType = item.types.find((t) => t.startsWith('image/'))
+    if (imageType) {
+      const blob = await item.getType(imageType)
+      const formData = new FormData()
+      formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
+      const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
+      if (res.ok) {
+        const { path } = await res.json()
+        sendAndRefocus(path)
+        return true
+      }
+      return false
+    }
+
+    if (!item.types.includes('text/plain')) return false
+
+    const blob = await item.getType('text/plain')
+    const text = await blob.text()
+    if (!text) return false
+
+    sendAndRefocus(text)
+    return true
+  }
+
   const handlePasteButtonClick = async () => {
     if (disabled) return
     const wasKeyboardVisible = isKeyboardVisible?.() ?? false
@@ -274,31 +302,10 @@ export default function TerminalControls({
       if (wasKeyboardVisible) onRefocus?.()
     }
 
-    // Try Clipboard API with image support
     try {
       const items = await navigator.clipboard.read()
       for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith('image/'))
-        if (imageType) {
-          const blob = await item.getType(imageType)
-          const formData = new FormData()
-          formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
-          const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
-          if (!res.ok) continue
-          
-          const { path } = await res.json()
-          sendAndRefocus(path)
-          return
-        }
-
-        if (!item.types.includes('text/plain')) continue
-        
-        const blob = await item.getType('text/plain')
-        const text = await blob.text()
-        if (!text) continue
-        
-        sendAndRefocus(text)
-        return
+        if (await handleClipboardItem(item, sendAndRefocus)) return
       }
     } catch {
       try {
