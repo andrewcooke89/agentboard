@@ -401,7 +401,7 @@ export default function NewSessionModal({
       {showBrowser && (
         <DirectoryBrowser
           initialPath={browserInitialPath}
-          onSelect={(path) => {
+          onSelect={(path: string) => {
             setProjectPath(path)
             setShowBrowser(false)
           }}
