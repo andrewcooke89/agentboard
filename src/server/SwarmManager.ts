@@ -226,7 +226,7 @@ export class SwarmManager {
           woId: event.woId,
           action: 'completed',
           model: group.wos[event.woId]?.model || undefined,
-          durationSeconds: event.durationSeconds,
+          durationSeconds: event.durationSeconds ?? undefined,
           inputTokens: event.tokenUsage?.inputTokens ?? 0,
           outputTokens: event.tokenUsage?.outputTokens ?? 0,
           source: 'swarm-ui',
