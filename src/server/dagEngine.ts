@@ -5136,6 +5136,217 @@ export function createDAGEngine(
    * Called at tick() start — lazy initialization so variables are set regardless of how the run was created.
    * Persists variables directly to DB without touching steps_state (avoids race with async handlers).
    */
+  // ── tickInner Helper Functions ──────────────────────────────────────
+
+  /**
+   * A2: Initialize branch isolation if enabled and not yet done.
+   * Returns true if tick should exit early (isolation started or pending).
+   */
+  function initBranchIsolationIfNeeded(run: WorkflowRun, parsed: ParsedWorkflow): boolean {
+    // Guard: skip if already done OR if already pending
+    if (run.variables?.branch_isolation !== 'true') return false
+    if (run.variables?._branch_isolation_done) return false
+    if (run.variables?._branch_isolation_pending === 'true') return false
+
+    const projectPath = run.variables.project_path || run.output_dir
+    const fileList = run.variables.file_list ? run.variables.file_list.split(',') : ['*']
+    const tier = getRunTier(run, parsed)
+
+    // Track project path for periodic cleanup
+    if (projectPath) seenProjectPaths.add(projectPath)
+
+    // Build active runs list from currently running workflows
+    const runningRuns = workflowStore.getRunningRuns()
+    const activeRuns = runningRuns
+      .filter(r => r.id !== run.id)
+      .map(r => {
+        const rFileList = r.variables?.file_list ? r.variables.file_list.split(',') : ['*']
+        // Parse tier from variables or default to 1
+        const rTier = r.variables?.tier ? parseInt(r.variables.tier, 10) || 1 : 1
+        return { run_id: r.id, file_list: rFileList, tier: rTier }
+      })
+
+    // P1-34: set pending flag before async call so subsequent ticks skip step processing
+    if (!run.variables) run.variables = {}
+    run.variables._branch_isolation_pending = 'true'
+    workflowStore.updateRun(run.id, { variables: run.variables })
+
+    initBranchIsolation(run.id, fileList, tier, activeRuns, getBranchIsolationStore(), projectPath, 'HEAD')
+      .then(result => {
+        if (!run.variables) run.variables = {}
+        if (result.isolated === true && result.worktreePath) {
+          run.variables._original_project_path = run.variables.project_path || ''
+          run.variables.project_path = result.worktreePath
+          run.variables._worktree_path = result.worktreePath
+          ctx.logger.info('branch_isolation_created', { runId: run.id, worktreePath: result.worktreePath })
+        } else if (result.error) {
+          ctx.logger.warn('branch_isolation_error', { runId: run.id, error: result.error })
+        }
+        run.variables._branch_isolation_done = 'true'
+        run.variables._branch_isolation_pending = 'false'
+        workflowStore.updateRun(run.id, { variables: run.variables })
+        broadcastRunUpdate(run)
+      })
+      .catch(err => {
+        ctx.logger.warn('branch_isolation_init_failed', { runId: run.id, error: String(err) })
+        if (!run.variables) run.variables = {}
+        // P1-41: set _branch_isolation_failed so callers can detect failure
+        run.variables._branch_isolation_failed = 'true'
+        run.variables._branch_isolation_done = 'true'
+        run.variables._branch_isolation_pending = 'false'
+        workflowStore.updateRun(run.id, { variables: run.variables })
+      })
+
+    return true // P1-34: skip step processing this tick while isolation initializes
+  }
+
+  /**
+   * Process a pending step: tier filtering, condition evaluation, pool slot, and output invalidation.
+   * Returns 'started' if step was started, 'skipped'/'queued' if handled, 'continue' if should retry.
+   */
+  function processPendingStep(
+    run: WorkflowRun,
+    stepDef: WorkflowStep,
+    stepState: StepRunState,
+    runTier: number,
+    parsed: ParsedWorkflow,
+  ): 'started' | 'skipped' | 'queued' | 'continue' {
+    // Tier filtering
+    const tierSkip = evaluateTierFilter(stepDef, runTier)
+    if (tierSkip) {
+      stepState.status = 'skipped'
+      stepState.skippedReason = tierSkip
+      stepState.completedAt = new Date().toISOString()
+      saveAndBroadcast(run)
+      return 'skipped'
+    }
+
+    // Condition evaluation
+    if (stepDef.condition) {
+      const condResult = evaluateCondition(run, stepDef.condition, parsed)
+      if (!condResult.met) {
+        stepState.status = 'skipped'
+        stepState.skippedReason = condResult.reason ?? 'condition not met'
+        stepState.completedAt = new Date().toISOString()
+        saveAndBroadcast(run)
+        return 'skipped'
+      }
+    }
+
+    // Pool slot for spawn_session
+    if (stepDef.type === 'spawn_session' && pool && parsed.system?.session_pool) {
+      if (!POOL_BYPASS_TYPES.has(stepDef.type)) {
+        const result = pool.requestSlot({
+          runId: run.id,
+          stepName: stepDef.name,
+          tier: runTier,
+        })
+        // REQ-24: Queue full -- reject at slot-request level
+        if (result.rejected || !result.slot) {
+          ctx.logger.warn('dag_pool_queue_full', {
+            runId: run.id,
+            step: sanitizeForLog(stepDef.name),
+            reason: result.reason,
+          })
+          // Leave as pending; will retry on next tick when queue has room
+          return 'continue'
+        }
+        stepState.poolSlotId = result.slot.id
+        if (result.slot.status === 'queued') {
+          stepState.status = 'queued'
+          saveAndBroadcast(run)
+          ctx.broadcast({
+            type: 'step_queued',
+            runId: run.id,
+            stepName: stepDef.name,
+            queuePosition: pool.getStatus().queue.length,
+          })
+          return 'queued'
+        }
+        ctx.broadcast({
+          type: 'pool_slot_granted',
+          runId: run.id,
+          stepName: stepDef.name,
+          slotId: result.slot.id,
+        })
+      }
+    }
+
+    // Output invalidation check: if this step has dependencies, compute input hash
+    // from parent outputs and check if cached output is still valid.
+    if (stepDef.depends_on && stepDef.depends_on.length > 0) {
+      try {
+        const store = getOutputInvalidationStore()
+        const parentOutputs = stepDef.depends_on
+          .map(depName => {
+            const depState = run.steps_state.find(s => s.name === depName)
+            return depState?.resultContent ?? ''
+          })
+          .join('|')
+        const inputHash = computeHash(parentOutputs)
+        const execCtx = { runId: run.id, outputDir: run.output_dir || '', logger: ctx.logger }
+
+        // Synchronous check: look up existing record and compare input hash
+        const existing = store.getStepOutput(run.id, stepState.name)
+        const isInvalidated = existing
+          ? (!existing.valid || (existing.input_hash !== '' && existing.input_hash !== inputHash))
+          : false
+
+        if (isInvalidated) {
+          const depGraph = depGraphCache.get(run.id) ?? new Map<string, string[]>()
+          // invalidateDownstream is async but performs sync SQLite ops -- fire and forget
+          invalidateDownstream(stepState.name, execCtx, store, depGraph).catch(() => {})
+
+          const breaker = checkCircuitBreaker(run.id, store)
+          if (breaker.shouldPause) {
+            stepState.status = 'paused_human' as StepRunState['status']
+            stepState.errorMessage = `Circuit breaker: ${breaker.invalidationCount} invalidations in run`
+            stepState.completedAt = new Date().toISOString()
+            saveAndBroadcast(run)
+            ctx.logger.warn('output_invalidation_circuit_breaker', {
+              runId: run.id,
+              step: sanitizeForLog(stepState.name),
+              invalidationCount: breaker.invalidationCount,
+            })
+            return 'skipped'
+          }
+        }
+      } catch {
+        // Best effort -- invalidation check should not block step execution
+      }
+    }
+
+    // Start the step
+    startStep(run, stepDef, stepState)
+    return 'started'
+  }
+
+  /**
+   * Monitor a running or waiting_signal step with error handling.
+   */
+  function monitorRunningStep(run: WorkflowRun, stepDef: WorkflowStep, stepState: StepRunState): void {
+    try {
+      monitorStep(run, stepDef, stepState)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      stepState.status = 'failed'
+      stepState.errorMessage = `monitor error: ${errorMsg}`
+      stepState.completedAt = new Date().toISOString()
+      releasePoolSlotIfHeld(stepState, run) // P0-8: release slot on monitor exception
+      saveAndBroadcast(run)
+      ctx.logger.error('dag_monitor_step_exception', {
+        runId: run.id,
+        step: sanitizeForLog(stepDef.name),
+        error: sanitizeForLog(errorMsg),
+      })
+    }
+  }
+
+  /**
+   * Ensure standard pipeline variables are populated in run.variables.
+   * Called at tick() start — lazy initialization so variables are set regardless of how the run was created.
+   * Persists variables directly to DB without touching steps_state (avoids race with async handlers).
+   */
   function ensureStandardVariables(run: WorkflowRun): void {
     if (!run.variables) run.variables = {}
     let changed = false
@@ -5220,58 +5431,14 @@ export function createDAGEngine(
     ensureStandardVariables(run)
 
     // A2: Branch isolation — create worktree on first tick if enabled
-    // Guard: skip if already done OR if already pending (prevents duplicate initBranchIsolation calls on consecutive ticks)
-    if (run.variables?.branch_isolation === 'true' && !run.variables?._branch_isolation_done && run.variables?._branch_isolation_pending !== 'true') {
-      const projectPath = run.variables.project_path || run.output_dir
-      const fileList = run.variables.file_list ? run.variables.file_list.split(',') : ['*']
-      const tier = getRunTier(run, parsed)
+    if (initBranchIsolationIfNeeded(run, parsed)) return;
 
-      // Track project path for periodic cleanup
-      if (projectPath) seenProjectPaths.add(projectPath)
-
-      // Build active runs list from currently running workflows
-      const runningRuns = workflowStore.getRunningRuns()
-      const activeRuns = runningRuns
-        .filter(r => r.id !== run.id)
-        .map(r => {
-          const rFileList = r.variables?.file_list ? r.variables.file_list.split(',') : ['*']
-          // Parse tier from variables or default to 1
-          const rTier = r.variables?.tier ? parseInt(r.variables.tier, 10) || 1 : 1
-          return { run_id: r.id, file_list: rFileList, tier: rTier }
-        })
-
-      // P1-34: set pending flag before async call so subsequent ticks skip step processing
-      if (!run.variables) run.variables = {}
-      run.variables._branch_isolation_pending = 'true'
-      workflowStore.updateRun(run.id, { variables: run.variables })
-
-      initBranchIsolation(run.id, fileList, tier, activeRuns, getBranchIsolationStore(), projectPath, 'HEAD')
-        .then(result => {
-          if (!run.variables) run.variables = {}
-          if (result.isolated === true && result.worktreePath) {
-            run.variables._original_project_path = run.variables.project_path || ''
-            run.variables.project_path = result.worktreePath
-            run.variables._worktree_path = result.worktreePath
-            ctx.logger.info('branch_isolation_created', { runId: run.id, worktreePath: result.worktreePath })
-          } else if (result.error) {
-            ctx.logger.warn('branch_isolation_error', { runId: run.id, error: result.error })
-          }
-          run.variables._branch_isolation_done = 'true'
-          run.variables._branch_isolation_pending = 'false'
-          workflowStore.updateRun(run.id, { variables: run.variables })
-          broadcastRunUpdate(run)
-        })
-        .catch(err => {
-          ctx.logger.warn('branch_isolation_init_failed', { runId: run.id, error: String(err) })
-          if (!run.variables) run.variables = {}
-          // P1-41: set _branch_isolation_failed so callers can detect failure
-          run.variables._branch_isolation_failed = 'true'
-          run.variables._branch_isolation_done = 'true'
-          run.variables._branch_isolation_pending = 'false'
-          workflowStore.updateRun(run.id, { variables: run.variables })
-        })
-      return // P1-34: skip step processing this tick while isolation initializes
+    // P1-34: if branch isolation is in progress, skip step processing
+    if (run.variables?.branch_isolation === 'true' && run.variables?._branch_isolation_pending === 'true') {
+      return;
     }
+
+    // (branch isolation body extracted to initBranchIsolationIfNeeded helper)
 
     // P1-34: if branch isolation is in progress, skip step processing
     if (run.variables?.branch_isolation === 'true' && run.variables?._branch_isolation_pending === 'true') {
@@ -5387,119 +5554,10 @@ export function createDAGEngine(
         continue
       }
 
-      // For top-level non-group steps: tier filtering and condition evaluation
+      // For top-level non-group steps: tier filtering, condition, pool, and output invalidation
       if (stepState.status === 'pending') {
-
-        // Tier filtering
-        const tierSkip = evaluateTierFilter(stepDef, runTier)
-        if (tierSkip) {
-          stepState.status = 'skipped'
-          stepState.skippedReason = tierSkip
-          stepState.completedAt = new Date().toISOString()
-          saveAndBroadcast(run)
-          continue
-        }
-
-        // Condition evaluation
-        if (stepDef.condition) {
-          const condResult = evaluateCondition(run, stepDef.condition, parsed)
-          if (!condResult.met) {
-            stepState.status = 'skipped'
-            stepState.skippedReason = condResult.reason ?? 'condition not met'
-            stepState.completedAt = new Date().toISOString()
-            saveAndBroadcast(run)
-            continue
-          }
-        }
-
-        // Pool slot for spawn_session
-        if (stepDef.type === 'spawn_session' && pool && parsed.system?.session_pool) {
-          if (!POOL_BYPASS_TYPES.has(stepDef.type)) {
-            const result = pool.requestSlot({
-              runId: run.id,
-              stepName: stepDef.name,
-              tier: runTier,
-            })
-            // REQ-24: Queue full -- reject at slot-request level
-            if (result.rejected || !result.slot) {
-              ctx.logger.warn('dag_pool_queue_full', {
-                runId: run.id,
-                step: sanitizeForLog(stepDef.name),
-                reason: result.reason,
-              })
-              // Leave as pending; will retry on next tick when queue has room
-              continue
-            }
-            stepState.poolSlotId = result.slot.id
-            if (result.slot.status === 'queued') {
-              stepState.status = 'queued'
-              saveAndBroadcast(run)
-              ctx.broadcast({
-                type: 'step_queued',
-                runId: run.id,
-                stepName: stepDef.name,
-                queuePosition: pool.getStatus().queue.length,
-              })
-              continue
-            }
-            ctx.broadcast({
-              type: 'pool_slot_granted',
-              runId: run.id,
-              stepName: stepDef.name,
-              slotId: result.slot.id,
-            })
-          }
-        }
-
-        // Output invalidation check: if this step has dependencies, compute input hash
-        // from parent outputs and check if cached output is still valid.
-        // Note: checkOutputInvalidation/invalidateDownstream are async in signature but
-        // perform only synchronous SQLite operations; we fire-and-forget with .then()
-        // but use a synchronous pre-check via the store directly for the blocking decision.
-        if (stepDef.depends_on && stepDef.depends_on.length > 0) {
-          try {
-            const store = getOutputInvalidationStore()
-            const parentOutputs = stepDef.depends_on
-              .map(depName => {
-                const depState = run.steps_state.find(s => s.name === depName)
-                return depState?.resultContent ?? ''
-              })
-              .join('|')
-            const inputHash = computeHash(parentOutputs)
-            const execCtx = { runId: run.id, outputDir: run.output_dir || '', logger: ctx.logger }
-
-            // Synchronous check: look up existing record and compare input hash
-            const existing = store.getStepOutput(run.id, stepState.name)
-            const isInvalidated = existing
-              ? (!existing.valid || (existing.input_hash !== '' && existing.input_hash !== inputHash))
-              : false
-
-            if (isInvalidated) {
-              const depGraph = depGraphCache.get(run.id) ?? new Map<string, string[]>()
-              // invalidateDownstream is async but performs sync SQLite ops -- fire and forget
-              invalidateDownstream(stepState.name, execCtx, store, depGraph).catch(() => {})
-
-              const breaker = checkCircuitBreaker(run.id, store)
-              if (breaker.shouldPause) {
-                stepState.status = 'paused_human' as StepRunState['status']
-                stepState.errorMessage = `Circuit breaker: ${breaker.invalidationCount} invalidations in run`
-                stepState.completedAt = new Date().toISOString()
-                saveAndBroadcast(run)
-                ctx.logger.warn('output_invalidation_circuit_breaker', {
-                  runId: run.id,
-                  step: sanitizeForLog(stepState.name),
-                  invalidationCount: breaker.invalidationCount,
-                })
-                continue
-              }
-            }
-          } catch {
-            // Best effort -- invalidation check should not block step execution
-          }
-        }
-
-        // Start the step
-        startStep(run, stepDef, stepState)
+        const result = processPendingStep(run, stepDef, stepState, runTier, parsed);
+        if (result !== 'started') continue;
       }
 
       // Handle queued steps
