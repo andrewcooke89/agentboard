@@ -189,33 +189,33 @@ export function createTaskWorker(
         // Create follow-up task if parent completed successfully
         if (updated && updated.status === 'completed' && task.followUpPrompt?.trim()) {
           // Verify project path is still accessible before creating follow-up
-          let pathOk = true
-          try { fs.accessSync(task.projectPath, fs.constants.R_OK) } catch { pathOk = false }
-
-          if (!pathOk) {
+          try { 
+            fs.accessSync(task.projectPath, fs.constants.R_OK) 
+          } catch {
             ctx.logger.warn('task_follow_up_skipped', {
               parentId: task.id,
               reason: 'project_path_inaccessible',
             })
-          } else {
-            const childTask = taskStore.createTask({
-              projectPath: task.projectPath,
-              prompt: task.followUpPrompt.trim(),
-              templateId: null,
-              priority: task.priority,
-              status: 'queued',
-              maxRetries: task.maxRetries,
-              timeoutSeconds: task.timeoutSeconds,
-              parentTaskId: task.id,
-              followUpPrompt: null,
-              metadata: null,
-            })
-            ctx.broadcast({ type: 'task-created', task: childTask })
-            ctx.logger.info('task_follow_up_created', {
-              parentId: task.id,
-              childId: childTask.id,
-            })
+            continue
           }
+
+          const childTask = taskStore.createTask({
+            projectPath: task.projectPath,
+            prompt: task.followUpPrompt.trim(),
+            templateId: null,
+            priority: task.priority,
+            status: 'queued',
+            maxRetries: task.maxRetries,
+            timeoutSeconds: task.timeoutSeconds,
+            parentTaskId: task.id,
+            followUpPrompt: null,
+            metadata: null,
+          })
+          ctx.broadcast({ type: 'task-created', task: childTask })
+          ctx.logger.info('task_follow_up_created', {
+            parentId: task.id,
+            childId: childTask.id,
+          })
         }
         continue
       }
