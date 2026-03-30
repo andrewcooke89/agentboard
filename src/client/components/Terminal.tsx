@@ -681,9 +681,7 @@ export default function Terminal({
       // Don't preventDefault - that breaks iOS selection dismissal
       // We'll swallow the synthetic mouse event instead to protect tmux
       if (isSelectingTextRef.current || activeSelection) {
-        if (inTmuxCopyModeRef.current) {
-          swallowNextMouseRef.current = true
-        }
+        swallowNextMouseRef.current = inTmuxCopyModeRef.current
         return
       }
 
