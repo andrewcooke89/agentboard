@@ -40,34 +40,49 @@ function mapSlotRow(row: Record<string, unknown>): PoolSlotRequest {
   }
 }
 
+function prepareStatements(db: SQLiteDatabase) {
+  return {
+    getConfigStmt: db.prepare(
+      'SELECT max_slots, updated_at FROM session_pool_config WHERE id = 1',
+    ),
+    updateConfigStmt: db.prepare(
+      "UPDATE session_pool_config SET max_slots = $maxSlots, updated_at = datetime('now') WHERE id = 1",
+    ),
+    insertSlotStmt: db.prepare(
+      `INSERT INTO pool_slot_requests (id, run_id, step_name, tier, status, requested_at, granted_at)
+       VALUES ($id, $runId, $stepName, $tier, $status, datetime('now'), $grantedAt)`,
+    ),
+    updateSlotStatusStmt: db.prepare(
+      'UPDATE pool_slot_requests SET status = $status, granted_at = $grantedAt, released_at = $releasedAt WHERE id = $id',
+    ),
+    countActiveStmt: db.prepare(
+      "SELECT COUNT(*) as cnt FROM pool_slot_requests WHERE status = 'active'",
+    ),
+    nextQueuedStmt: db.prepare(
+      "SELECT * FROM pool_slot_requests WHERE status = 'queued' ORDER BY tier DESC, requested_at ASC LIMIT 1",
+    ),
+    listActiveStmt: db.prepare(
+      "SELECT * FROM pool_slot_requests WHERE status = 'active' ORDER BY granted_at ASC",
+    ),
+    listQueuedStmt: db.prepare(
+      "SELECT * FROM pool_slot_requests WHERE status = 'queued' ORDER BY tier DESC, requested_at ASC",
+    ),
+    getSlotStmt: db.prepare('SELECT * FROM pool_slot_requests WHERE id = $id'),
+  }
+}
+
 export function createPoolStore(db: SQLiteDatabase) {
-  // Prepared statements
-  const getConfigStmt = db.prepare(
-    'SELECT max_slots, updated_at FROM session_pool_config WHERE id = 1',
-  )
-  const updateConfigStmt = db.prepare(
-    "UPDATE session_pool_config SET max_slots = $maxSlots, updated_at = datetime('now') WHERE id = 1",
-  )
-  const insertSlotStmt = db.prepare(
-    `INSERT INTO pool_slot_requests (id, run_id, step_name, tier, status, requested_at, granted_at)
-     VALUES ($id, $runId, $stepName, $tier, $status, datetime('now'), $grantedAt)`,
-  )
-  const updateSlotStatusStmt = db.prepare(
-    'UPDATE pool_slot_requests SET status = $status, granted_at = $grantedAt, released_at = $releasedAt WHERE id = $id',
-  )
-  const countActiveStmt = db.prepare(
-    "SELECT COUNT(*) as cnt FROM pool_slot_requests WHERE status = 'active'",
-  )
-  const nextQueuedStmt = db.prepare(
-    "SELECT * FROM pool_slot_requests WHERE status = 'queued' ORDER BY tier DESC, requested_at ASC LIMIT 1",
-  )
-  const listActiveStmt = db.prepare(
-    "SELECT * FROM pool_slot_requests WHERE status = 'active' ORDER BY granted_at ASC",
-  )
-  const listQueuedStmt = db.prepare(
-    "SELECT * FROM pool_slot_requests WHERE status = 'queued' ORDER BY tier DESC, requested_at ASC",
-  )
-  const getSlotStmt = db.prepare('SELECT * FROM pool_slot_requests WHERE id = $id')
+  const {
+    getConfigStmt,
+    updateConfigStmt,
+    insertSlotStmt,
+    updateSlotStatusStmt,
+    countActiveStmt,
+    nextQueuedStmt,
+    listActiveStmt,
+    listQueuedStmt,
+    getSlotStmt,
+  } = prepareStatements(db)
 
   return {
     getPoolConfig(): PoolConfig {
