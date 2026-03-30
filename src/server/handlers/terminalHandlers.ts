@@ -95,12 +95,13 @@ export function createTerminalHandlers(
 
     try {
       await ws.data.terminal.start()
-      return ws.data.terminal
     } catch (error) {
       handleTerminalError(ws, ws.data.currentSessionId, error, 'ERR_TMUX_ATTACH_FAILED')
       ws.data.terminal = null
       return null
     }
+
+    return ws.data.terminal
   }
 
   function captureTmuxHistory(target: string): string | null {
