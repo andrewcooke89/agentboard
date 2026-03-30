@@ -86,6 +86,42 @@ export function createSessionPool(db: SQLiteDatabase): SessionPool {
   // REQ-24: Queue depth limit resolved from env (default 50)
   const maxQueueDepth = Number(process.env.AGENTBOARD_MAX_POOL_QUEUE_DEPTH) || 50
 
+  function requestSlotTxn(request: { runId: string; stepName: string; tier: number }) {
+    const config = store.getPoolConfig()
+    const activeCount = store.getActiveCount()
+
+    // Case 1: Capacity available -- grant immediately
+    if (activeCount < config.maxSlots) {
+      const slot = store.insertSlot({
+        ...request,
+        status: 'active',
+        grantedAt: new Date().toISOString(),
+      })
+      return { slot, rejected: false } as SlotRequestResult
+    }
+
+    // Case 2 vs 3: Pool is full -- check queue depth before queuing
+    // CF-01/REQ-24: Check queue length BEFORE adding to queue
+    const currentQueueDepth = store.listQueuedSlots().length
+    if (currentQueueDepth >= maxQueueDepth) {
+      // Case 3: Queue full -- reject
+      return {
+        slot: null,
+        rejected: true,
+        reason: `Pool queue full (${currentQueueDepth} pending, max ${maxQueueDepth}). Wait for current steps to complete or increase pool size.`,
+        queueDepth: currentQueueDepth,
+        maxDepth: maxQueueDepth,
+      } as SlotRequestResult
+    }
+
+    // Case 2: Queue has room -- insert as queued
+    const slot = store.insertSlot({
+      ...request,
+      status: 'queued',
+    })
+    return { slot, rejected: false } as SlotRequestResult
+  }
+
   return {
     /**
      * Request a pool slot. Uses BEGIN IMMEDIATE transaction for safety.
@@ -100,41 +136,7 @@ export function createSessionPool(db: SQLiteDatabase): SessionPool {
      * 3. Pool full, queue at max depth -> request REJECTED (queue full)
      */
     requestSlot(request) {
-      const txn = db.transaction(() => {
-        const config = store.getPoolConfig()
-        const activeCount = store.getActiveCount()
-
-        // Case 1: Capacity available -- grant immediately
-        if (activeCount < config.maxSlots) {
-          const slot = store.insertSlot({
-            ...request,
-            status: 'active',
-            grantedAt: new Date().toISOString(),
-          })
-          return { slot, rejected: false } as SlotRequestResult
-        }
-
-        // Case 2 vs 3: Pool is full -- check queue depth before queuing
-        // CF-01/REQ-24: Check queue length BEFORE adding to queue
-        const currentQueueDepth = store.listQueuedSlots().length
-        if (currentQueueDepth >= maxQueueDepth) {
-          // Case 3: Queue full -- reject
-          return {
-            slot: null,
-            rejected: true,
-            reason: `Pool queue full (${currentQueueDepth} pending, max ${maxQueueDepth}). Wait for current steps to complete or increase pool size.`,
-            queueDepth: currentQueueDepth,
-            maxDepth: maxQueueDepth,
-          } as SlotRequestResult
-        }
-
-        // Case 2: Queue has room -- insert as queued
-        const slot = store.insertSlot({
-          ...request,
-          status: 'queued',
-        })
-        return { slot, rejected: false } as SlotRequestResult
-      })
+      const txn = db.transaction(() => requestSlotTxn(request))
       return txn.immediate()
     },
 
