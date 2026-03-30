@@ -1008,21 +1008,17 @@ process.on('SIGTERM', () => process.exit(130))
 process.on('SIGINT', () => process.exit(130))
 process.on('exit', (code) => {
   if (code !== 0 && !signalWritten && signalDir) {
-    try {
-      fs.mkdirSync(signalDir, { recursive: true })
-      const signal = {
-        version: 1,
-        signal_type: 'error',
-        timestamp: new Date().toISOString(),
-        agent: 'wu-orchestrator',
-        step_name: 'implement',
-        message: `Orchestrator crashed with exit code ${code}`,
-      }
-      const finalPath = path.join(signalDir, 'implement_completed.yaml')
-      fs.writeFileSync(finalPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
-    } catch (e) {
-      throw e
+    fs.mkdirSync(signalDir, { recursive: true })
+    const signal = {
+      version: 1,
+      signal_type: 'error',
+      timestamp: new Date().toISOString(),
+      agent: 'wu-orchestrator',
+      step_name: 'implement',
+      message: `Orchestrator crashed with exit code ${code}`,
     }
+    const finalPath = path.join(signalDir, 'implement_completed.yaml')
+    fs.writeFileSync(finalPath, yaml.dump(signal, { lineWidth: 120, noRefs: true }), 'utf-8')
   }
 })
 
