@@ -208,20 +208,9 @@ export function validateSpec(
         continue
       }
 
-      // Type checking
-      if (fieldDef && typeof fieldDef === 'object' && !Array.isArray(fieldDef)) {
-        const def = fieldDef as Record<string, unknown>
-        if (def.type) {
-          const expectedType = String(def.type)
-          const actualValue = spec[fieldName]
-          if (!checkFieldType(actualValue, expectedType)) {
-            report.errors.push({
-              field: fieldName,
-              message: `Field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
-              type: 'wrong_type',
-            })
-          }
-        }
+      const typeError = validateFieldType(fieldName, fieldDef, spec[fieldName])
+      if (typeError) {
+        report.errors.push(typeError)
       }
     }
   }
@@ -233,19 +222,9 @@ export function validateSpec(
       if (!(fieldName in spec) || spec[fieldName] === null || spec[fieldName] === undefined) {
         continue // Optional field not present, that's fine
       }
-      if (fieldDef && typeof fieldDef === 'object' && !Array.isArray(fieldDef)) {
-        const def = fieldDef as Record<string, unknown>
-        if (def.type) {
-          const expectedType = String(def.type)
-          const actualValue = spec[fieldName]
-          if (!checkFieldType(actualValue, expectedType)) {
-            report.warnings.push({
-              field: fieldName,
-              message: `Optional field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
-              type: 'wrong_type',
-            })
-          }
-        }
+      const typeWarning = validateOptionalFieldType(fieldName, fieldDef, spec[fieldName])
+      if (typeWarning) {
+        report.warnings.push(typeWarning)
       }
     }
   }
@@ -322,6 +301,52 @@ function checkFieldType(value: unknown, expectedType: string): boolean {
     default:
       return true // Unknown type, pass
   }
+}
+
+function validateFieldType(
+  fieldName: string,
+  fieldDef: unknown,
+  actualValue: unknown,
+): SpecValidationError | null {
+  if (!fieldDef || typeof fieldDef !== 'object' || Array.isArray(fieldDef)) {
+    return null
+  }
+  const def = fieldDef as Record<string, unknown>
+  if (!def.type) {
+    return null
+  }
+  const expectedType = String(def.type)
+  if (!checkFieldType(actualValue, expectedType)) {
+    return {
+      field: fieldName,
+      message: `Field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
+      type: 'wrong_type',
+    }
+  }
+  return null
+}
+
+function validateOptionalFieldType(
+  fieldName: string,
+  fieldDef: unknown,
+  actualValue: unknown,
+): SpecValidationError | null {
+  if (!fieldDef || typeof fieldDef !== 'object' || Array.isArray(fieldDef)) {
+    return null
+  }
+  const def = fieldDef as Record<string, unknown>
+  if (!def.type) {
+    return null
+  }
+  const expectedType = String(def.type)
+  if (!checkFieldType(actualValue, expectedType)) {
+    return {
+      field: fieldName,
+      message: `Optional field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
+      type: 'wrong_type',
+    }
+  }
+  return null
 }
 
 function runConstitutionCheck(
