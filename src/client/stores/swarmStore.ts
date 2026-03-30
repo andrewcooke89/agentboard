@@ -41,13 +41,14 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
       const wos: SwarmGroupState['wos'] = {}
       if ('woIds' in event) {
         for (const woId of (event as { woIds: string[] }).woIds) {
-          wos[woId] = {
+          const woState: SwarmWoState = {
             woId, title: woId, status: 'pending', model: '', attempt: 0,
             maxRetries: 0, escalationTier: 0, escalationChain: [], dependsOn: [],
             tokenUsage: { inputTokens: 0, outputTokens: 0 }, gateResults: null,
             errorHistory: [], filesChanged: [], unifiedDiff: null, startedAt: null, completedAt: null,
             durationSeconds: null,
           }
+          wos[woId] = woState
         }
       }
       const newGroup: SwarmGroupState = {
