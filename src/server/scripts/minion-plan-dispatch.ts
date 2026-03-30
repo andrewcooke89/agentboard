@@ -116,21 +116,9 @@ async function pollTask(
     }
 
     if (['completed', 'failed', 'cancelled'].includes(task.status)) {
-      // Fetch output on terminal status
       let output: string | undefined
       if (task.status === 'completed') {
-        try {
-          const outRes = await fetch(`${apiUrl}/api/tasks/${taskId}/output`)
-          if (outRes.ok) {
-            output = await outRes.text()
-          } else if (task.outputPath) {
-            // Fall back to reading the output file directly
-            const f = Bun.file(task.outputPath)
-            output = await f.text()
-          }
-        } catch {
-          // Output read failure is non-fatal — we'll detect missing DISPATCH_ID below
-        }
+        output = await fetchTaskOutput(apiUrl, taskId, task.outputPath ?? null)
       }
       return { status: task.status, output }
     }
@@ -170,6 +158,27 @@ async function pollDispatch(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async function fetchTaskOutput(
+  apiUrl: string,
+  taskId: string,
+  outputPath: string | null,
+): Promise<string | undefined> {
+  try {
+    const outRes = await fetch(`${apiUrl}/api/tasks/${taskId}/output`)
+    if (outRes.ok) {
+      const json = (await outRes.json()) as { output?: string }
+      return json.output
+    }
+    if (outputPath) {
+      const f = Bun.file(outputPath)
+      return await f.text()
+    }
+  } catch (err) {
+    log(`WARN: Failed to read task output: ${err}`)
+  }
+  return undefined
+}
 
 function formatDate(): string {
   return new Date().toISOString().slice(0, 10)
