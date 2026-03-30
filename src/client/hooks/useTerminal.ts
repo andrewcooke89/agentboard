@@ -503,8 +503,8 @@ export function useTerminal({
       if (webLinksAddonRef.current) {
         try {
           webLinksAddonRef.current.dispose()
-        } catch {
-          // Ignore
+        } catch (error) {
+          console.error('WebLinksAddon disposal failed:', error)
         }
         webLinksAddonRef.current = null
       }
