@@ -16,7 +16,7 @@ export class CronLogService {
   async getLogs(
     _jobId: string,
     _lines: number,
-    offset?: number
+    _offset?: number
   ): Promise<string[]> {
     // Log sources will be connected via WU-007
     return []
