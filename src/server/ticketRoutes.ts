@@ -122,40 +122,6 @@ async function dispatchSmallTicket(
   return new Response(JSON.stringify({ ok: true, dispatch_id, group_id: groupId, effort: 'small' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
 }
 
-async function dispatchMediumTicket(
-  ticketId: string,
-  projectPath: string,
-  baseUrl: string,
-  broadcastFn: (message: Record<string, unknown>) => void,
-  metricsStore?: MetricsStore,
-): Promise<Response> {
-  const scriptDir = path.join(import.meta.dir, 'scripts')
-  const scriptPath = path.join(scriptDir, 'minion-plan-dispatch.ts')
-
-  const taskResp = await fetch(`${baseUrl}/api/tasks`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectPath,
-      prompt: `Run the plan-dispatch script for ticket ${ticketId}:\nbun run ${scriptPath} --ticket-id ${ticketId} --project ${projectPath} --api-url ${baseUrl}`,
-      timeoutSeconds: 2700,
-      metadata: { source: 'minion-ondemand', ticket_id: ticketId },
-    }),
-  })
-  if (!taskResp.ok) return new Response(JSON.stringify({ error: `Failed to create task: ${taskResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
-
-  const { id: taskId } = await taskResp.json() as { id: string }
-  broadcastFn({ type: 'ticket-update', ticket: { id: ticketId, status: 'in-progress' }, action: 'fix-dispatched' })
-  try {
-    metricsStore?.recordTicketEvent({
-      ticketId,
-      action: 'fix-dispatched',
-      source: 'on-demand',
-      metadata: { task_id: taskId, effort: 'medium' },
-    })
-  } catch { /* non-fatal */ }
-  return new Response(JSON.stringify({ ok: true, task_id: taskId, effort: 'medium' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
-}
 
 // ─── Route Registration ─────────────────────────────────────────────────────
 
@@ -303,10 +269,28 @@ export function registerTicketRoutes(
       storage.transitionTicket(ticketId, 'in-progress', { reason: 'On-demand fix dispatch' })
     } catch { /* may already be in-progress */ }
 
-    if (effort === 'small' || (project.auto_merge_efforts ?? ['small']).includes(effort)) {
-      // Direct WO dispatch
+    // Determine if this ticket can use direct dispatch (single-agent, no planning step)
+    // "Easy medium" tickets: long-function 150-350 LOC, deep-nesting with moderate depth
+    const isEasyMedium = effort === 'medium' && (() => {
+      const title = ticket.title || ''
+      // long-function: extract line count from title like "Function 'foo' is 175 lines"
+      const funcMatch = title.match(/is (\d+) lines/)
+      if (funcMatch && parseInt(funcMatch[1], 10) <= 350) return true
+      // deep-nesting: depth <= 8
+      const nestMatch = title.match(/nesting depth is (\d+)/)
+      if (nestMatch && parseInt(nestMatch[1], 10) <= 8) return true
+      return false
+    })()
+
+    const useDirectDispatch = effort === 'small'
+      || (project.auto_merge_efforts ?? ['small']).includes(effort)
+      || isEasyMedium
+
+    if (useDirectDispatch) {
+      // Direct WO dispatch (single agent, no planning step)
       const groupId = `ondemand-${ticketId}-${Date.now()}`
       const woId = `WO-${ticketId}`
+      const model = (effort === 'small' ? project.fix_model : project.fix_model_medium) || project.fix_model || 'glm-5'
 
       const wo = {
         id: woId,
@@ -317,7 +301,7 @@ export function registerTicketRoutes(
         scope: scope || undefined,
         full_context_files: relPath ? [relPath] : [],
         gates: { compile: true, lint: true, typecheck: true, tests: { run: false } },
-        execution: { model: (effort === 'small' ? project.fix_model : project.fix_model_medium) || project.fix_model || 'glm-5', max_retries: 2, timeout_minutes: effort === 'small' ? 5 : 10 },
+        execution: { model, max_retries: 2, timeout_minutes: effort === 'small' ? 5 : 10 },
         isolation: { type: 'none' },
         output: { commit: true, commit_prefix: 'fix' },
       }
