@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
+import type { CronJob } from '@shared/types'
 import { CronHealthBadge } from './CronHealthBadge'
 import { CronTagInput } from './CronTagInput'
 import { CronSessionLink } from './CronSessionLink'
@@ -35,8 +36,70 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const TABS = ['overview', 'history', 'logs', 'script'] as const
 
+function CronJobHeader({ job }: { job: CronJob }) {
+  const { setJobManaged } = useCronStore()
+  return (
+    <div className="p-4 border-b border-[var(--border)] space-y-3 shrink-0">
+      <div className="flex items-center gap-3">
+        <img
+          src={
+            job.avatarUrl ||
+            `https://api.dicebear.com/9.x/bottts/svg?seed=${encodeURIComponent(job.name)}&size=48`
+          }
+          alt=""
+          width={48}
+          height={48}
+          className="rounded shrink-0"
+          onError={(e) => {
+            ;(e.target as HTMLImageElement).style.display = 'none'
+          }}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate">{job.name}</h2>
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_COLORS[job.status] ?? 'bg-gray-500'}`}
+              aria-label={`Status: ${job.status}`}
+            />
+            <CronHealthBadge health={job.health} reason={job.healthReason} />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            <span className="px-1.5 py-0.5 rounded bg-[var(--bg-hover)]">
+              {SOURCE_LABELS[job.source] || job.source}
+            </span>
+            {job.user && <span>User: {job.user}</span>}
+            {job.requiresSudo && (
+              <span className="text-yellow-500" title="Requires sudo">
+                🔒
+              </span>
+            )}
+            <button
+              onClick={() => {
+                setJobManaged(job.id, !job.isManagedByAgentboard)
+                const ws = (window as unknown as { __cronWsSend?: (msg: unknown) => void }).__cronWsSend
+                if (ws) ws({ type: 'cron-job-set-managed', jobId: job.id, managed: !job.isManagedByAgentboard })
+              }}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                job.isManagedByAgentboard
+                  ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
+                  : 'bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+              }`}
+              title={job.isManagedByAgentboard ? 'Managed by Agentboard — click to unmanage' : 'Not managed — click to manage'}
+            >
+              ⚙ {job.isManagedByAgentboard ? 'Managed' : 'Unmanaged'}
+            </button>
+          </div>
+        </div>
+        <CronSessionLink jobId={job.id} linkedSessionId={job.linkedSessionId} />
+      </div>
+      {/* Tags */}
+      <CronTagInput jobId={job.id} tags={job.tags} />
+    </div>
+  )
+}
+
 export function CronJobDetail() {
-  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs, setJobManaged } = useCronStore()
+  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs } = useCronStore()
   const job = jobs.find((j) => j.id === selectedJobId)
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -70,62 +133,7 @@ export function CronJobDetail() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b border-[var(--border)] space-y-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <img
-            src={
-              job.avatarUrl ||
-              `https://api.dicebear.com/9.x/bottts/svg?seed=${encodeURIComponent(job.name)}&size=48`
-            }
-            alt=""
-            width={48}
-            height={48}
-            className="rounded shrink-0"
-            onError={(e) => {
-              ;(e.target as HTMLImageElement).style.display = 'none'
-            }}
-          />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] truncate">{job.name}</h2>
-              <span
-                className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_COLORS[job.status] ?? 'bg-gray-500'}`}
-                aria-label={`Status: ${job.status}`}
-              />
-              <CronHealthBadge health={job.health} reason={job.healthReason} />
-            </div>
-            <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              <span className="px-1.5 py-0.5 rounded bg-[var(--bg-hover)]">
-                {SOURCE_LABELS[job.source] || job.source}
-              </span>
-              {job.user && <span>User: {job.user}</span>}
-              {job.requiresSudo && (
-                <span className="text-yellow-500" title="Requires sudo">
-                  🔒
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  setJobManaged(job.id, !job.isManagedByAgentboard)
-                  const ws = (window as unknown as { __cronWsSend?: (msg: unknown) => void }).__cronWsSend
-                  if (ws) ws({ type: 'cron-job-set-managed', jobId: job.id, managed: !job.isManagedByAgentboard })
-                }}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
-                  job.isManagedByAgentboard
-                    ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-900/60'
-                    : 'bg-[var(--bg-hover)] text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-                }`}
-                title={job.isManagedByAgentboard ? 'Managed by Agentboard — click to unmanage' : 'Not managed — click to manage'}
-              >
-                ⚙ {job.isManagedByAgentboard ? 'Managed' : 'Unmanaged'}
-              </button>
-            </div>
-          </div>
-          <CronSessionLink jobId={job.id} linkedSessionId={job.linkedSessionId} />
-        </div>
-        {/* Tags */}
-        <CronTagInput jobId={job.id} tags={job.tags} />
-      </div>
+      <CronJobHeader job={job} />
 
       {/* Controls strip */}
       <CronJobControls onDelete={() => setShowDeleteConfirm(true)} />
