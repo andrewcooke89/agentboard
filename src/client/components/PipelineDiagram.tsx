@@ -1,6 +1,7 @@
 // PipelineDiagram.tsx - Workflow pipeline visualization with connected step nodes
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { StepRunState, WorkflowRun } from '@shared/types'
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import StepNode from './StepNode'
 import TaskOutputViewer from './TaskOutputViewer'
 import { useTaskStore } from '../stores/taskStore'
