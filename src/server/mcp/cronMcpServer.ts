@@ -356,7 +356,7 @@ async function createMcpServer(): Promise<void> {
         handleRequest(req).catch((err) => {
           process.stderr.write(`[cron-mcp] Unhandled error: ${err}\n`)
         })
-      } catch {
+      } catch (_err) {
         // ignore parse errors at EOF
       }
     }
