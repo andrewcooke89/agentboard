@@ -335,8 +335,7 @@ function getSourceFiles(projectPath: string, language: string): string[] {
   const results: string[] = []
 
   function walk(dir: string): void {
-    let entries: fs.Dirent[]
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch (e) { throw e }
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
     for (const entry of entries) {
       if (entry.isDirectory()) {
         if (!EXCLUDE_DIRS.has(entry.name)) walk(path.join(dir, entry.name))
