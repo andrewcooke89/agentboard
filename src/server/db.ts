@@ -315,7 +315,7 @@ function ensureDataDir(dbPath: string) {
 
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  } catch (_) {
+  } catch {
     // Ignore mkdir failures; SQLite will surface errors when opening
   }
 
