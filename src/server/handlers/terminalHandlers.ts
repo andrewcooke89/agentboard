@@ -105,24 +105,20 @@ export function createTerminalHandlers(
   }
 
   function captureTmuxHistory(target: string): string | null {
-    try {
-      // Capture full scrollback history (-S - means from start, -E - means to end, -J joins wrapped lines)
-      const result = Bun.spawnSync(
-        ['tmux', 'capture-pane', '-t', target, '-p', '-S', '-', '-E', '-', '-J'],
-        { stdout: 'pipe', stderr: 'pipe' }
-      )
-      if (result.exitCode !== 0) {
-        return null
-      }
-      const output = result.stdout.toString()
-      // Only return if there's actual content
-      if (output.trim().length === 0) {
-        return null
-      }
-      return output
-    } catch (e) {
-      throw e
+    // Capture full scrollback history (-S - means from start, -E - means to end, -J joins wrapped lines)
+    const result = Bun.spawnSync(
+      ['tmux', 'capture-pane', '-t', target, '-p', '-S', '-', '-E', '-', '-J'],
+      { stdout: 'pipe', stderr: 'pipe' }
+    )
+    if (result.exitCode !== 0) {
+      return null
     }
+    const output = result.stdout.toString()
+    // Only return if there's actual content
+    if (output.trim().length === 0) {
+      return null
+    }
+    return output
   }
 
   function resolveCopyModeTarget(
