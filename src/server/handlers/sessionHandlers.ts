@@ -68,6 +68,7 @@ export function createSessionHandlers(
 
       try {
         ctx.sessionManager.killWindow(session.tmuxWindow)
+        
         const orphaned = new Map<string, AgentSession>()
         const orphanById = (agentSessionId?: string | null) => {
           if (!agentSessionId || orphaned.has(agentSessionId)) return
@@ -75,18 +76,24 @@ export function createSessionHandlers(
           if (!orphanedSession) return
           orphaned.set(agentSessionId, toAgentSession(orphanedSession))
         }
+        
+        const broadcastOrphaned = (sessions: Map<string, AgentSession>) => {
+          for (const orphanedSession of sessions.values()) {
+            ctx.broadcast({ type: 'session-orphaned', session: orphanedSession })
+          }
+        }
 
         orphanById(session.agentSessionId)
         const recordByWindow = ctx.db.getSessionByWindow(session.tmuxWindow)
         if (recordByWindow) {
           orphanById(recordByWindow.sessionId)
         }
+        
         if (orphaned.size > 0) {
           deps.updateAgentSessions()
-          for (const orphanedSession of orphaned.values()) {
-            ctx.broadcast({ type: 'session-orphaned', session: orphanedSession })
-          }
+          broadcastOrphaned(orphaned)
         }
+        
         const remaining = ctx.registry.getAll().filter((item) => item.id !== sessionId)
         ctx.registry.replaceSessions(remaining)
         deps.refreshSessions()
