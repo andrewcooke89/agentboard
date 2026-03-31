@@ -1,0 +1,85 @@
+id: WO-002
+group_id: swarm-demo
+title: "Create EventLog component for swarm real-time event feed"
+description: |
+  Create `src/client/components/swarm/EventLog.tsx` — a scrollable real-time
+  event feed that shows swarm dispatch events as they happen.
+
+  Props:
+  ```typescript
+  interface EventLogProps {
+    events: EventLogEntry[]
+    maxHeight?: string  // default '300px'
+  }
+  ```
+
+  Import EventLogEntry from `../../shared/dashboardTypes`.
+
+  ## Rendering
+
+  - Container: dark background (bg-gray-900/50), rounded, with the maxHeight
+    and overflow-y-auto. Auto-scroll to bottom when new events arrive (useEffect + ref).
+  - Header: "Event Log" label with event count badge
+  - Each event row:
+    - Timestamp (HH:MM:SS format, gray-500 text, monospace)
+    - Severity indicator dot: info=blue, success=green, warning=amber, error=red
+    - Message text (gray-200, text-sm)
+    - WO ID badge if present (small pill, gray-700 bg)
+    - Model name if present (small text, gray-500)
+  - Empty state: "Waiting for events..." centered in muted text
+  - Events should be displayed newest-first (reverse chronological)
+
+  ## Styling
+
+  Use Tailwind classes. Dark theme matching agentboard (dark grays, not pure black).
+  Keep it compact — each row should be ~28px height. No unnecessary padding.
+  The component should feel like a terminal/log output.
+
+  Look at existing components in src/client/components/ for styling patterns.
+
+task: implement
+scope: src/client/components/swarm/
+interface_files:
+  - src/shared/dashboardTypes.ts
+reference_files:
+  - src/client/components/swarm/WoDetail.tsx
+  - src/client/components/swarm/GroupProgress.tsx
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 8
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

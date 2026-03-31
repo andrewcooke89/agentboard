@@ -1,5 +1,17 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 
+import {
+  useSettingsStore,
+  DEFAULT_PROJECT_DIR,
+  DEFAULT_COMMAND,
+  DEFAULT_PRESETS,
+  isValidPreset,
+  normalizePreset,
+  getFullCommand,
+  generatePresetId,
+  resolveDefaultPresetId,
+} from '../stores/settingsStore'
+
 const globalAny = globalThis as typeof globalThis & {
   window?: { localStorage: Storage }
   localStorage?: Storage
@@ -31,19 +43,6 @@ function createStorage(): Storage {
 const storage = createStorage()
 globalAny.localStorage = storage
 globalAny.window = { localStorage: storage } as typeof window
-
-const settingsModule = await import('../stores/settingsStore')
-const {
-  useSettingsStore,
-  DEFAULT_PROJECT_DIR,
-  DEFAULT_COMMAND,
-  DEFAULT_PRESETS,
-  isValidPreset,
-  normalizePreset,
-  getFullCommand,
-  generatePresetId,
-  resolveDefaultPresetId,
-} = settingsModule
 
 beforeEach(() => {
   storage.clear()

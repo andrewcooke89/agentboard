@@ -1,0 +1,34 @@
+id: TKT-0045
+version: 1
+created_at: 2026-03-13T07:25:43.945Z
+updated_at: 2026-03-16T04:47:26.910Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/__tests__/wu006-healthAnalysisTools.test.ts
+  line_start: 6
+  code_snippet: import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach'
+  is imported but never used."
+description: "eslint(no-unused-vars): Identifier 'beforeEach' is imported but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T04:47:26.909Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:26.909Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

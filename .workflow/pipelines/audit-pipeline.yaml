@@ -1,0 +1,594 @@
+# Audit Pipeline — Phase 14
+# =========================
+# Adversarial review pipeline for completed features, security audits,
+# code reviews, and quality checks. The most adversarial pipeline —
+# every stage except scope definition and report generation uses adversarial posture.
+#
+# Integrates all 23 AA agents (REQ-22):
+#   - 12 static analysis hunters (always run)
+#   - 6 dynamic runtime verifiers (run when service is available)
+#   - 5 infrastructure agents (scope, cross-ref, service mgmt, verdict, remediation)
+#
+# Trigger types: manual, post-pipeline, scheduled, workflow-triggered (git hook)
+# Depends on: Phase 6 (parallel_group), Phase 13 (gemini_offload), Phase 11 (conformance agents)
+#
+# Context Injection: Gemini extracts audit scope summary early, injected into
+# all AA hunter steps to focus their search and reduce redundant file scanning.
+
+pipeline:
+  name: audit-pipeline
+  version: "1.2"
+  description: "Adversarial audit of completed features and codebase areas"
+
+  # Trigger configuration (REQ-23)
+  triggers:
+    manual:
+      enabled: true
+      command: "workflow audit <scope>"
+      description: "Developer invokes audit on specific code area"
+
+    post_pipeline:
+      enabled: true
+      description: "Automatically triggered after change-pipeline or fix-pipeline completes"
+      conditions:
+        - pipeline_completed: [change-pipeline, fix-pipeline]
+        - tier_min: 2
+
+    scheduled:
+      enabled: false
+      interval: weekly
+      description: "Periodic full-project audit"
+
+    workflow_triggered:
+      enabled: true
+      description: "Git post-commit hook fires review via agentboard API"
+      endpoint: /api/workflows/trigger
+      conditions:
+        - not_tier_0
+        - has_active_spec
+
+  # Pipeline defaults
+  defaults:
+    tier_min: 2
+    timeout_minutes: 60
+    on_failure: continue
+
+  # Pipeline stages
+  steps:
+    # ── Stage 1: Scope Discovery ─────────────────────────────────────
+    # Uses aa-scope-analyzer to discover audit surface area (REQ-22 agent 1/23)
+    - name: define-scope
+      type: spawn_session
+      model: claude
+      agent: aa-scope-analyzer
+      posture: cooperative
+      description: "Discover audit surface area: languages, entry points, dependencies, expected behaviors"
+      inputs:
+        - trigger_payload
+        - project_profile
+      outputs:
+        - "{{ run_dir }}/audit-scope.yaml"
+      fallback_agent: workflow-router
+      timeout_seconds: 180
+
+    # ── Stage 1.5: Extract Audit Context (NEW) ───────────────────────────
+    # Gemini extracts audit scope summary for focused hunting
+    - name: extract-audit-context
+      type: gemini_offload
+      depends_on: [define-scope]
+      description: "Extract audit scope summary to focus AA hunter searches"
+      prompt_template: |
+        Analyze the audit scope and extract a focused summary for adversarial hunters.
+
+        ## Audit Scope
+        {{audit-scope.yaml}}
+
+        Extract and structure:
+        - scope_summary: Concise description of what's being audited
+        - key_files: Most important files to investigate
+        - entry_points: Functions/methods that handle external input
+        - risk_areas: Components with higher risk (state, crypto, parsing, etc.)
+        - hunter_focus: Specific areas each hunter should prioritize
+
+        Output as YAML.
+      inputs:
+        - path: "{{ run_dir }}/audit-scope.yaml"
+          label: audit-scope.yaml
+      output_file: "{{ run_dir }}/audit-context.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 60
+
+    # ── Stage 2: Constitution Check ──────────────────────────────────
+    # Adversarial posture: find constitutional violations (REQ-25)
+    - name: constitution-check
+      type: spawn_session
+      model: claude
+      agent: spec-reviewer
+      posture: adversarial
+      description: "Verify audited code complies with all constitutional rules"
+      depends_on: [define-scope, extract-audit-context]
+      inputs:
+        - path: "{{ run_dir }}/audit-context.yaml"
+          type: context
+          label: AuditContext
+        - path: "{{ run_dir }}/audit-scope.yaml"
+        - ".workflow/constitution/"
+      outputs:
+        - "{{ run_dir }}/constitution-findings.yaml"
+      agent_prompt_override: |
+        ADVERSARIAL FRAMING: You are auditing for constitutional violations.
+        Find violations. Prove non-compliance. Do NOT confirm compliance —
+        hunt for every way the code breaks constitutional rules.
+        Report findings with severity, evidence (file:line), and rule reference.
+      timeout_seconds: 300
+
+    # ── Stage 3a: Static Adversarial Review (12 AA Hunters) ──────────
+    # Adversarial posture: run static AA hunters in parallel (REQ-22, REQ-25)
+    - name: static-adversarial-review
+      type: parallel_group
+      posture: adversarial
+      description: "Run 12 static analysis AA hunters against scoped code"
+      depends_on: [define-scope, extract-audit-context]
+      max_parallel: "{{ project_profile.machine_capacity.session_pool_size }}"
+      on_failure: continue
+      track_failures: true
+
+      children:
+        - name: aa-state-safety-audit
+          type: spawn_session
+          model: claude
+          agent: aa-state-safety
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/state-safety.yaml"]
+
+        - name: aa-security-audit
+          type: spawn_session
+          model: claude
+          agent: aa-security
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/security.yaml"]
+
+        - name: aa-error-handling-audit
+          type: spawn_session
+          model: claude
+          agent: aa-error-handling-hunter
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/error-handling.yaml"]
+
+        - name: aa-performance-audit
+          type: spawn_session
+          model: claude
+          agent: aa-performance
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/performance.yaml"]
+
+        - name: aa-type-safety-audit
+          type: spawn_session
+          model: claude
+          agent: aa-type-safety
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/type-safety.yaml"]
+
+        - name: aa-data-loss-audit
+          type: spawn_session
+          model: claude
+          agent: aa-data-loss-hunter
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/data-loss.yaml"]
+
+        - name: aa-duplication-audit
+          type: spawn_session
+          model: claude
+          agent: aa-duplication
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/duplication.yaml"]
+
+        - name: aa-config-env-audit
+          type: spawn_session
+          model: glm-flash
+          agent: aa-config-env
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/config-env.yaml"]
+
+        - name: aa-test-coverage-audit
+          type: spawn_session
+          model: claude
+          agent: aa-test-coverage
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/test-coverage.yaml"]
+
+        - name: aa-reachability-audit
+          type: spawn_session
+          model: claude
+          agent: aa-reachability-hunter
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/reachability.yaml"]
+
+        - name: aa-contract-drift-audit
+          type: spawn_session
+          model: claude
+          agent: aa-contract-drift-hunter
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/contract-drift.yaml"]
+
+        - name: aa-data-consistency-audit
+          type: spawn_session
+          model: claude
+          agent: aa-data-consistency-hunter
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/data-consistency.yaml"]
+
+      agent_prompt_override: |
+        ADVERSARIAL FRAMING: You are hunting for defects. Break assumptions.
+        Find every way this code can fail. Do NOT confirm it works —
+        prove it doesn't. Report findings with evidence.
+
+        Audit context has been provided above to focus your search.
+
+    # ── Stage 3b: Cross-Reference Analysis ───────────────────────────
+    # Bridges static and dynamic stages (REQ-22 agent 14/23)
+    - name: cross-reference-analysis
+      type: spawn_session
+      model: claude
+      agent: aa-cross-reference-analyzer
+      posture: adversarial
+      description: "Bridge static findings to dynamic verification targets"
+      depends_on: [static-adversarial-review]
+      inputs:
+        - path: "{{ run_dir }}/audit-context.yaml"
+          type: context
+          label: AuditContext
+        - "{{ run_dir }}/findings/"
+        - "{{ run_dir }}/audit-scope.yaml"
+      outputs:
+        - "{{ run_dir }}/dynamic-targets.yaml"
+      timeout_seconds: 180
+
+    # ── Stage 3c: Service Management (for dynamic verifiers) ─────────
+    # Infrastructure: manages service lifecycle (REQ-22 agent 15/23)
+    - name: service-management
+      type: spawn_session
+      model: claude
+      agent: aa-service-manager
+      posture: cooperative
+      description: "Start service for dynamic verification; verify safety constraints"
+      depends_on: [define-scope, extract-audit-context]
+      inputs:
+        - path: "{{ run_dir }}/audit-context.yaml"
+          type: context
+          label: AuditContext
+        - "{{ run_dir }}/audit-scope.yaml"
+        - project_profile
+      outputs:
+        - "{{ run_dir }}/service-status.yaml"
+      timeout_seconds: 120
+      optional: true
+
+    # ── Stage 3d: Dynamic Adversarial Review (6 runtime verifiers) ───
+    # Adversarial posture: run dynamic verifiers (REQ-22 agents 16-21/23)
+    # Conditional: only runs when a service can be started for the audit scope
+    - name: dynamic-adversarial-review
+      type: parallel_group
+      posture: adversarial
+      description: "Run 6 dynamic runtime verifiers against live service"
+      depends_on: [cross-reference-analysis, service-management]
+      condition: "service-management.status == 'service_available'"
+      max_parallel: "{{ project_profile.machine_capacity.session_pool_size }}"
+      on_failure: continue
+      track_failures: true
+      optional: true
+
+      children:
+        - name: aa-endpoint-prober-audit
+          type: spawn_session
+          model: claude
+          agent: aa-endpoint-prober
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+            - "{{ run_dir }}/dynamic-targets.yaml"
+          outputs: ["{{ run_dir }}/findings/endpoint-probing.yaml"]
+
+        - name: aa-error-path-exerciser-audit
+          type: spawn_session
+          model: claude
+          agent: aa-error-path-exerciser
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+            - "{{ run_dir }}/dynamic-targets.yaml"
+          outputs: ["{{ run_dir }}/findings/error-paths.yaml"]
+
+        - name: aa-concurrency-tester-audit
+          type: spawn_session
+          model: claude
+          agent: aa-concurrency-tester
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/concurrency.yaml"]
+
+        - name: aa-resource-leak-detector-audit
+          type: spawn_session
+          model: claude
+          agent: aa-resource-leak-detector
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/resource-leaks.yaml"]
+
+        - name: aa-integration-exerciser-audit
+          type: spawn_session
+          model: claude
+          agent: aa-integration-exerciser
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/integration.yaml"]
+
+        - name: aa-pipeline-exerciser-audit
+          type: spawn_session
+          model: claude
+          agent: aa-pipeline-exerciser
+          inputs:
+            - path: "{{ run_dir }}/audit-context.yaml"
+              type: context
+              label: AuditContext
+          outputs: ["{{ run_dir }}/findings/pipeline-exercise.yaml"]
+
+      agent_prompt_override: |
+        ADVERSARIAL FRAMING: You are exercising live code paths. Send real
+        requests, trigger real errors, stress real concurrency. Prove the
+        system fails under adversarial conditions.
+
+    # ── Stage 4: Quality Assessment ──────────────────────────────────
+    # Adversarial posture: evaluate quality, complexity, coverage (REQ-25)
+    - name: quality-assessment
+      type: spawn_session
+      model: claude
+      agent: conformance-checker
+      posture: adversarial
+      description: "Evaluate code quality, test coverage, complexity metrics"
+      depends_on: [define-scope, extract-audit-context]
+      inputs:
+        - path: "{{ run_dir }}/audit-context.yaml"
+          type: context
+          label: AuditContext
+        - "{{ run_dir }}/audit-scope.yaml"
+      outputs:
+        - "{{ run_dir }}/quality-assessment.yaml"
+      agent_prompt_override: |
+        ADVERSARIAL FRAMING: You are assessing quality adversarially.
+        Find quality issues, not confirmations of quality. Look for:
+        - Missing test coverage for edge cases
+        - High cyclomatic complexity
+        - Untested error paths
+        - Code that violates project conventions
+        Report specific issues with file:line references.
+      timeout_seconds: 300
+
+    # ── Stage 5: Verdict Aggregation ─────────────────────────────────
+    # Uses aa-verdict-aggregator for nuanced finding rollup (REQ-22 agent 22/23)
+    - name: aggregate-verdict
+      type: spawn_session
+      model: claude
+      agent: aa-verdict-aggregator
+      posture: cooperative
+      description: "Roll up findings into final verdict with nuanced logic"
+      depends_on: [constitution-check, static-adversarial-review, quality-assessment]
+      soft_depends_on: [dynamic-adversarial-review]
+      inputs:
+        - "{{ run_dir }}/findings/"
+        - "{{ run_dir }}/constitution-findings.yaml"
+        - "{{ run_dir }}/quality-assessment.yaml"
+      outputs:
+        - "{{ run_dir }}/verdict.yaml"
+      timeout_seconds: 180
+
+    # ── Stage 6: Report Generation ───────────────────────────────────
+    # Cooperative posture: produce clear, structured audit report
+    - name: generate-report
+      type: native_step
+      description: "Aggregate findings into unified audit report with deduplication"
+      depends_on: [aggregate-verdict]
+      command: |
+        python3 -c "
+        import yaml, glob, os, sys
+        from datetime import datetime
+        run_dir = os.environ.get('RUN_DIR', '.')
+        all_findings = []
+        parse_errors = []
+
+        # Collect all finding files
+        finding_files = glob.glob(f'{run_dir}/findings/*.yaml')
+        other_files = [f'{run_dir}/constitution-findings.yaml', f'{run_dir}/quality-assessment.yaml']
+
+        for f in finding_files + other_files:
+            if os.path.exists(f):
+                with open(f) as fh:
+                    try:
+                        data = yaml.safe_load(fh)
+                        if data and 'findings' in data:
+                            all_findings.extend(data['findings'])
+                    except yaml.YAMLError as e:
+                        parse_errors.append({'file': os.path.basename(f), 'error': str(e)[:200]})
+                        print(f'WARNING: Failed to parse {f}: {e}', file=sys.stderr)
+
+        # MOD-6: Track which hunters produced no output
+        expected_hunters = [
+            'state-safety', 'security', 'error-handling', 'performance',
+            'type-safety', 'data-loss', 'duplication', 'config-env',
+            'test-coverage', 'reachability', 'contract-drift', 'data-consistency',
+            'endpoint-probing', 'error-paths', 'concurrency', 'resource-leaks',
+            'integration', 'pipeline-exercise',
+        ]
+        missing_hunters = [h for h in expected_hunters
+                          if not os.path.exists(f'{run_dir}/findings/{h}.yaml')]
+
+        # Deduplicate
+        seen, unique = set(), []
+        for finding in all_findings:
+            key = (finding.get('file',''), finding.get('line',''),
+                   finding.get('category',''), finding.get('title',''))
+            if key not in seen:
+                seen.add(key)
+                unique.append(finding)
+
+        sev = {}
+        for f in unique:
+            s = f.get('severity', 'unknown')
+            sev[s] = sev.get(s, 0) + 1
+
+        report = {'audit_report': {
+            'generated_at': datetime.utcnow().isoformat() + 'Z',
+            'total_findings': len(unique),
+            'duplicates_removed': len(all_findings) - len(unique),
+            'severity_summary': sev,
+            'coverage': {
+                'hunters_expected': len(expected_hunters),
+                'hunters_missing_output': missing_hunters,
+                'parse_errors': parse_errors,
+            },
+            'findings': unique}}
+
+        with open(f'{run_dir}/audit-report.yaml', 'w') as out:
+            yaml.dump(report, out, default_flow_style=False, sort_keys=False)
+        print(f'Audit report: {len(unique)} unique findings')
+        if missing_hunters:
+            print(f'WARNING: {len(missing_hunters)} hunters produced no output: {missing_hunters}', file=sys.stderr)
+        if parse_errors:
+            print(f'WARNING: {len(parse_errors)} files had parse errors', file=sys.stderr)
+        "
+      outputs:
+        - "{{ run_dir }}/audit-report.yaml"
+
+    # ── Stage 7: Formal Verification Audit ───────────────────────────
+    # Run formal verification tools (forced on for audit tier 2+)
+    # Uses conformance-checker with forced Kani and Miri enabled
+    - name: formal-verification-audit
+      type: spawn_session
+      model: claude
+      tier_min: 2
+      description: "Run formal verification tools (forced on for audit tier 2+)"
+      agent: conformance-checker
+      depends_on: [generate-report]
+      inputs:
+        - path: "{{ run_dir }}/audit-context.yaml"
+          type: context
+          label: AuditContext
+        - "{{ run_dir }}/audit-scope.yaml"
+      outputs:
+        - "{{ run_dir }}/formal-verification-report.yaml"
+      config:
+        kani_enabled: true
+        miri_enabled: true
+        loom_enabled: auto
+      timeout_seconds: 1800
+      optional: true
+
+    # ── Stage 8: Remediation ─────────────────────────────────────────
+    # Creates tickets/work orders from findings (REQ-22 agent 23/23)
+    - name: generate-remediation
+      type: spawn_session
+      model: claude
+      agent: aa-remediation-generator
+      posture: cooperative
+      description: "Create remediation artifacts from audit findings"
+      depends_on: [generate-report, formal-verification-audit]
+      soft_depends_on: [formal-verification-audit]
+      inputs:
+        - "{{ run_dir }}/audit-report.yaml"
+        - "{{ run_dir }}/verdict.yaml"
+      outputs:
+        - "{{ run_dir }}/remediation-plan.yaml"
+      optional: true
+      timeout_seconds: 180
+
+    # ── Stage 9: Learning Observation ────────────────────────────────
+    # Neutral posture: extract patterns for knowledge memory (REQ-24)
+    - name: learning-observation
+      type: gemini_offload
+      posture: neutral
+      description: "Extract patterns from audit findings for knowledge memory"
+      depends_on: [generate-report]
+      prompt_template: |
+        Analyze the following audit report and scope, then extract learning patterns.
+
+        ## Audit Report
+        {{audit_report}}
+
+        ## Audit Scope
+        {{audit_scope}}
+
+        Focus on:
+        1. Recurring finding categories — what types of issues appear most?
+        2. Systemic weaknesses — do findings cluster around specific areas?
+        3. Hunter effectiveness — which hunters found the most unique issues?
+        4. Coverage gaps — which hunters produced no output (check coverage.hunters_missing_output)?
+        5. Schema gaps — did any agent need information not in the spec?
+        Produce structured learning entries with confidence: RAW.
+      inputs:
+        - path: "{{ run_dir }}/audit-report.yaml"
+          label: audit_report
+        - path: "{{ run_dir }}/audit-scope.yaml"
+          label: audit_scope
+      output_path: "{{ run_dir }}/learning-entries.yaml"
+      output_format: yaml
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 120
+
+  # AA Agent Integration Summary (REQ-22: all 23 agents)
+  # ─────────────────────────────────────────────────────
+  # Stage 1 (scope):     aa-scope-analyzer                          [1]
+  # Stage 1.5 (context):  gemini_offload extracts audit context
+  # Stage 2 (constit):   (uses spec-reviewer, not an AA agent)
+  # Stage 3a (static):   12 static analysis hunters with context     [2-13]
+  # Stage 3b (xref):     aa-cross-reference-analyzer                [14]
+  # Stage 3c (svc mgmt): aa-service-manager                        [15]
+  # Stage 3d (dynamic):  6 runtime verifiers (conditional)          [16-21]
+  # Stage 5 (verdict):   aa-verdict-aggregator                      [22]
+  # Stage 7 (remediate): aa-remediation-generator                   [23]
+  # Total: 23 AA agents integrated

@@ -1,0 +1,255 @@
+work_order_id: WO-013
+title: "Phase 13: Build Workflow Editor (Form Builder + YAML Toggle)"
+phase: 13
+feature_id: FEAT-005
+priority: medium
+estimated_hours: 10
+depends_on:
+  - WO-003  # Needs YAML validation
+  - WO-010  # Needs workflow store
+
+description: |
+  Create WorkflowEditor component with dual modes:
+  - Form builder: visual step-by-step editor
+  - YAML editor: raw YAML textarea
+  Toggle between modes with content sync.
+
+  Form builder features:
+  - Workflow name and description fields
+  - Add/remove/reorder steps
+  - Step type dropdown (spawn_session, check_file, delay, check_output)
+  - Dynamic fields per step type
+  - Condition editor (optional)
+  - Save writes YAML file via API
+
+  For MVP: Raw YAML editor with syntax validation.
+  Form builder is stretch goal (noted in feature brief).
+
+context:
+  existing_patterns:
+    - "React functional components with Tailwind"
+    - "Form state with useState/useReducer"
+    - "Textarea for text editing"
+  files_to_create:
+    - src/client/components/WorkflowEditor.tsx
+    - src/client/components/StepForm.tsx (form builder sub-component)
+  reference_files:
+    - feature_brief.md (lines 119-129 for editor UX, lines 576-583 for Phase 13 spec)
+    - .workflow/blackboard.yaml (DEC-004: YAML source of truth, UI writes back)
+
+subtasks:
+  - id: ST-013-01
+    title: "Create WorkflowEditor component structure"
+    description: |
+      Create main editor component with mode toggle.
+    acceptance_criteria:
+      - Component: WorkflowEditor({ workflowId?: string })
+      - Mode state: 'form' | 'yaml'
+      - Toggle button: "Form Builder" / "YAML Editor"
+      - Load existing workflow if workflowId provided
+      - Initialize with empty template if new
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx (create)
+    estimated_hours: 0.5
+
+  - id: ST-013-02
+    title: "Implement YAML editor mode"
+    description: |
+      Raw YAML textarea with validation feedback.
+      MVP priority: get this working first.
+    acceptance_criteria:
+      - Textarea with monospace font (font-mono)
+      - Syntax validation on blur or every N seconds
+      - Show validation errors below textarea
+      - Error list: line numbers and messages
+      - Green checkmark if valid
+      - Red warning if invalid
+      - Save button: workflowStore.createWorkflow or updateWorkflow
+      - Cancel button: discard changes
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+    estimated_hours: 2.0
+    error_handling:
+      - Validation errors shown, save disabled if invalid
+      - API errors shown in toast
+
+  - id: ST-013-03
+    title: "Add YAML syntax highlighting (optional enhancement)"
+    description: |
+      Add simple syntax highlighting for better UX.
+      Use lightweight library or CodeMirror.
+    acceptance_criteria:
+      - Optional: add syntax highlighting library
+      - If too complex: skip for MVP (plain textarea sufficient)
+      - Keywords, strings, numbers highlighted
+      - Line numbers optional
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+      - package.json (if library added)
+    estimated_hours: 1.5
+    error_handling:
+      - Fallback to plain textarea if library fails
+
+  - id: ST-013-04
+    title: "Create form builder: workflow metadata fields"
+    description: |
+      Form inputs for name, description.
+    acceptance_criteria:
+      - Input: name (required, kebab-case validation)
+      - Input: description (optional, multiline)
+      - Validation: name must be kebab-case (lowercase, hyphens only)
+      - Error messages on invalid input
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+    estimated_hours: 0.8
+    error_handling:
+      - Validation errors shown inline
+
+  - id: ST-013-05
+    title: "Create form builder: steps list editor"
+    description: |
+      Add/remove/reorder steps UI.
+    acceptance_criteria:
+      - Steps array in state
+      - "Add Step" button: appends empty step
+      - Each step has:
+        - Name input (required)
+        - Type dropdown (spawn_session, check_file, delay, check_output)
+        - Remove button (delete step)
+        - Drag handle (reorder - optional for MVP)
+      - Step validation: unique names
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+    estimated_hours: 1.5
+    error_handling:
+      - Duplicate step names show error
+
+  - id: ST-013-06
+    title: "Create StepForm component for dynamic fields"
+    description: |
+      Sub-component that shows fields based on step type.
+    acceptance_criteria:
+      - Component: StepForm({ step, onChange })
+      - spawn_session fields:
+        - projectPath (required, path input with browser button)
+        - prompt (required, multiline textarea)
+        - output_path (optional)
+        - timeoutSeconds (optional, number)
+        - maxRetries (optional, number)
+      - check_file fields:
+        - path (required)
+        - timeoutSeconds (optional)
+        - max_age_seconds (optional)
+      - delay fields:
+        - seconds (required, number)
+      - check_output fields:
+        - step (required, dropdown of prior steps)
+        - contains (required, string)
+      - Conditional fields based on step.type
+    files_modified:
+      - src/client/components/StepForm.tsx (create)
+    estimated_hours: 2.5
+    error_handling:
+      - Required field validation
+      - Type-specific validation (numbers, paths)
+
+  - id: ST-013-07
+    title: "Implement form-to-YAML and YAML-to-form conversion"
+    description: |
+      Sync between form state and YAML string.
+    acceptance_criteria:
+      - formToYAML(workflow): converts form state to YAML string
+      - yamlToForm(yamlString): parses YAML to form state
+      - Toggle preserves content (form -> YAML -> form roundtrip)
+      - Use js-yaml or Bun YAML for stringify/parse
+      - Validation on conversion
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+    estimated_hours: 1.5
+    error_handling:
+      - Parse errors show error message, don't switch mode
+
+  - id: ST-013-08
+    title: "Implement save workflow (create or update)"
+    description: |
+      Save button writes workflow to server.
+    acceptance_criteria:
+      - If workflowId: updateWorkflow(id, yaml)
+      - If new: createWorkflow(name, yaml)
+      - Convert form to YAML before save if in form mode
+      - Validate before save
+      - On success: navigate to workflow detail
+      - On error: show error message
+      - Loading state during save
+    files_modified:
+      - src/client/components/WorkflowEditor.tsx
+    estimated_hours: 1.0
+    error_handling:
+      - Validation errors prevent save
+      - API errors shown in toast
+
+  - id: ST-013-09
+    title: "Add unit tests for WorkflowEditor"
+    description: |
+      Create unit test suite for editor component.
+    acceptance_criteria:
+      - Test YAML editor shows validation errors
+      - Test form builder adds/removes steps
+      - Test form-to-YAML conversion
+      - Test YAML-to-form parsing
+      - Test save creates/updates workflow
+      - Test toggle preserves content
+      - Mock useWorkflowStore
+      - All tests pass with bun test
+    files_modified:
+      - src/client/components/WorkflowEditor.test.tsx (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Tests verify validation and error handling
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow editor unit tests pass"
+    command: "bun test src/client/components/WorkflowEditor.test.tsx"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - WorkflowEditor component with mode toggle
+  - YAML editor mode with validation (MVP priority)
+  - Form builder with metadata fields
+  - Form builder with steps list editor
+  - StepForm component with dynamic fields per step type
+  - Form-to-YAML and YAML-to-form conversion
+  - Toggle preserves content (roundtrip safe)
+  - Save creates or updates workflow
+  - Validation prevents saving invalid workflows
+  - Unit tests achieve >90% coverage
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/client/components/WorkflowEditor.tsx if issues arise"
+  - "git checkout src/client/components/StepForm.tsx"
+  - "No server changes in this phase"
+
+notes:
+  - "NOTE: The form builder (subtasks ST-013-04 through ST-013-07) is a STRETCH GOAL per the feature brief. For MVP, only the raw YAML editor (ST-013-02) and toggle infrastructure (ST-013-01) are required. Mark form builder subtasks as OPTIONAL if timeline is tight."
+  - "Feature brief specifies raw YAML editor for MVP, form builder as stretch goal"
+  - "Implement YAML editor first (ST-013-02), form builder optional if time permits"
+  - "YAML source of truth: UI writes back to YAML files (DEC-004)"
+  - "Validation uses same parseWorkflowYAML function as server"
+  - "Syntax highlighting nice-to-have, plain textarea acceptable for MVP"
+  - "Form builder complexity: consider deferring to post-MVP if timeline tight"
+
+specs_covered:
+  - UI-EDITOR-001  # YAML editor mode
+  - UI-EDITOR-002  # Form builder mode
+  - UI-EDITOR-003  # Mode toggle
+  - UI-EDITOR-004  # Validation feedback
+  - UI-EDITOR-005  # Save workflow
+  - UI-EDITOR-006  # Form-to-YAML conversion

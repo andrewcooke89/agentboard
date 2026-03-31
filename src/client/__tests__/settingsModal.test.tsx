@@ -10,9 +10,32 @@ import { useThemeStore } from '../stores/themeStore'
 
 const globalAny = globalThis as typeof globalThis & {
   localStorage?: Storage
+  HTMLElement?: typeof HTMLElement
+  Element?: typeof Element
+  Node?: typeof Node
 }
 
 const originalLocalStorage = globalAny.localStorage
+const originalHTMLElement = globalAny.HTMLElement
+const originalElement = globalAny.Element
+const originalNode = globalAny.Node
+
+// Install minimal HTMLElement/Element/Node stubs at module scope so that
+// base-ui / floating-ui `instanceof` checks don't crash if a prior test
+// file (renderComponents.test.tsx) cleared these globals in its afterAll.
+// We do this here (module scope) AND in beforeEach so we're covered both
+// at import time and after any per-test teardown that clears them again.
+function ensureDomStubs() {
+  if (!globalAny.HTMLElement) {
+    class NodeStub {}
+    class ElementStub extends NodeStub {}
+    class HTMLElementStub extends ElementStub {}
+    globalAny.Node = NodeStub as unknown as typeof Node
+    globalAny.Element = ElementStub as unknown as typeof Element
+    globalAny.HTMLElement = HTMLElementStub as unknown as typeof HTMLElement
+  }
+}
+ensureDomStubs()
 
 function createStorage(): Storage {
   const store = new Map<string, string>()
@@ -36,6 +59,8 @@ function createStorage(): Storage {
 
 beforeEach(() => {
   globalAny.localStorage = createStorage()
+  // Re-install stubs in case another test's teardown cleared them again.
+  ensureDomStubs()
   useSettingsStore.setState({
     defaultProjectDir: '/projects',
     defaultCommand: 'codex',
@@ -53,6 +78,9 @@ beforeEach(() => {
 
 afterEach(() => {
   globalAny.localStorage = originalLocalStorage
+  globalAny.HTMLElement = originalHTMLElement
+  globalAny.Element = originalElement
+  globalAny.Node = originalNode
   useSettingsStore.setState({
     defaultProjectDir: DEFAULT_PROJECT_DIR,
     defaultCommand: 'claude',

@@ -1,5 +1,13 @@
-import { describe, expect, test } from 'bun:test'
-import { PtyTerminalProxy as TerminalProxy } from '../terminal'
+import { describe, expect, test, beforeAll } from 'bun:test'
+
+// Use dynamic import with cache-busting query to avoid picking up
+// mock.module() replacements from terminalProxyFactory.test.ts
+let TerminalProxy: typeof import('../terminal/PtyTerminalProxy').PtyTerminalProxy
+
+beforeAll(async () => {
+  const mod = await import(`../terminal/PtyTerminalProxy?real=${Date.now()}`)
+  TerminalProxy = mod.PtyTerminalProxy
+})
 
 function createSpawnHarness() {
   const spawnCalls: Array<{

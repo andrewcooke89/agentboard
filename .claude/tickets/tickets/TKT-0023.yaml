@@ -1,0 +1,36 @@
+id: TKT-0023
+version: 1
+created_at: 2026-03-13T07:25:43.940Z
+updated_at: 2026-03-16T04:47:27.015Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/client/components/TaskQueue.tsx
+  line_start: 20
+  code_snippet: "export default function TaskQueue({ sendMessage,
+    defaultProjectPath, onWatchTask, onNavigateToWorkflow }: TaskQueueProps) {"
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable
+  'prefersReducedMotion' is declared but never used. Unused v..."
+description: "eslint(no-unused-vars): Variable 'prefersReducedMotion' is
+  declared but never used. Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T04:47:27.015Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.015Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

@@ -53,8 +53,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
           this.runTmux(['send-keys', '-t', this.currentTarget, 'Enter'])
         }
       }
-    } catch {
-      // Ignore write errors
+    } catch (err) {
+      console.error('write error:', err)
     }
   }
 
@@ -80,8 +80,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
 
     try {
       await fs.rm(this.pipeRoot, { recursive: true, force: true })
-    } catch {
-      // Ignore cleanup failures
+    } catch (err) {
+      console.error('cleanup error:', err)
     }
 
     this.currentTarget = null
@@ -158,8 +158,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
       if (onReady) {
         try {
           onReady()
-        } catch {
-          // Ignore onReady failures
+        } catch (err) {
+          console.error('onReady callback error:', err)
         }
       }
 
@@ -197,8 +197,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
     await fs.mkdir(this.pipeRoot, { recursive: true, mode: 0o700 })
     try {
       await fs.chmod(this.pipeRoot, 0o700)
-    } catch {
-      // Ignore chmod failures
+    } catch (err) {
+      console.error('chmod error:', err)
     }
   }
 
@@ -207,8 +207,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
     await fs.writeFile(pipeFile, '', { mode: 0o600 })
     try {
       await fs.chmod(pipeFile, 0o600)
-    } catch {
-      // Ignore chmod failures
+    } catch (err) {
+      console.error('pipe file chmod error:', err)
     }
     return pipeFile
   }
@@ -255,11 +255,12 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
             }
           }
           const tail = decoder.decode()
-          if (tail && sequence === this.tailSequence && !this.outputSuppressed) {
-            this.options.onData(tail)
+          if (!tail || sequence !== this.tailSequence || this.outputSuppressed) {
+            return
           }
-        } catch {
-          // Ignore tail read errors
+          this.options.onData(tail)
+        } catch (err) {
+          console.error('tail read error:', err)
         }
       }
       void readLoop()
@@ -290,8 +291,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
 
     try {
       this.tailProcess.kill()
-    } catch {
-      // Ignore kill failures
+    } catch (err) {
+      console.error('kill tail error:', err)
     }
     this.tailProcess = null
   }
@@ -316,8 +317,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
           '-F',
           '#{pane_id}',
         ])
-      } catch {
-        output = ''
+      } catch (err) {
+        console.error('monitor check error:', err)
       }
       if (output.trim()) {
         return
@@ -352,8 +353,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
 
     try {
       this.runTmux(['pipe-pane', '-t', target])
-    } catch {
-      // Ignore pipe stop failures
+    } catch (err) {
+      console.error('stop pipe error:', err)
     }
   }
 
@@ -379,8 +380,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
         '-y',
         rows.toString(),
       ])
-    } catch {
-      // Ignore resize errors
+    } catch (err) {
+      console.error('resize error:', err)
     }
   }
 

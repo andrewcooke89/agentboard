@@ -309,6 +309,17 @@ body {
   animation: pulse-complete 5s ease-out;
 }
 
+/* Phase 15: Striped/hatched pattern for invalidated steps (REQ-18) */
+.step-invalidated {
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(255, 255, 255, 0.1) 4px,
+    rgba(255, 255, 255, 0.1) 8px
+  );
+}
+
 /* Terminal styles */
 .xterm {
   font-family: "JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;

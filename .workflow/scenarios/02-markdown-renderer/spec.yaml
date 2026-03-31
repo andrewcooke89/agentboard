@@ -1,0 +1,45 @@
+schema_version: "feature_spec_v1.0"
+title: "Markdown to HTML Renderer"
+description: |
+  Implement a TypeScript library that converts a subset of Markdown to HTML.
+  Supports headings (h1-h3), paragraphs, bold, italic, inline code, code blocks,
+  unordered lists, and links. Exposed as a single `render(markdown: string): string`
+  function with no external dependencies. Includes comprehensive unit tests.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded:
+    - node_modules/
+    - dist/
+
+acceptance:
+  - type: behavioral
+    description: "# heading converts to <h1>, ## to <h2>, ### to <h3>"
+  - type: behavioral
+    description: "Consecutive non-blank lines form a <p> paragraph"
+  - type: behavioral
+    description: "**bold** converts to <strong>, *italic* to <em>"
+  - type: behavioral
+    description: "`inline code` converts to <code>"
+  - type: behavioral
+    description: "Fenced code blocks (```) convert to <pre><code>"
+  - type: behavioral
+    description: "Lines starting with - form <ul><li> lists"
+  - type: behavioral
+    description: "[text](url) converts to <a href='url'>text</a>"
+  - type: contract
+    description: "render() returns valid HTML string for any input"
+  - type: invariant
+    description: "Empty input returns empty string"
+  - type: invariant
+    description: "HTML special characters in input text are escaped"
+
+priority: medium
+tags:
+  - parser
+  - markdown
+  - scenario-02
+  - tier-1
+  - moderate

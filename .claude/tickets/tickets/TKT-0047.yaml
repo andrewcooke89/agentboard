@@ -1,0 +1,38 @@
+id: TKT-0047
+version: 1
+created_at: 2026-03-13T07:25:43.945Z
+updated_at: 2026-03-16T06:24:59.900Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/dagEngine.test.ts
+  line_start: 756
+  code_snippet: dagEngine.tick(run, parsed)
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun' is
+  declared but never used. Unused variables sho..."
+description: "eslint(no-unused-vars): Variable 'freshRun' is declared but never
+  used. Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:24:59.900Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun'
+      is  [TKT-0047]"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:24:59.900Z
+  resolved_by: minion-fix
+  pr_url: null
+  commit_sha: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Variable 'freshRun' is  [TKT-0047]"

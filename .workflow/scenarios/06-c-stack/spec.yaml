@@ -1,0 +1,53 @@
+schema_version: "feature_spec_v1.0"
+title: "Dynamic Stack Library in C"
+description: |
+  Implement a C library providing a generic dynamic stack (LIFO) data structure.
+  The stack stores void* elements and grows automatically when capacity is
+  exceeded. Provides stack_create, stack_destroy, stack_push, stack_pop,
+  stack_peek, stack_size, and stack_is_empty operations.
+  Returns error codes for invalid operations (pop/peek on empty stack, NULL args).
+  All memory must be properly managed — no leaks on normal usage.
+  No external dependencies beyond the C standard library.
+  Includes a test suite using assert() in a test_stack.c file compiled
+  and run via a Makefile.
+
+scope:
+  included:
+    - src/
+    - tests/
+  excluded:
+    - build/
+
+acceptance:
+  - type: behavioral
+    description: "stack_push followed by stack_pop returns the same element"
+  - type: behavioral
+    description: "stack_push three items, stack_pop returns them in reverse order (LIFO)"
+  - type: behavioral
+    description: "stack_peek returns top element without removing it"
+  - type: behavioral
+    description: "stack_size returns current number of elements"
+  - type: behavioral
+    description: "stack_is_empty returns true for a new stack, false after push"
+  - type: behavioral
+    description: "Stack grows automatically when pushing beyond initial capacity"
+  - type: contract
+    description: "stack_pop on empty stack returns an error code, does not crash"
+  - type: contract
+    description: "stack_peek on empty stack returns an error code, does not crash"
+  - type: contract
+    description: "stack_create with capacity 0 returns an error or uses a default"
+  - type: contract
+    description: "Passing NULL to any function returns an error code, never segfaults"
+  - type: invariant
+    description: "stack_size is always consistent with push/pop operations"
+  - type: invariant
+    description: "stack_destroy frees all allocated memory"
+
+priority: medium
+tags:
+  - data-structure
+  - stack
+  - scenario-06
+  - tier-1
+  - moderate

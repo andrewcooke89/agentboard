@@ -1,0 +1,205 @@
+work_order_id: WO-011
+title: "Phase 11: Build Pipeline Diagram Component"
+phase: 11
+feature_id: FEAT-005
+priority: high
+estimated_hours: 6
+depends_on:
+  - WO-001  # Needs workflow types
+  - WO-010  # Needs workflow store
+
+description: |
+  Create PipelineDiagram component for visualizing workflow step progress.
+  Real-time status updates via WebSocket.
+  Accessible with keyboard navigation and colorblind-friendly design.
+
+  Features:
+  - Connected nodes showing step flow (sequential)
+  - Status colors and icons: pending (gray, clock), running (blue, spinner), completed (green, check), failed (red, X), skipped (yellow, arrow)
+  - Horizontal scroll for long pipelines
+  - Keyboard navigation between nodes
+  - ARIA labels for accessibility
+  - Click node to see step details
+
+context:
+  existing_patterns:
+    - "React functional components with Tailwind CSS"
+    - "Component files in src/client/components/"
+    - "useWorkflowStore hook for state"
+    - "Accessibility: ARIA labels, keyboard navigation"
+  files_to_create:
+    - src/client/components/PipelineDiagram.tsx
+    - src/client/components/StepNode.tsx (sub-component)
+  reference_files:
+    - feature_brief.md (lines 560-566 for Phase 11 spec)
+    - .workflow/blackboard.yaml (DEC-009: pipeline diagram design decision)
+
+subtasks:
+  - id: ST-011-01
+    title: "Create StepNode sub-component"
+    description: |
+      Create reusable component for rendering individual step nodes.
+      Shows step name, status, type, and icon.
+    acceptance_criteria:
+      - Component: StepNode({ step: StepRunState, index: number, onClick })
+      - Renders step name and type
+      - Status color classes:
+        - pending: bg-gray-200 text-gray-700
+        - running: bg-blue-500 text-white animate-pulse
+        - completed: bg-green-500 text-white
+        - failed: bg-red-500 text-white
+        - skipped: bg-yellow-400 text-gray-800
+      - Icons via SVG or icon library:
+        - pending: clock icon
+        - running: spinner icon (animated)
+        - completed: checkmark icon
+        - failed: X icon
+        - skipped: forward-arrow icon
+      - ARIA label: "Step {name}, status {status}"
+      - tabIndex={0} for keyboard focus
+      - onClick handler
+    files_modified:
+      - src/client/components/StepNode.tsx (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Missing step data renders placeholder
+
+  - id: ST-011-02
+    title: "Create PipelineDiagram main component"
+    description: |
+      Create main component that renders workflow as connected step nodes.
+    acceptance_criteria:
+      - Component: PipelineDiagram({ runId: string })
+      - Fetch run data: const run = useWorkflowStore(s => s.selectedRun)
+      - Render steps_state array as horizontal flow
+      - Connection lines between nodes (CSS borders or SVG)
+      - Horizontal scroll container with overflow-x-auto
+      - Keyboard navigation: arrow keys to move focus between nodes
+      - Current step highlighted with thicker border
+      - Empty state: "No workflow run selected"
+    files_modified:
+      - src/client/components/PipelineDiagram.tsx (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Invalid runId shows error message
+      - Empty steps_state shows "No steps defined"
+
+  - id: ST-011-03
+    title: "Implement keyboard navigation"
+    description: |
+      Add keyboard controls for accessibility.
+      Arrow keys navigate between nodes, Enter/Space selects.
+    acceptance_criteria:
+      - useEffect to add keyboard listener
+      - ArrowRight: focus next node
+      - ArrowLeft: focus previous node
+      - Home: focus first node
+      - End: focus last node
+      - Enter/Space: trigger node onClick
+      - Focus visible indicator (outline ring)
+      - Cleanup listener on unmount
+    files_modified:
+      - src/client/components/PipelineDiagram.tsx
+    estimated_hours: 1.0
+    error_handling:
+      - Out of bounds navigation wraps or stops at ends
+
+  - id: ST-011-04
+    title: "Add step detail panel"
+    description: |
+      Show detailed step info when node clicked.
+      Display in side panel or modal.
+    acceptance_criteria:
+      - State: selectedStepIndex (number | null)
+      - onClick sets selectedStepIndex
+      - Detail panel shows:
+        - Step name, type, status
+        - Start time, completion time (if available)
+        - Error message (if failed)
+        - Skipped reason (if skipped)
+        - Task ID (if spawn_session)
+        - Output path (if specified)
+      - Close button to deselect
+    files_modified:
+      - src/client/components/PipelineDiagram.tsx
+    estimated_hours: 1.0
+    error_handling:
+      - Missing detail fields show "N/A"
+
+  - id: ST-011-05
+    title: "Add real-time updates from WebSocket"
+    description: |
+      Update diagram automatically when workflow-run-update messages received.
+      No manual refresh needed.
+    acceptance_criteria:
+      - useWorkflowStore subscribes to run updates
+      - Component re-renders when run.steps_state changes
+      - Smooth transitions on status changes (CSS transitions)
+      - No flicker or layout shift
+    files_modified:
+      - src/client/components/PipelineDiagram.tsx
+    estimated_hours: 0.5
+    error_handling:
+      - WebSocket disconnect doesn't crash component
+
+  - id: ST-011-06
+    title: "Add unit tests for PipelineDiagram"
+    description: |
+      Create unit test suite with React Testing Library.
+    acceptance_criteria:
+      - Test renders all step nodes
+      - Test status colors match step status
+      - Test keyboard navigation changes focus
+      - Test node click shows detail panel
+      - Test empty state renders correctly
+      - Mock useWorkflowStore for tests
+      - All tests pass with bun test
+    files_modified:
+      - src/client/components/PipelineDiagram.test.tsx (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify edge cases (empty runs, missing data)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All pipeline diagram unit tests pass"
+    command: "bun test src/client/components/PipelineDiagram.test.tsx"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - StepNode component renders step with status color and icon
+  - PipelineDiagram renders horizontal connected flow
+  - Keyboard navigation works (arrow keys, Home, End)
+  - Step detail panel shows on node click
+  - Real-time updates via WebSocket
+  - Horizontal scroll for long pipelines
+  - ARIA labels for accessibility
+  - Colorblind-friendly (icons supplement colors)
+  - Unit tests achieve >90% coverage
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/client/components/PipelineDiagram.tsx if issues arise"
+  - "git checkout src/client/components/StepNode.tsx"
+  - "No server changes in this phase"
+
+notes:
+  - "Custom CSS/SVG component preferred over heavy library (reactflow) for MVP"
+  - "Feature brief specifies icons supplement colors (colorblind accessibility)"
+  - "Horizontal scroll allows unlimited steps (feature brief: no limit on step count)"
+  - "Real-time updates key requirement: p95 latency < 200ms"
+  - "Follow existing component patterns (Tailwind, functional components)"
+
+specs_covered:
+  - UI-DIAGRAM-001  # Step node rendering
+  - UI-DIAGRAM-002  # Pipeline layout
+  - UI-DIAGRAM-003  # Status visualization
+  - UI-DIAGRAM-004  # Keyboard navigation
+  - UI-DIAGRAM-005  # Real-time updates
+  - UI-DIAGRAM-006  # Accessibility (ARIA, colorblind-friendly)

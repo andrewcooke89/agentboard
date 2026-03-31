@@ -48,13 +48,21 @@ const createMatchMedia = () => ({
   removeListener: () => {},
 })
 
+const pendingRafTimers = new Set<ReturnType<typeof setTimeout>>()
+
 function setupDom() {
   class NodeMock {}
   class ElementMock extends NodeMock {}
   class HTMLElementMock extends ElementMock {}
-  const raf = (callback: FrameRequestCallback) =>
-    (setTimeout(() => callback(Date.now()), 0) as unknown as number)
-  const caf = (handle: number) => clearTimeout(handle)
+  const raf = (callback: FrameRequestCallback) => {
+    const id = setTimeout(() => { pendingRafTimers.delete(id); callback(Date.now()) }, 0)
+    pendingRafTimers.add(id)
+    return id as unknown as number
+  }
+  const caf = (handle: number) => {
+    pendingRafTimers.delete(handle as unknown as ReturnType<typeof setTimeout>)
+    clearTimeout(handle)
+  }
 
   const createStyle = () => ({
     setProperty: () => {},
@@ -82,6 +90,8 @@ function setupDom() {
       style: createStyle(),
       setAttribute: () => {},
       removeAttribute: () => {},
+      scrollLeft: 0,
+      scrollTop: 0,
     }),
   } as unknown as Document
 
@@ -151,6 +161,16 @@ function setupDom() {
 
 setupDom()
 globalAny.localStorage = createStorage()
+
+// Mock fetch to prevent network calls during component rendering
+mock.module('../utils/api', () => ({
+  authFetch: () => Promise.resolve({
+    json: () => Promise.resolve({ port: 4040, tailscaleIp: null, protocol: 'http' }),
+    ok: true,
+    status: 200,
+  } as Response),
+  checkAuth: () => Promise.resolve({ authenticated: false, authRequired: false }),
+}))
 
 mock.module('@xterm/xterm', () => ({
   Terminal: class {
@@ -258,7 +278,7 @@ describe('component rendering', () => {
 
   test('renders header', () => {
     const html = renderMarkup(
-      <Header connectionStatus="connected" onNewSession={() => {}} onOpenSettings={() => {}} tailscaleIp={null} />
+      <Header connectionStatus="connected" onNewSession={() => {}} onOpenSettings={() => {}} onToggleTaskQueue={() => {}} taskQueueActive={false} taskQueueCount={0} tailscaleIp={null} />
     )
     expect(html).toContain('AGENTBOARD')
   })
@@ -324,7 +344,7 @@ describe('component rendering', () => {
         session={baseSession}
         sessions={[baseSession]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}
@@ -344,7 +364,7 @@ describe('component rendering', () => {
         session={null}
         sessions={[]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}
@@ -371,7 +391,7 @@ describe('component rendering', () => {
         session={baseSession}
         sessions={[baseSession, secondSession]}
         connectionStatus="connected"
-        sendMessage={() => {}}
+        sendMessage={() => true}
         subscribe={() => () => {}}
         onClose={() => {}}
         onSelectSession={() => {}}
@@ -468,6 +488,12 @@ describe('component rendering', () => {
 })
 
 afterAll(() => {
+  // Cancel pending rAF-based timers before restoring globals to undefined.
+  // framer-motion queues frame.read() callbacks via our mocked requestAnimationFrame
+  // (which delegates to setTimeout). Without cancellation these fire after window is
+  // restored to undefined, causing "window.innerWidth" unhandled errors.
+  pendingRafTimers.forEach((id) => clearTimeout(id))
+  pendingRafTimers.clear()
   globalAny.window = originalWindow
   globalAny.document = originalDocument
   globalAny.navigator = originalNavigator

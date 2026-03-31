@@ -1,0 +1,261 @@
+work_order_id: WO-004
+title: "Phase 4: Create SQLite Workflow Store with CRUD Operations"
+phase: 4
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 8
+depends_on:
+  - WO-001  # Needs workflow types
+  - WO-003  # Needs parseWorkflowYAML function
+
+description: |
+  Create workflowStore.ts following taskStore.ts pattern.
+  Implement SQLite CRUD for workflows and workflow_runs tables.
+  Add additive migration for workflow_run_id and workflow_step_name columns on tasks table.
+
+  Tables to create:
+  - workflows (workflow definitions from YAML)
+  - workflow_runs (run instances with step state JSON)
+
+  Migrations:
+  - tasks.workflow_run_id TEXT (nullable)
+  - tasks.workflow_step_name TEXT (nullable)
+
+context:
+  existing_patterns:
+    - "initTaskStore pattern: CREATE TABLE IF NOT EXISTS, prepared statements (taskStore.ts lines 73-135)"
+    - "Additive migrations with try/catch ALTER TABLE (taskStore.ts lines 115-117)"
+    - "generateId() function for IDs (taskStore.ts line 27)"
+    - "mapRow functions for type-safe row mapping (taskStore.ts lines 42-58)"
+    - "Factory function returns interface with methods (taskStore.ts lines 139-367)"
+  files_to_create:
+    - src/server/workflowStore.ts
+  files_to_modify:
+    - src/server/index.ts (wire initWorkflowStore alongside initTaskStore)
+  reference_files:
+    - src/server/taskStore.ts (pattern to follow)
+    - feature_brief.md (lines 229-283 for table schemas)
+    - .workflow/blackboard.yaml (INV-005: additive migrations only)
+
+subtasks:
+  - id: ST-004-01
+    title: "Create WorkflowStore interface"
+    description: |
+      Define TypeScript interface for workflow store operations.
+      Follow same pattern as TaskStore interface.
+    acceptance_criteria:
+      - Interface exported from workflowStore.ts
+      - Workflow CRUD: createWorkflow, getWorkflow, getWorkflowByName, updateWorkflow, deleteWorkflow, listWorkflows
+      - Run CRUD: createRun, getRun, updateRun, listRuns, listRunsByWorkflow, getRunningRuns
+      - Cleanup: deleteOldRuns(olderThanDays: number)
+      - close() method for consistency
+      - All methods typed with WorkflowDefinition/WorkflowRun interfaces
+    files_modified:
+      - src/server/workflowStore.ts (create)
+    estimated_hours: 0.5
+
+  - id: ST-004-02
+    title: "Create workflows table with indexes"
+    description: |
+      Create workflows table matching schema from feature brief.
+      Add indexes for common queries.
+    acceptance_criteria:
+      - CREATE TABLE IF NOT EXISTS workflows with all columns from feature brief (lines 232-244)
+      - id TEXT PRIMARY KEY (generated)
+      - name TEXT NOT NULL UNIQUE (kebab-case workflow names)
+      - description TEXT
+      - yaml_content TEXT NOT NULL
+      - file_path TEXT (nullable - UI-only workflows have no file)
+      - is_valid INTEGER NOT NULL DEFAULT 1
+      - validation_errors TEXT (JSON array of error strings)
+      - step_count INTEGER NOT NULL DEFAULT 0
+      - created_at, updated_at TEXT with datetime('now') defaults
+      - CREATE INDEX idx_workflows_name ON workflows(name)
+      - CREATE INDEX idx_workflows_valid ON workflows(is_valid)
+    files_modified:
+      - src/server/workflowStore.ts
+    estimated_hours: 1.0
+    error_handling:
+      - IF NOT EXISTS prevents errors on repeated init
+
+  - id: ST-004-03
+    title: "Create workflow_runs table with indexes"
+    description: |
+      Create workflow_runs table matching schema from feature brief.
+      Store per-step state as JSON in steps_state column.
+    acceptance_criteria:
+      - CREATE TABLE IF NOT EXISTS workflow_runs with all columns from feature brief (lines 248-263)
+      - id TEXT PRIMARY KEY
+      - workflow_id TEXT NOT NULL (FK to workflows.id, but no FOREIGN KEY constraint for flexibility)
+      - workflow_name TEXT NOT NULL (denormalized)
+      - status TEXT NOT NULL DEFAULT 'pending' (pending, running, completed, failed, cancelled)
+      - current_step_index INTEGER NOT NULL DEFAULT 0
+      - steps_state TEXT NOT NULL (JSON array of StepRunState)
+      - output_dir TEXT NOT NULL (per-run scratch directory)
+      - started_at, completed_at TEXT (nullable)
+      - error_message TEXT (nullable)
+      - created_at TEXT NOT NULL DEFAULT datetime('now')
+      - CREATE INDEX idx_workflow_runs_workflow ON workflow_runs(workflow_id)
+      - CREATE INDEX idx_workflow_runs_status ON workflow_runs(status)
+    files_modified:
+      - src/server/workflowStore.ts
+    estimated_hours: 1.0
+    error_handling:
+      - No FK constraint (workflows can be deleted, runs preserved)
+
+  - id: ST-004-04
+    title: "Add workflow_run_id and workflow_step_name columns to tasks table"
+    description: |
+      Additive migration: add two nullable columns to existing tasks table.
+      Links tasks back to workflow runs for monitoring.
+    acceptance_criteria:
+      - try { db.exec('ALTER TABLE tasks ADD COLUMN workflow_run_id TEXT') } catch {}
+      - try { db.exec('ALTER TABLE tasks ADD COLUMN workflow_step_name TEXT') } catch {}
+      - Follow exact pattern from taskStore.ts lines 115-117 (parent_task_id migration)
+      - Columns nullable (existing tasks have NULL values)
+      - No index needed (low cardinality, optional join)
+    files_modified:
+      - src/server/workflowStore.ts (in initWorkflowStore)
+    estimated_hours: 0.5
+    error_handling:
+      - try/catch handles column already exists (idempotent)
+      - No errors on repeated runs
+
+  - id: ST-004-05
+    title: "Implement workflow CRUD with prepared statements"
+    description: |
+      Implement all workflow CRUD methods with prepared statements.
+      Follow taskStore.ts patterns exactly.
+    acceptance_criteria:
+      - createWorkflow: generates ID, inserts row, returns WorkflowDefinition
+      - getWorkflow(id): returns WorkflowDefinition or null
+      - getWorkflowByName(name): returns WorkflowDefinition or null (for file watcher upsert)
+      - updateWorkflow(id, fields): updates mutable fields, returns updated workflow
+      - deleteWorkflow(id): deletes row, returns boolean success
+      - listWorkflows(filters?: {status?: 'valid'|'invalid'}): returns WorkflowDefinition[]
+      - All statements prepared at init (not per-call)
+      - mapWorkflowRow() helper for type-safe row mapping
+      - validation_errors parsed from JSON string to array
+    files_modified:
+      - src/server/workflowStore.ts
+    estimated_hours: 2.0
+    error_handling:
+      - NULL handling for optional fields (file_path, description)
+      - JSON.parse for validation_errors with try/catch
+
+  - id: ST-004-06
+    title: "Implement workflow run CRUD with prepared statements"
+    description: |
+      Implement all run CRUD methods with prepared statements.
+      Parse/stringify steps_state JSON.
+    acceptance_criteria:
+      - createRun: generates ID and output_dir, initializes steps_state from workflow, inserts row
+      - getRun(id): returns WorkflowRun or null
+      - updateRun(id, fields): updates mutable fields (status, current_step_index, steps_state, etc.)
+      - listRuns(filters?: {status, limit, offset}): returns WorkflowRun[]
+      - listRunsByWorkflow(workflowId): returns runs for specific workflow
+      - getRunningRuns(): returns all runs with status='running' (for recovery on startup)
+      - mapRunRow() helper with JSON.parse for steps_state
+      - All statements prepared at init
+    files_modified:
+      - src/server/workflowStore.ts
+    estimated_hours: 2.5
+    error_handling:
+      - JSON.parse/stringify for steps_state with try/catch
+      - Handle corrupt JSON gracefully (log error, return null)
+
+  - id: ST-004-07
+    title: "Implement deleteOldRuns cleanup method"
+    description: |
+      Implement automatic cleanup for old workflow runs.
+      Delete runs older than retention threshold.
+    acceptance_criteria:
+      - deleteOldRuns(olderThanDays: number): deletes runs where created_at < datetime('now', '-N days')
+      - Returns count of deleted runs
+      - Prepared statement with parameter
+      - Only deletes completed/failed/cancelled runs (not running)
+    files_modified:
+      - src/server/workflowStore.ts
+    estimated_hours: 0.5
+    error_handling:
+      - WHERE clause prevents deleting active runs
+
+  - id: ST-004-08
+    title: "Add unit tests for workflow store"
+    description: |
+      Create comprehensive unit test suite for all store operations.
+      Use in-memory SQLite database (:memory:) for tests.
+    acceptance_criteria:
+      - Test all workflow CRUD operations
+      - Test all run CRUD operations
+      - Test workflow name uniqueness constraint
+      - Test getWorkflowByName for upsert pattern
+      - Test getRunningRuns for recovery
+      - Test deleteOldRuns threshold logic
+      - Test JSON parse/stringify for steps_state and validation_errors
+      - Test NULL handling for optional fields
+      - All tests pass with bun test
+    files_modified:
+      - src/server/workflowStore.test.ts (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Tests verify error cases (not found, duplicate name)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow store unit tests pass"
+    command: "bun test src/server/workflowStore.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "Tables created successfully in real database"
+    command: |
+      bun eval "import {Database} from 'bun:sqlite'; import {initWorkflowStore} from './src/server/workflowStore.ts'; const db = new Database(':memory:'); const store = initWorkflowStore(db); console.log('OK');"
+    expected_output: "OK"
+
+  - test_type: integration
+    description: "Additive migration idempotent (run twice, no error)"
+    command: |
+      bun eval "import {Database} from 'bun:sqlite'; import {initTaskStore} from './src/server/taskStore.ts'; import {initWorkflowStore} from './src/server/workflowStore.ts'; const db = new Database(':memory:'); initTaskStore(db); initWorkflowStore(db); initWorkflowStore(db); console.log('OK');"
+    expected_output: "OK"
+
+acceptance_criteria:
+  - workflows and workflow_runs tables created with correct schemas
+  - tasks table migration adds workflow_run_id and workflow_step_name columns
+  - All CRUD operations implemented with prepared statements
+  - mapWorkflowRow and mapRunRow functions for type-safe mapping
+  - JSON parse/stringify for steps_state and validation_errors
+  - Unit tests achieve >95% coverage
+  - bun run typecheck passes
+  - bun run test passes
+  - Additive migrations are idempotent (no errors on repeated runs)
+  - No FOREIGN KEY constraints (workflows can be deleted independently of runs)
+
+rollback_procedures:
+  - "git checkout src/server/workflowStore.ts if issues arise"
+  - "Tables persist in database (CREATE TABLE IF NOT EXISTS is safe)"
+  - "Additive columns on tasks table are harmless (nullable, no existing queries broken)"
+  - "DROP TABLE workflows; DROP TABLE workflow_runs; to remove tables if needed"
+  - "SQLite doesn't support DROP COLUMN, so workflow_run_id column remains if rollback needed"
+
+notes:
+  - "Follow taskStore.ts pattern exactly - proven pattern"
+  - "No FK constraints - workflows can be deleted, runs preserved for history"
+  - "workflow_name denormalized in runs table (allows workflow deletion)"
+  - "steps_state stored as JSON TEXT (SQLite has no native JSON type)"
+  - "Convention-based output_dir: ~/.agentboard/task-outputs/workflow-{runId}/"
+  - "Indexes on name and is_valid for common queries (list valid workflows)"
+  - "Indexes on workflow_id and status for monitoring queries"
+
+specs_covered:
+  - DB-SCHEMA-001  # workflows table creation
+  - DB-SCHEMA-002  # workflow_runs table creation
+  - DB-MIGRATE-001  # tasks table additive migration
+  - DB-CRUD-001    # Workflow CRUD operations
+  - DB-CRUD-002    # Run CRUD operations
+  - DB-CLEANUP-001 # Old run deletion

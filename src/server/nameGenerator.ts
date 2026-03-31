@@ -77,3 +77,37 @@ export function generateUniqueSessionName(
   // Fallback: append random suffix if all retries exhausted
   return `${generateSessionName()}-${Date.now().toString(36).slice(-4)}`
 }
+
+/**
+ * Generate a descriptive session name from a project path + short timestamp.
+ * Example: "/Users/me/projects/brain-state" -> "brain-state-14h32"
+ * Falls back to random adjective-noun if path is unusable.
+ */
+export function generateDescriptiveName(projectPath: string): string {
+  // Extract the last directory component from the path
+  const cleaned = projectPath.replace(/\/+$/, '') // strip trailing slashes
+  const lastSegment = cleaned.split('/').pop() || ''
+
+  // Sanitize: keep only alphanumeric, hyphens, underscores
+  const sanitized = lastSegment
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+
+  // Generate short timestamp: HHhMM (e.g., "14h32")
+  const now = new Date()
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const timestamp = `${hours}h${minutes}`
+
+  if (!sanitized || sanitized === '~') {
+    // Path was unusable (e.g., just "/" or "~"), fall back to random name
+    return `${generateSessionName()}-${timestamp}`
+  }
+
+  // Truncate long directory names to keep tmux window names manageable
+  const truncated = sanitized.length > 20 ? sanitized.slice(0, 20) : sanitized
+
+  return `${truncated}-${timestamp}`
+}

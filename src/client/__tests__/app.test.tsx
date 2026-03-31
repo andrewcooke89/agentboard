@@ -1,11 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { ServerMessage, Session } from '@shared/types'
-import SessionList from '../components/SessionList'
-import NewSessionModal from '../components/NewSessionModal'
-import { useSessionStore } from '../stores/sessionStore'
-import { useSettingsStore } from '../stores/settingsStore'
-import { useThemeStore } from '../stores/themeStore'
 
 const globalAny = globalThis as typeof globalThis & {
   window?: Window & typeof globalThis
@@ -14,6 +9,40 @@ const globalAny = globalThis as typeof globalThis & {
   ResizeObserver?: typeof ResizeObserver
   localStorage?: Storage
 }
+
+// Install safe stubs at module scope so that framer-motion frame callbacks leaked
+// from prior test files (e.g. renderComponents.test.tsx) don't crash when accessing
+// document.documentElement or window.innerWidth between afterAll and beforeEach.
+if (!globalAny.document) {
+  globalAny.document = {
+    documentElement: { scrollLeft: 0, scrollTop: 0, setAttribute: () => {} },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    querySelector: () => null,
+    body: { scrollLeft: 0, scrollTop: 0 },
+  } as unknown as Document
+}
+if (!globalAny.window) {
+  globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
+    matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+  } as unknown as Window & typeof globalThis
+}
+
+// Mock fetch to prevent "URL is invalid" errors when App calls authFetch('/api/server-info')
+const originalFetch = globalThis.fetch
+globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  // Return a mock response for any API calls
+  if (url.includes('/api/')) {
+    return Promise.resolve(new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+  }
+  // Fall through to original fetch for other requests (shouldn't happen in tests)
+  return originalFetch(input, init)
+}) as typeof fetch
 
 const originalWindow = globalAny.window
 const originalDocument = globalAny.document
@@ -49,6 +78,24 @@ class TerminalMock {
   refresh() {}
 }
 
+// Undo mock.module('../stores/workflowStore', ...) pollution from workflowEditor.test.tsx.
+// bun's mock.module replaces the module globally and the poisoned version is already
+// in the module cache before this file runs.  We re-register a complete enough stub
+// that satisfies App's usage: useWorkflowStore(selector) and useWorkflowStore.getState().
+const _workflowState = {
+  workflows: [],
+  workflowRuns: [],
+  activeWorkflowId: null,
+  loadingWorkflows: false,
+  loadingRuns: false,
+}
+const _useWorkflowStore = Object.assign(
+  (selector?: (s: typeof _workflowState) => unknown) =>
+    typeof selector === 'function' ? selector(_workflowState) : _workflowState,
+  { getState: () => _workflowState }
+)
+mock.module('../stores/workflowStore', () => ({ useWorkflowStore: _useWorkflowStore }))
+
 mock.module('@xterm/xterm', () => ({ Terminal: TerminalMock }))
 mock.module('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))
 mock.module('@xterm/addon-clipboard', () => ({ ClipboardAddon: class {} }))
@@ -75,8 +122,16 @@ mock.module('../hooks/useWebSocket', () => ({
   }),
 }))
 
-
-const { default: App } = await import('../App')
+// Import stores and components after mocks to ensure they use the mocked module context
+const [{ default: App }, { default: SessionList }, { default: NewSessionModal }, { useSessionStore }, { useSettingsStore }, { useThemeStore }] =
+  await Promise.all([
+    import('../App'),
+    import('../components/SessionList'),
+    import('../components/NewSessionModal'),
+    import('../stores/sessionStore'),
+    import('../stores/settingsStore'),
+    import('../stores/themeStore'),
+  ])
 
 function createStorage(): Storage {
   const store = new Map<string, string>()
@@ -113,8 +168,14 @@ function setupDom() {
   globalAny.document = {
     documentElement: {
       setAttribute: () => {},
+      scrollLeft: 0,
+      scrollTop: 0,
     },
+    // framer-motion's DocumentProjectionNode reads document.body.scrollLeft/scrollTop
+    body: { scrollLeft: 0, scrollTop: 0 },
     querySelector: () => null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
   } as unknown as Document
 
   globalAny.window = {
@@ -124,6 +185,8 @@ function setupDom() {
     removeEventListener: (event: string) => {
       keyHandlers.delete(event)
     },
+    innerWidth: 1024,
+    innerHeight: 768,
     setTimeout: (() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout,
     clearTimeout: (() => {}) as typeof clearTimeout,
     matchMedia: () => ({

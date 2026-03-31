@@ -1,0 +1,239 @@
+work_order_id: WO-012
+title: "Phase 12: Build Workflow List and Detail Pages"
+phase: 12
+feature_id: FEAT-005
+priority: high
+estimated_hours: 7
+depends_on:
+  - WO-010  # Needs workflow store
+  - WO-011  # Needs pipeline diagram
+
+description: |
+  Create full-page views for workflow management:
+  - WorkflowList: browse all workflows, create new, navigate to detail
+  - WorkflowDetail: view workflow YAML, run history, trigger runs
+
+  Features:
+  - List with name, description, step count, validity badge
+  - Empty state for no workflows
+  - Error badge for invalid workflows (run disabled)
+  - Detail view with YAML display and run button
+  - Run history table with status and timestamps
+  - Pipeline diagram embedded in detail view
+
+context:
+  existing_patterns:
+    - "React functional components with Tailwind"
+    - "Page routing via keyboard shortcuts or sidebar"
+    - "useWorkflowStore for state management"
+  files_to_create:
+    - src/client/components/WorkflowList.tsx
+    - src/client/components/WorkflowDetail.tsx
+  files_to_modify:
+    - src/client/App.tsx (add workflow views to routing)
+  reference_files:
+    - feature_brief.md (lines 567-575 for Phase 12 spec)
+    - .workflow/blackboard.yaml (DEC-008: two-level UI design)
+
+subtasks:
+  - id: ST-012-01
+    title: "Create WorkflowList component"
+    description: |
+      List all workflows with metadata and navigation.
+    acceptance_criteria:
+      - Component: WorkflowList()
+      - Fetch workflows on mount: workflowStore.fetchWorkflows()
+      - Render workflows as table/cards:
+        - Name (link to detail)
+        - Description
+        - Step count
+        - Validity badge (✓ valid / ⚠️ invalid with error count)
+        - Last updated timestamp
+      - Filter: show valid/invalid/all
+      - Sort: by name, date
+      - "Create New Workflow" button (opens editor)
+      - Empty state: "No workflows yet. Create your first workflow."
+    files_modified:
+      - src/client/components/WorkflowList.tsx (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Fetch errors show error banner
+
+  - id: ST-012-02
+    title: "Create WorkflowDetail component"
+    description: |
+      Show workflow details, YAML content, and run controls.
+    acceptance_criteria:
+      - Component: WorkflowDetail({ workflowId: string })
+      - Fetch workflow: workflowStore.getWorkflow(workflowId)
+      - Display:
+        - Workflow name and description
+        - YAML content (readonly textarea or code block with syntax highlighting)
+        - Step count
+        - Validity status with error messages if invalid
+        - "Run" button (disabled if invalid)
+        - "Edit" button (opens editor)
+        - "Delete" button with confirmation
+      - Back button to list
+    files_modified:
+      - src/client/components/WorkflowDetail.tsx (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Workflow not found shows 404 message
+      - Invalid workflow shows errors, run disabled
+
+  - id: ST-012-03
+    title: "Add run history table to WorkflowDetail"
+    description: |
+      Show past runs for the workflow in a table.
+    acceptance_criteria:
+      - Fetch runs: workflowStore.fetchRuns(workflowId)
+      - Table columns:
+        - Run ID (link to run detail)
+        - Status badge (pending/running/completed/failed/cancelled)
+        - Started at
+        - Completed at (duration if completed)
+        - Current step (if running)
+        - Actions: Resume (if failed), Cancel (if running), View
+      - Sort by created_at descending (newest first)
+      - Limit to 20 recent runs
+      - Empty state: "No runs yet"
+    files_modified:
+      - src/client/components/WorkflowDetail.tsx
+    estimated_hours: 1.5
+    error_handling:
+      - Fetch errors show error message
+
+  - id: ST-012-04
+    title: "Implement workflow run trigger"
+    description: |
+      Add "Run" button that triggers workflow execution.
+    acceptance_criteria:
+      - Button: "Run Workflow"
+      - Disabled if workflow.is_valid === 0
+      - onClick: workflowStore.triggerRun(workflowId)
+      - On success: show success toast, add run to history
+      - On error: show error message
+      - Loading state during API call
+    files_modified:
+      - src/client/components/WorkflowDetail.tsx
+    estimated_hours: 0.5
+    error_handling:
+      - API errors displayed in toast/banner
+
+  - id: ST-012-05
+    title: "Add workflow delete with confirmation"
+    description: |
+      Allow deleting workflows with confirmation dialog.
+    acceptance_criteria:
+      - "Delete" button opens confirmation modal
+      - Modal warns: "This will delete the workflow and its YAML file. Runs will be preserved."
+      - Confirm button: workflowStore.deleteWorkflow(workflowId)
+      - On success: navigate back to list
+      - On error: show error message
+      - Cancel button closes modal
+    files_modified:
+      - src/client/components/WorkflowDetail.tsx
+    estimated_hours: 0.8
+    error_handling:
+      - Delete errors shown in modal
+
+  - id: ST-012-06
+    title: "Embed PipelineDiagram in detail view"
+    description: |
+      Show pipeline diagram for active/recent run.
+    acceptance_criteria:
+      - If workflow has running runs: show first running run's diagram
+      - Else: show most recent completed/failed run's diagram
+      - Section title: "Current Run" or "Latest Run"
+      - Expand/collapse diagram section
+      - Empty state: "No runs yet"
+    files_modified:
+      - src/client/components/WorkflowDetail.tsx
+    estimated_hours: 0.5
+
+  - id: ST-012-07
+    title: "Add routing for workflow views"
+    description: |
+      Wire workflow list and detail views into App.tsx.
+    acceptance_criteria:
+      - Add view state: 'workflow-list' | 'workflow-detail'
+      - Keyboard shortcut: Shift+W to open workflow list
+      - Navigation: clicking workflow name in list opens detail
+      - URL params: ?view=workflow-detail&workflowId=xxx (if using query params)
+      - Or: simple state-based routing
+    files_modified:
+      - src/client/App.tsx
+    estimated_hours: 0.5
+
+  - id: ST-012-08
+    title: "Add unit tests for WorkflowList and WorkflowDetail"
+    description: |
+      Create unit test suite for both components.
+    acceptance_criteria:
+      - Test WorkflowList renders workflows
+      - Test WorkflowList empty state
+      - Test WorkflowList filter and sort
+      - Test WorkflowDetail renders workflow info
+      - Test WorkflowDetail run button triggers run
+      - Test WorkflowDetail delete confirmation
+      - Test run history table renders runs
+      - Mock useWorkflowStore for tests
+      - All tests pass with bun test
+    files_modified:
+      - src/client/components/WorkflowList.test.tsx (create)
+      - src/client/components/WorkflowDetail.test.tsx (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Tests verify error states (not found, API errors)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow list/detail unit tests pass"
+    command: "bun test src/client/components/Workflow*.test.tsx"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - WorkflowList shows all workflows with metadata
+  - WorkflowList has filter, sort, create button
+  - WorkflowList empty state for no workflows
+  - WorkflowDetail shows YAML content and metadata
+  - WorkflowDetail has run history table
+  - WorkflowDetail run button triggers execution
+  - WorkflowDetail delete button with confirmation
+  - PipelineDiagram embedded in detail view
+  - Keyboard shortcut opens workflow list
+  - Invalid workflows show error badge, run disabled
+  - Unit tests achieve >90% coverage
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/client/components/WorkflowList.tsx if issues arise"
+  - "git checkout src/client/components/WorkflowDetail.tsx"
+  - "git checkout src/client/App.tsx to remove routing"
+  - "No server changes in this phase"
+
+notes:
+  - "Dedicated full-page views (not panels) per DEC-008"
+  - "YAML display readonly in detail view (edit in separate editor)"
+  - "Run history limited to 20 recent (pagination future enhancement)"
+  - "Invalid workflows cannot be run (validation enforcement)"
+  - "Delete preserves runs (no FK constraint, history retained)"
+  - "Follow existing Tailwind/React patterns for consistency"
+
+specs_covered:
+  - UI-LIST-001  # Workflow list rendering
+  - UI-LIST-002  # Filter and sort
+  - UI-LIST-003  # Empty state
+  - UI-DETAIL-001  # Workflow detail view
+  - UI-DETAIL-002  # YAML display
+  - UI-DETAIL-003  # Run history table
+  - UI-DETAIL-004  # Run trigger
+  - UI-DETAIL-005  # Delete workflow
+  - UI-DETAIL-006  # Pipeline diagram embedding

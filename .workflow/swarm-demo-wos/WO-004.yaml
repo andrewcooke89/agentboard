@@ -1,0 +1,79 @@
+id: WO-004
+group_id: swarm-demo
+title: "Create stats Zustand store with WebSocket handling"
+description: |
+  Create `src/client/stores/statsStore.ts` — a Zustand store for dashboard stats
+  with REST fetch and WebSocket update handling.
+
+  ```typescript
+  import { create } from 'zustand'
+  import type { DashboardStats } from '../../shared/dashboardTypes'
+
+  interface StatsStore {
+    stats: DashboardStats | null
+    setStats: (stats: DashboardStats) => void
+    fetchStats: () => Promise<void>
+  }
+  ```
+
+  ## Implementation
+
+  - `setStats(stats)` — direct setter, called from WebSocket handler
+  - `fetchStats()` — GET /api/stats, sets stats on success
+  - No persistence needed (stats are ephemeral)
+
+  ## Pattern
+
+  Follow the exact same patterns as existing stores in src/client/stores/.
+  Use `create` from zustand. Do NOT use persist middleware for this store
+  (stats are live data, not user preferences).
+
+  Look at cronStore.ts or taskStore.ts for the fetch pattern.
+
+task: implement
+scope: src/client/stores/
+interface_files:
+  - src/shared/dashboardTypes.ts
+reference_files:
+  - src/client/stores/cronStore.ts
+  - src/client/stores/taskStore.ts
+  - src/client/stores/swarmStore.ts
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 6
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

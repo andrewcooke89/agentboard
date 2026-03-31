@@ -1,0 +1,64 @@
+# Test Work Order: Refactor nameGenerator.ts
+# Tests the executor's ability to modify existing code using replace/insert_after actions.
+
+id: WO-TEST-002
+group_id: test-executor-validation
+title: "Refactor nameGenerator utility"
+description: |
+  Refactor src/server/nameGenerator.ts to improve code quality:
+
+  1. Rename the generic `pick` function to `randomElement` for clarity
+  2. Extract the timestamp generation logic from `generateDescriptiveName` into
+     a standalone exported function `shortTimestamp(): string` that returns "HHhMM" format
+  3. Update `generateDescriptiveName` to use the new `shortTimestamp` function
+  4. Update `generateSessionName` to also use `randomElement`
+
+  All existing behavior must be preserved exactly. No new dependencies.
+
+task: refactor
+scope: src/server/
+
+interface_files: []
+reference_files: []
+input_files:
+  - src/server/nameGenerator.ts
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: true
+  lint: true
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: glm-5
+  max_retries: 2
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "refactor"

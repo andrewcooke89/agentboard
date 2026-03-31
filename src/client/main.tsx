@@ -1,6 +1,7 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import AuthGate from './components/AuthGate'
 import './styles/index.css'
 import '@xterm/xterm/css/xterm.css'
 import { isIOSDevice, isIOSPWA } from './utils/device'
@@ -20,6 +21,8 @@ if (!container) {
 
 createRoot(container).render(
   <React.StrictMode>
-    <App />
+    <AuthGate>
+      <App />
+    </AuthGate>
   </React.StrictMode>
 )

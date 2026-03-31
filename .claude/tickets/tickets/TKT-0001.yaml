@@ -1,0 +1,45 @@
+id: TKT-0001
+version: 1
+created_at: 2026-02-04T02:42:12.081Z
+updated_at: 2026-03-16T04:47:27.111Z
+category: style
+severity: low
+status: resolved
+source:
+  file: /Users/andrewcooke/Ai_workflow/claude-orchestrator/agentboard/src/server/logger.ts
+  line_start: 1
+  line_end: 4
+  code_snippet: |-
+    // Structured logger using pino
+    // Configure via env vars:
+    //   LOG_LEVEL: debug | info | warn | error (default: info)
+    //   LOG_FILE: path to log file (optional, enables file logging)
+  content_hash: 965cad5de4c7ad60
+related_locations: []
+title: Convert inline comments to JSDoc module documentation
+description: The logger module has inline comments describing its purpose and
+  configuration, but these should be converted to proper JSDoc format for better
+  IDE support and documentation generation.
+suggestion: Convert the inline comments at lines 1-4 to a proper JSDoc block
+  with @module, @description, and @example tags showing the environment variable
+  usage.
+auto_fixable: true
+fix_confidence: high
+effort: small
+found_by: auditor
+related_tickets: []
+tags:
+  - documentation
+  - test-ticket
+  - server
+notes:
+  - timestamp: 2026-03-16T04:47:27.111Z
+    author: system
+    content: "Status changed to resolved: source file removed"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.111Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source file removed

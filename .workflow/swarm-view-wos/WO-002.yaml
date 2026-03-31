@@ -1,0 +1,124 @@
+# Frontend: Zustand swarm store with WebSocket handler
+
+id: WO-002
+group_id: swarm-view
+title: "Create Zustand swarm store with WebSocket event handling"
+description: |
+  Create `src/client/stores/swarmStore.ts` — a Zustand store that manages
+  swarm state on the frontend, handling both initial state load and real-time
+  WebSocket updates.
+
+  Follow the exact same patterns used in existing stores like `cronStore.ts`
+  or `workflowStore.ts` — use `create` from zustand with `persist` middleware
+  and `safeStorage` for localStorage.
+
+  ```typescript
+  import { create } from 'zustand'
+  import { persist } from 'zustand/middleware'
+  import type {
+    SwarmGroupState, SwarmEvent, SwarmWoState, WoStatus
+  } from '../../shared/swarmTypes'
+
+  interface SwarmStore {
+    // State
+    groups: SwarmGroupState[]
+    selectedGroupId: string | null
+    selectedWoId: string | null
+    eventLog: SwarmEvent[]  // recent events for the selected group
+
+    // Computed helpers
+    selectedGroup: () => SwarmGroupState | null
+    selectedWo: () => SwarmWoState | null
+
+    // Actions
+    setGroups: (groups: SwarmGroupState[]) => void
+    selectGroup: (groupId: string | null) => void
+    selectWo: (woId: string | null) => void
+    handleSwarmUpdate: (event: SwarmEvent) => void
+    handleSwarmState: (groups: SwarmGroupState[]) => void
+
+    // REST fetch
+    fetchGroups: () => Promise<void>
+  }
+  ```
+
+  Key behaviors:
+
+  1. `handleSwarmState(groups)` — called on WebSocket connect, replaces all state
+  2. `handleSwarmUpdate(event)` — called on each 'swarm-update' message:
+     - Find or create the group by event.groupId
+     - Apply the event to update group state (same logic as SwarmManager but client-side)
+     - Append event to eventLog (keep last 200)
+     - Auto-select the first active group if none selected
+  3. `fetchGroups()` — GET /api/swarm/groups, fallback for initial load
+  4. `selectedGroup()` — derive from groups array using selectedGroupId
+  5. `selectedWo()` — derive from selectedGroup's wos map using selectedWoId
+
+  Event application in handleSwarmUpdate should mirror the server-side logic:
+  - group_started: add new group to groups array
+  - wo_status_changed: update wo entry in the group
+  - wo_completed: update wo, increment completedWos
+  - wo_failed: update wo, increment failedWos
+  - wo_escalated: update wo tier
+  - group_completed: update group status and stats
+
+  Persist only: selectedGroupId (not the volatile state).
+
+  IMPORTANT: Look at existing stores in `src/client/stores/` for the exact
+  import patterns, persist middleware usage, and safeStorage helper. Match
+  the existing code style exactly.
+
+task: implement
+scope: src/client/stores/
+
+interface_files:
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/client/stores/cronStore.ts
+  - src/client/stores/workflowStore.ts
+  - src/client/stores/taskStore.ts
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 2
+  timeout_minutes: 8
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ClientMessage, ServerMessage } from '@shared/types'
 import type { ConnectionStatus } from '../stores/sessionStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAuthStore } from '../stores/authStore'
+import { useWorkflowStore } from '../stores/workflowStore'
 
 type MessageListener = (message: ServerMessage) => void
 
@@ -9,6 +11,7 @@ type StatusListener = (status: ConnectionStatus, error: string | null) => void
 
 export class WebSocketManager {
   private ws: WebSocket | null = null
+  private wsOpen = false
   private listeners = new Set<MessageListener>()
   private statusListeners = new Set<StatusListener>()
   private status: ConnectionStatus = 'connecting'
@@ -23,6 +26,7 @@ export class WebSocketManager {
     }
 
     this.manualClose = false
+    this.wsOpen = false
     this.setStatus('connecting')
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const wsUrl = `${scheme}://${window.location.host}/ws`
@@ -31,16 +35,41 @@ export class WebSocketManager {
     this.ws = ws
 
     ws.onopen = () => {
+      const isReconnect = this.reconnectAttempts > 0
       this.reconnectAttempts = 0
+      this.wsOpen = true
       this.setStatus('connected')
+
+      // Send auth message on open if token is available
+      const token = useAuthStore.getState().token
+      if (token) {
+        ws.send(JSON.stringify({ type: 'auth', token }))
+      }
+
+      // On reconnect, refresh workflow state to avoid staleness
+      if (isReconnect) {
+        const workflowStore = useWorkflowStore.getState()
+        if (workflowStore.hasLoaded) {
+          workflowStore.fetchWorkflows()
+        }
+      }
     }
 
     ws.onmessage = (event) => {
       try {
         const parsed = JSON.parse(event.data as string) as ServerMessage
+
+        // Handle auth-failed: clear token and flag auth required
+        if (parsed.type === 'auth-failed') {
+          const authStore = useAuthStore.getState()
+          authStore.setToken(null)
+          authStore.setAuthRequired(true)
+          return
+        }
+
         this.listeners.forEach((listener) => listener(parsed))
-      } catch {
-        // Ignore malformed payloads
+      } catch (e) {
+        console.error(e)
       }
     }
 
@@ -50,6 +79,7 @@ export class WebSocketManager {
 
     ws.onclose = () => {
       this.ws = null
+      this.wsOpen = false
       if (!this.manualClose) {
         this.scheduleReconnect()
       } else {
@@ -60,6 +90,7 @@ export class WebSocketManager {
 
   disconnect() {
     this.manualClose = true
+    this.wsOpen = false
     if (this.reconnectTimer) {
       window.clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
@@ -68,10 +99,12 @@ export class WebSocketManager {
     this.ws = null
   }
 
-  send(message: ClientMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+  send(message: ClientMessage): boolean {
+    if (this.ws && this.wsOpen && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
+      return true
     }
+    return false
   }
 
   subscribe(listener: MessageListener) {

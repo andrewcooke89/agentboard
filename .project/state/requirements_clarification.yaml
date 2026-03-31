@@ -1,0 +1,62 @@
+# Requirements Clarification for Workflow Engine Feature
+# Generated from Q&A session 2026-01-29
+
+feature: workflow-engine
+phase: "Phase 5 (Original) — YAML Workflow Engine"
+status: requirements_gathered
+
+clarifications:
+  inter_step_communication:
+    question: "How should step N+1 know what step N produced?"
+    answer: "Convention-based file paths"
+    detail: "Steps write to agreed-upon paths (e.g. ./output/step-1.json). Next step reads from that path."
+
+  error_handling:
+    question: "What should happen when a workflow step fails?"
+    answer: "Retry then halt"
+    detail: "Auto-retry failed steps up to N times (reusing existing task retry logic), then halt if still failing."
+
+  timeouts:
+    question: "How should long-running workflow steps handle timeouts?"
+    answer: "Per-step only, no global workflow timeout"
+    detail: "Each step declares its own timeout in YAML, defaulting to task queue settings."
+
+  storage:
+    question: "Should workflows be defined as YAML files on disk, stored in SQLite via the UI, or both?"
+    answer: "Both (YAML + UI)"
+    detail: "YAML files as source of truth, also editable/creatable from the web UI which writes back to YAML."
+
+  branching:
+    question: "Should workflows support conditional branching?"
+    answer: "Simple conditions"
+    detail: "Steps can have a 'condition' field (e.g. file_exists, output_contains) that skips the step if not met."
+
+  step_types:
+    question: "What step types do you need?"
+    answer: "Original set only"
+    detail: "spawn_session, check_file, delay, check_output. No run_command or notify for MVP."
+
+  triggers:
+    question: "How should workflows be triggered?"
+    answer: "Manual only"
+    detail: "User clicks 'Run' in the UI or hits a REST endpoint. No scheduled or event-based triggers."
+
+  ui_location:
+    question: "Where should the workflow UI live?"
+    answer: "Two-level: dedicated full view for CRUD + right panel tab for monitoring"
+    detail: "Dedicated view for form builder + YAML editor. Right panel for pipeline diagram monitoring. Task Queue shows active step with workflow badge."
+
+  progress_visualization:
+    question: "How should workflow progress be visualized?"
+    answer: "Pipeline diagram"
+    detail: "Connected nodes showing step flow and status (pending/running/done/failed/skipped)."
+
+  yaml_editor:
+    question: "How should the YAML editor work in the UI?"
+    answer: "Both modes"
+    detail: "Form-based builder AND raw YAML view, toggleable."
+
+  workflow_to_task:
+    question: "How do workflows relate to tasks?"
+    answer: "Engine submits steps as tasks"
+    detail: "Workflow engine submits steps one at a time to existing task queue. Reuses all task infrastructure."

@@ -1,0 +1,38 @@
+id: TKT-0092
+version: 1
+created_at: 2026-03-16T06:38:25.358Z
+updated_at: 2026-03-16T06:40:44.214Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/cronMcpServer.ts
+  line_start: 9
+  code_snippet: const _AGENTBOARD_URL = process.env.AGENTBOARD_URL || 'http://localhost:4040'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable
+  'AGENTBOARD_WS' is declared but never used. Unused variable..."
+description: "eslint(no-unused-vars): Variable 'AGENTBOARD_WS' is declared but
+  never used. Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:40:44.213Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'AGENTBOARD_WS
+      [TKT-0092]"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:40:44.213Z
+  resolved_by: minion-fix
+  pr_url: null
+  commit_sha: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Variable 'AGENTBOARD_WS [TKT-0092]"

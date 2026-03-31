@@ -1,0 +1,13 @@
+# Minion executor config for testing
+proxy_url: "http://localhost:8090"
+api_key: ""
+mcp_server_address: "http://localhost:3100"
+mcp_server_binary: "/home/andrew-cooke/tools/mcp-servers/code-intelligence/target/release/code-intel"
+default_model: "glm-5"
+max_iterations: 20
+timeout_seconds: 300
+command_timeout_seconds: 30
+gate_commands:
+  typecheck: "bun run typecheck"
+  lint: "bun run lint"
+  test: "bun test {scope}"

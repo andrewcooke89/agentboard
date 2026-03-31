@@ -1,0 +1,35 @@
+id: TKT-0018
+version: 1
+created_at: 2026-03-13T07:25:43.939Z
+updated_at: 2026-03-16T04:47:27.038Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/cronMcpServer.ts
+  line_start: 8
+  code_snippet: const AGENTBOARD_URL = process.env.AGENTBOARD_URL || 'http://localhost:4040'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable
+  'AGENTBOARD_URL' is declared but never used. Unused variabl..."
+description: "eslint(no-unused-vars): Variable 'AGENTBOARD_URL' is declared but
+  never used. Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T04:47:27.038Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.038Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

@@ -1,0 +1,197 @@
+work_order_id: WO-010
+title: "Phase 10: Create Client-Side Workflow Store and Handlers"
+phase: 10
+feature_id: FEAT-005
+priority: high
+estimated_hours: 5
+depends_on:
+  - WO-001  # Needs workflow types
+  - WO-008  # Needs WebSocket message types
+
+description: |
+  Create client-side Zustand store for workflow state management.
+  Handle WebSocket messages for real-time updates.
+  Provide HTTP client functions for REST API calls.
+
+  Store state:
+  - workflows: WorkflowDefinition[]
+  - workflowRuns: WorkflowRun[]
+  - activeRuns: WorkflowRun[] (filtered view)
+
+  Actions:
+  - fetchWorkflows, createWorkflow, updateWorkflow, deleteWorkflow
+  - fetchRuns, triggerRun, resumeRun, cancelRun
+  - WebSocket update handlers
+
+context:
+  existing_patterns:
+    - "Zustand store in src/client/stores/taskStore.ts (lines 10-80)"
+    - "persist middleware for state persistence"
+    - "WebSocket handlers in src/client/App.tsx (lines 100-180)"
+    - "HTTP client with fetch() and auth header"
+  files_to_create:
+    - src/client/stores/workflowStore.ts
+  files_to_modify:
+    - src/client/App.tsx (add workflow WebSocket handlers)
+  reference_files:
+    - src/client/stores/taskStore.ts (pattern to follow)
+    - src/client/App.tsx (WebSocket handler pattern)
+
+subtasks:
+  - id: ST-010-01
+    title: "Create workflowStore.ts with Zustand"
+    description: |
+      Create Zustand store for workflow state management.
+      Follow taskStore.ts pattern.
+    acceptance_criteria:
+      - File created at src/client/stores/workflowStore.ts
+      - State: workflows, workflowRuns, selectedWorkflow, selectedRun
+      - Persist with persist middleware (localStorage)
+      - Export useWorkflowStore hook
+    files_modified:
+      - src/client/stores/workflowStore.ts (create)
+    estimated_hours: 0.5
+
+  - id: ST-010-02
+    title: "Implement workflow CRUD actions"
+    description: |
+      Add actions for workflow management via REST API.
+    acceptance_criteria:
+      - fetchWorkflows: GET /api/workflows, update store
+      - createWorkflow: POST /api/workflows, update store
+      - updateWorkflow: PUT /api/workflows/:id, update store
+      - deleteWorkflow: DELETE /api/workflows/:id, update store
+      - getWorkflow: GET /api/workflows/:id, update selectedWorkflow
+      - All actions use fetch() with auth header from localStorage
+      - Error handling: return { ok: boolean, error?: string }
+    files_modified:
+      - src/client/stores/workflowStore.ts
+    estimated_hours: 1.5
+    error_handling:
+      - HTTP errors returned to caller (don't crash store)
+      - Auth errors clear token and redirect to login (if auth enabled)
+
+  - id: ST-010-03
+    title: "Implement workflow run actions"
+    description: |
+      Add actions for run management via REST API.
+    acceptance_criteria:
+      - fetchRuns: GET /api/workflows/:id/runs, update workflowRuns
+      - getRun: GET /api/workflow-runs/:runId, update selectedRun
+      - triggerRun: POST /api/workflows/:id/run, update workflowRuns
+      - resumeRun: POST /api/workflow-runs/:runId/resume, update selectedRun
+      - cancelRun: POST /api/workflow-runs/:runId/cancel, update selectedRun
+      - All actions use fetch() with auth header
+      - Error handling: return { ok: boolean, error?: string }
+    files_modified:
+      - src/client/stores/workflowStore.ts
+    estimated_hours: 1.5
+    error_handling:
+      - HTTP errors returned to caller
+      - 404 errors clear selectedRun/selectedWorkflow
+
+  - id: ST-010-04
+    title: "Implement WebSocket update handlers"
+    description: |
+      Add methods to handle incoming WebSocket workflow messages.
+      Update store state on server broadcasts.
+    acceptance_criteria:
+      - handleWorkflowList: update workflows array
+      - handleWorkflowUpdated: upsert workflow in array
+      - handleWorkflowRemoved: remove workflow from array
+      - handleWorkflowRunUpdate: upsert run in workflowRuns array
+      - handleWorkflowRunList: update workflowRuns array
+      - Handlers called from App.tsx WebSocket onMessage
+    files_modified:
+      - src/client/stores/workflowStore.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Invalid messages logged, no crash
+
+  - id: ST-010-05
+    title: "Add computed selectors"
+    description: |
+      Add derived state selectors for common queries.
+    acceptance_criteria:
+      - getActiveRuns: () => WorkflowRun[] (status='running')
+      - getRunsByWorkflow: (workflowId) => WorkflowRun[]
+      - getValidWorkflows: () => WorkflowDefinition[] (is_valid=1)
+      - Use Zustand selector pattern for performance
+    files_modified:
+      - src/client/stores/workflowStore.ts
+    estimated_hours: 0.5
+
+  - id: ST-010-06
+    title: "Wire WebSocket handlers in App.tsx"
+    description: |
+      Add workflow message handlers to WebSocket onMessage dispatch.
+    acceptance_criteria:
+      - Import useWorkflowStore in App.tsx
+      - In ws.onmessage handler (around line 150):
+        - if (msg.type === 'workflow-list') { workflowStore.handleWorkflowList(msg) }
+        - if (msg.type === 'workflow-updated') { workflowStore.handleWorkflowUpdated(msg) }
+        - if (msg.type === 'workflow-removed') { workflowStore.handleWorkflowRemoved(msg) }
+        - if (msg.type === 'workflow-run-update') { workflowStore.handleWorkflowRunUpdate(msg) }
+        - if (msg.type === 'workflow-run-list') { workflowStore.handleWorkflowRunList(msg) }
+      - Send workflow-list-request on WebSocket connect
+    files_modified:
+      - src/client/App.tsx
+    estimated_hours: 0.5
+
+  - id: ST-010-07
+    title: "Add unit tests for workflow store"
+    description: |
+      Create unit test suite for store actions and handlers.
+    acceptance_criteria:
+      - Test fetchWorkflows updates workflows array
+      - Test createWorkflow adds to array
+      - Test WebSocket handlers update state correctly
+      - Test computed selectors return correct filtered data
+      - Mock fetch() and WebSocket for tests
+      - All tests pass with bun test
+    files_modified:
+      - src/client/stores/workflowStore.test.ts (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify error cases (HTTP failures, invalid messages)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow store unit tests pass"
+    command: "bun test src/client/stores/workflowStore.test.ts"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - Zustand store created with persist middleware
+  - All workflow CRUD actions implemented
+  - All run management actions implemented
+  - WebSocket handlers update store on broadcasts
+  - Computed selectors for common queries
+  - WebSocket handlers wired in App.tsx
+  - Unit tests achieve >90% coverage
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/client/stores/workflowStore.ts if issues arise"
+  - "git checkout src/client/App.tsx to remove WebSocket handlers"
+  - "No server changes in this phase"
+
+notes:
+  - "Follow taskStore.ts pattern exactly for consistency"
+  - "Persist workflow state to survive page refresh"
+  - "WebSocket handlers enable real-time UI updates"
+  - "Error handling returns results, doesn't throw (store-friendly)"
+  - "Auth header from localStorage (existing pattern)"
+
+specs_covered:
+  - CLIENT-STORE-001  # Zustand store creation
+  - CLIENT-STORE-002  # Workflow CRUD actions
+  - CLIENT-STORE-003  # Run management actions
+  - CLIENT-STORE-004  # WebSocket handlers
+  - CLIENT-STORE-005  # Computed selectors

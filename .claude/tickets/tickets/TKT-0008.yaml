@@ -1,0 +1,65 @@
+id: TKT-0008
+version: 1
+created_at: 2026-02-04T07:36:36.857Z
+updated_at: 2026-03-16T04:47:27.084Z
+category: error-handling
+subcategory: state-safety
+severity: high
+status: resolved
+source:
+  file: src/server/SessionManager.ts
+  line_start: 124
+  line_end: 144
+  code_snippet: >-
+    const nameExists = (n: string) =>
+      existingWindowNames.has(n) || this.displayNameExists(n, excludeSessionId)
+
+    let baseName = name?.trim()
+
+    if (baseName) {
+      baseName = baseName.replace(/\s+/g, '-')
+    } else {
+      baseName = generateDescriptiveName(resolvedPath)
+      if (nameExists(baseName)) {
+        do {
+          baseName = generateSessionName()
+        } while (nameExists(baseName))
+      }
+    }
+
+    const finalName = this.findAvailableName(baseName, existingWindowNames,
+    nameExists)
+  content_hash: 79834971aee844c2
+related_locations: []
+title: Race condition in session creation name collision check
+description: Name uniqueness is checked by listing existing windows and querying
+  the database separately (TOCTOU pattern). Two concurrent requests can both
+  pass the uniqueness check before either creates the window, resulting in
+  duplicate names. The displayNameExists check and tmux window creation are not
+  atomic. No synchronization primitive protects this critical section.
+suggestion: Add UNIQUE constraint on display_name in database schema. Wrap
+  uniqueness check + insert in transaction, catch constraint violations and
+  retry with new name. Use database's atomic guarantees instead of
+  application-level checks. Consider optimistic locking with version numbers.
+auto_fixable: false
+fix_confidence: high
+effort: medium
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - concurrency
+  - state-safety
+  - race-condition
+  - state-002
+notes:
+  - timestamp: 2026-03-16T04:47:27.084Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.084Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

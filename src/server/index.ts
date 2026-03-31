@@ -1,183 +1,76 @@
-import type { ServerWebSocket } from 'bun'
 import path from 'node:path'
-import fs from 'node:fs/promises'
+import type { ServerWebSocket } from 'bun'
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
 import { config } from './config'
+import { loadModelEnvs } from './modelEnvLoader'
 import { ensureTmux } from './prerequisites'
 import { SessionManager } from './SessionManager'
 import { SessionRegistry } from './SessionRegistry'
-import { initDatabase } from './db'
+import { initDatabase, initPoolTables } from './db'
 import { LogPoller } from './logPoller'
 import { toAgentSession } from './agentSessions'
-import { getLogSearchDirs } from './logDiscovery'
-import { verifyWindowLogAssociationDetailed } from './logMatcher'
-import {
-  createTerminalProxy,
-  resolveTerminalMode,
-  TerminalProxyError,
-} from './terminal'
-import type { ITerminalProxy } from './terminal'
-import { resolveProjectPath } from './paths'
-import type {
-  ClientMessage,
-  ServerMessage,
-  TerminalErrorCode,
-  DirectoryListing,
-  DirectoryErrorResponse,
-  AgentSession,
-  ResumeError,
-  Session,
-} from '../shared/types'
+import { resolveTerminalMode } from './terminal'
 import { logger } from './logger'
 import { SessionRefreshWorkerClient } from './sessionRefreshWorkerClient'
-import {
-  setForceWorkingUntil,
-  applyForceWorkingOverrides,
-} from './forceWorkingStatus'
-import {
-  MAX_FIELD_LENGTH,
-  isValidSessionId,
-  isValidTmuxTarget,
-} from './validators'
+import type { ServerContext, WSData } from './serverContext'
 
-function checkPortAvailable(port: number): void {
-  let result: ReturnType<typeof Bun.spawnSync>
-  try {
-    result = Bun.spawnSync(['lsof', '-i', `:${port}`, '-t'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-  } catch {
-    return
-  }
-  const pids = result.stdout?.toString().trim() ?? ''
-  if (pids) {
-    const pidList = pids.split('\n').filter(Boolean)
-    const pid = pidList[0]
-    // Get process name
-    let processName = 'unknown'
-    try {
-      const nameResult = Bun.spawnSync(['ps', '-p', pid, '-o', 'comm='], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      processName = nameResult.stdout?.toString().trim() || 'unknown'
-    } catch {
-    }
-    logger.error('port_in_use', { port, pid, processName })
-    process.exit(1)
-  }
-}
+// Extracted modules
+import { checkPortAvailable, getTailscaleIp, pruneOrphanedWsSessions, createConnectionId } from './startup'
+import { registerHttpRoutes } from './httpRoutes'
+import { registerWoRoutes } from './woRoutes'
+import { SwarmManager } from './SwarmManager'
+import { registerSwarmRoutes } from './swarmRoutes'
+import { registerStatsRoutes } from './statsRoutes'
+import { registerTicketRoutes } from './ticketRoutes'
+import { MetricsStore } from './metricsStore'
+import type { DashboardStats } from '../shared/dashboardTypes'
+import { broadcast as broadcastToSockets, send as sendToSocket, handleMessage, wireRegistryEvents } from './wsRouter'
+import { createTerminalHandlers } from './handlers/terminalHandlers'
+import { createSessionHandlers } from './handlers/sessionHandlers'
+import { resurrectPinnedSessions } from './sessionResurrection'
+import { createRefreshOrchestrator } from './sessionRefresh'
+import { updateAgentSessions, hydrateSessionsWithAgentSessions } from './sessionHydration'
+import { createSessionPool } from './sessionPool'
+import { initTaskStore } from './taskStore'
+import { initWorkflowStore } from './workflowStore'
+import { createTaskWorker } from './taskWorker'
+import { createTaskHandlers } from './handlers/taskHandlers'
+import { createWorkflowWsHandlers } from './handlers/workflowWsHandlers'
+import { createWorkflowEngine } from './workflowEngine'
+import { createWorkflowFileWatcher } from './workflowFileWatcher'
+import type { WorkflowEngine } from './workflowEngine'
+import type { WorkflowFileWatcher } from './workflowFileWatcher'
+import { parseWorkflowYAML } from './workflowSchema'
+import type { StepRunState } from '../shared/types'
+import { HistoryService } from './HistoryService'
+import { CronManager } from './cronManager'
+import { CronHistoryService } from './cronHistoryService'
+import { CronLogService } from './cronLogService'
+import { createCronHandlers } from './handlers/cronHandlers'
+import { CronAiService } from './cronAiService'
+import type { SwarmEvent, SwarmGroupState } from '../shared/swarmTypes'
 
-function getTailscaleIp(): string | null {
-  // Try common Tailscale CLI paths (standalone CLI, then Mac App Store bundle)
-  const tailscalePaths = [
-    'tailscale',
-    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
-  ]
-
-  for (const tsPath of tailscalePaths) {
-    try {
-      const result = Bun.spawnSync([tsPath, 'ip', '-4'], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      if (result.exitCode === 0) {
-        const ip = result.stdout.toString().trim()
-        if (ip) return ip
-      }
-    } catch {
-      // Try next path
-    }
-  }
-  return null
-}
-
-function pruneOrphanedWsSessions(): void {
-  if (!config.pruneWsSessions) {
-    return
-  }
-
-  const prefix = `${config.tmuxSession}-ws-`
-  if (!prefix) {
-    return
-  }
-
-  let result: ReturnType<typeof Bun.spawnSync>
-  try {
-    result = Bun.spawnSync(
-      ['tmux', 'list-sessions', '-F', '#{session_name}\t#{session_attached}'],
-      {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      }
-    )
-  } catch {
-    return
-  }
-
-  if (result.exitCode !== 0) {
-    return
-  }
-
-  const output = result.stdout?.toString() ?? ''
-  if (!output) {
-    return
-  }
-  const lines = output.split('\n')
-  let pruned = 0
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const [name, attachedRaw] = trimmed.split('\t')
-    if (!name || !name.startsWith(prefix)) continue
-    const attached = Number.parseInt(attachedRaw ?? '', 10)
-    if (Number.isNaN(attached) || attached > 0) continue
-    try {
-      const killResult = Bun.spawnSync(['tmux', 'kill-session', '-t', name], {
-        stdout: 'pipe',
-        stderr: 'pipe',
-      })
-      if (killResult.exitCode === 0) {
-        pruned += 1
-      }
-    } catch {
-      // Ignore kill errors
-    }
-  }
-
-  if (pruned > 0) {
-    logger.info('ws_sessions_pruned', { count: pruned })
-  }
-}
-
-const MAX_DIRECTORY_ENTRIES = 200
-
-function createConnectionId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-checkPortAvailable(config.port)
+// --- Startup checks ---
+checkPortAvailable(config.port, logger)
 ensureTmux()
-pruneOrphanedWsSessions()
+pruneOrphanedWsSessions(config, logger)
+loadModelEnvs(config.modelEnvsPath)
 const resolvedTerminalMode = resolveTerminalMode()
 logger.info('terminal_mode_resolved', {
   configured: config.terminalMode,
   resolved: resolvedTerminalMode,
 })
 
+// --- Singletons ---
 const app = new Hono()
 const db = initDatabase()
 const sessionManager = new SessionManager(undefined, {
   displayNameExists: (name, excludeSessionId) => db.displayNameExists(name, excludeSessionId),
 })
 const registry = new SessionRegistry()
+const swarmManager = SwarmManager.getInstance()
+const sockets = new Set<ServerWebSocket<WSData>>()
 
 // Lock map for Enter-key lastUserMessage capture: tmuxWindow -> expiry timestamp
 // Prevents stale log data from overwriting fresh terminal captures
@@ -210,279 +103,331 @@ const logPoller = new LogPoller(db, registry, {
 })
 const sessionRefreshWorker = new SessionRefreshWorkerClient()
 
-interface WSData {
-  terminal: ITerminalProxy | null
-  currentSessionId: string | null
-  currentTmuxTarget: string | null
-  connectionId: string
+// --- Task queue ---
+const taskStore = initTaskStore(db.db)
+
+// --- Workflow store ---
+const workflowStore = initWorkflowStore(db.db)
+
+// --- Chat history ---
+const historyService = new HistoryService({
+  enabled: config.historyEnabled,
+  claudeConfigDir: config.claudeConfigDir,
+  codexHomeDir: config.codexHomeDir,
+  maxFiles: config.historyMaxFiles,
+  maxResults: config.historyMaxResults,
+  readMaxBytes: config.historyReadMaxBytes,
+  readMaxLines: config.historyReadMaxLines,
+  countsTtlMs: config.historyCountsTtlMs,
+  resumeTimeoutMs: config.historyResumeTimeoutMs,
+})
+
+// --- Cron Manager ---
+const cronManager = new CronManager()
+cronManager.setDb(db.db) // Set db immediately so cleanup/prune timers have a valid reference
+const cronHistoryService = new CronHistoryService(db.db)
+const cronLogService = new CronLogService(db.db)
+
+// --- Cron AI Service (WU-004) ---
+const cronAiService = new CronAiService(
+  {
+    cronManager,
+    historyService: cronHistoryService,
+    logService: cronLogService,
+    sessionManager,
+  },
+  { port: config.port, authToken: config.authToken }
+)
+
+// --- Context wiring ---
+function broadcast(msg: import('../shared/types').ServerMessage) {
+  broadcastToSockets(sockets, msg)
 }
 
-const sockets = new Set<ServerWebSocket<WSData>>()
-
-function updateAgentSessions() {
-  const active = db.getActiveSessions().map(toAgentSession)
-  let inactive = db.getInactiveSessions({ maxAgeHours: config.inactiveSessionMaxAgeHours }).map(toAgentSession)
-  // Filter out sessions from excluded project directories
-  // Use "<empty>" as a special marker to exclude sessions with no project path
-  if (config.excludeProjects?.length > 0) {
-    inactive = inactive.filter((session) => {
-      const projectPath = session.projectPath || ''
-      return !config.excludeProjects.some((excluded) => {
-        if (excluded === '<empty>') return projectPath === ''
-        return projectPath.startsWith(excluded)
-      })
-    })
-  }
-  registry.setAgentSessions(active, inactive)
+function send(ws: ServerWebSocket<WSData>, msg: import('../shared/types').ServerMessage) {
+  sendToSocket(ws, msg)
 }
 
-function hydrateSessionsWithAgentSessions(
-  sessions: Session[],
-  { verifyAssociations = false }: { verifyAssociations?: boolean } = {}
-): Session[] {
-  const activeSessions = db.getActiveSessions()
-  const windowSet = new Set(sessions.map((session) => session.tmuxWindow))
-  const activeMap = new Map<string, typeof activeSessions[number]>()
-  const orphaned: AgentSession[] = []
-  const logDirs = getLogSearchDirs()
-
-  // Safeguard: don't mass-orphan if window list seems incomplete
-  // This can happen if tmux commands fail temporarily on server restart
-  const wouldOrphanCount = activeSessions.filter(
-    (s) => s.currentWindow && !windowSet.has(s.currentWindow)
-  ).length
-  if (wouldOrphanCount > 0 && wouldOrphanCount === activeSessions.length) {
-    logger.warn('hydrate_would_orphan_all', {
-      activeSessionCount: activeSessions.length,
-      windowCount: windowSet.size,
-      wouldOrphanCount,
-      message: 'Would orphan ALL active sessions - skipping to prevent data loss',
-    })
-    return sessions
+function broadcastSwarmEvent(event: SwarmEvent) {
+  const payload = JSON.stringify({ type: 'swarm-update', event })
+  for (const socket of sockets) {
+    socket.send(payload)
   }
+}
 
-  for (const agentSession of activeSessions) {
-    if (!agentSession.currentWindow || !windowSet.has(agentSession.currentWindow)) {
-      logger.info('session_orphaned', {
-        sessionId: agentSession.sessionId,
-        displayName: agentSession.displayName,
-        currentWindow: agentSession.currentWindow,
-        windowSetSize: windowSet.size,
-        windowSetSample: Array.from(windowSet).slice(0, 5),
-      })
-      const orphanedSession = db.orphanSession(agentSession.sessionId)
-      if (orphanedSession) {
-        orphaned.push(toAgentSession(orphanedSession))
-      }
-      continue
+function sendSwarmState(ws: ServerWebSocket<WSData>, groups: SwarmGroupState[]) {
+  ws.send(JSON.stringify({ type: 'swarm-state', groups }))
+}
+
+function sendInitialWsState(ws: ServerWebSocket<WSData>) {
+  send(ws, { type: 'sessions', sessions: registry.getAll() })
+  const agentSessions = registry.getAgentSessions()
+  send(ws, {
+    type: 'agent-sessions',
+    active: agentSessions.active,
+    inactive: agentSessions.inactive,
+  })
+  send(ws, { type: 'task-list', tasks: taskStore.listTasks({ limit: 100 }), stats: taskStore.getStats() })
+  send(ws, { type: 'template-list', templates: taskStore.listTemplates() })
+  sendSwarmState(ws, swarmManager.getGroups())
+  terminalHandlers.initializePersistentTerminal(ws)
+  cronHandlers.onClientConnect(ws)
+}
+
+// TaskWorker and WorkflowEngine are created after ctx, assigned below
+let taskWorker: import('./taskWorker').TaskWorker
+let workflowEngineInstance: WorkflowEngine | null = null
+let sessionPoolInstance: import('./sessionPool').SessionPool | null = null
+
+const ctx: ServerContext = {
+  db,
+  registry,
+  sessionManager,
+  config,
+  logger,
+  broadcast,
+  send,
+  sockets,
+  taskStore,
+  get taskWorker() { return taskWorker },
+  workflowStore,
+  get workflowEngine() {
+    if (!workflowEngineInstance) {
+      throw new Error('WorkflowEngine not initialized')
     }
+    return workflowEngineInstance
+  },
+}
 
-    // Verify the association by checking terminal content matches the log
-    // This catches stale associations from tmux restarts where window IDs changed
-    // Only run on startup to avoid blocking periodic refreshes
-    if (verifyAssociations) {
-      // Exclude logs from other active sessions to prevent cross-session pollution
-      // (e.g., discussing session A's content in session B causes B's log to match A's window)
-      const otherSessionLogPaths = activeSessions
-        .filter((s) => s.sessionId !== agentSession.sessionId && s.currentWindow)
-        .map((s) => s.logFilePath)
+// Expose cronAiService on ctx for httpRoutes (WU-004)
+;(ctx as any)._cronAiService = cronAiService
 
-      const verification = verifyWindowLogAssociationDetailed(
-        agentSession.currentWindow,
-        agentSession.logFilePath,
-        logDirs,
-        {
-          context: { agentType: agentSession.agentType, projectPath: agentSession.projectPath },
-          excludeLogPaths: otherSessionLogPaths,
-        }
-      )
+// --- Module instantiation ---
+const refreshOrchestrator = createRefreshOrchestrator(ctx, {
+  sessionManager,
+  sessionRefreshWorker,
+  hydrateSessionsWithAgentSessions: (sessions, opts) =>
+    hydrateSessionsWithAgentSessions(ctx, sessions, opts),
+})
 
-      // Get the window to check name match for fallback
-      const window = sessions.find((s) => s.tmuxWindow === agentSession.currentWindow)
-      const nameMatches = Boolean(window && window.name === agentSession.displayName)
+const sessionHandlers = createSessionHandlers(ctx, {
+  updateAgentSessions: () => updateAgentSessions(ctx),
+  refreshSessions: refreshOrchestrator.refreshSessions,
+  refreshSessionsSync: refreshOrchestrator.refreshSessionsSync,
+})
 
-      // Decide whether to orphan based on verification status and name match
-      let shouldOrphan = false
-      let fallbackUsed = false
+const terminalHandlers = createTerminalHandlers(ctx, {
+  scheduleEnterRefresh: refreshOrchestrator.scheduleEnterRefresh,
+  setForceWorking: refreshOrchestrator.setForceWorking,
+  scheduleLastUserMessageCapture: (sessionId: string) =>
+    refreshOrchestrator.scheduleLastUserMessageCapture(sessionId, lastUserMessageLocks, LAST_USER_MESSAGE_LOCK_MS),
+})
 
-      if (verification.status === 'verified') {
-        // Content confirms association - keep
-        shouldOrphan = false
-      } else if (nameMatches) {
-        // Name matches - trust it over content mismatch/inconclusive
-        // Window names are user-intentional signals, so honor them even if
-        // content matching finds a "better" match in another log (which can
-        // happen due to similar content across sessions or limited scrollback)
-        shouldOrphan = false
-        fallbackUsed = true
-      } else {
-        // No name match and content doesn't verify - orphan
-        shouldOrphan = true
-      }
+taskWorker = createTaskWorker(ctx, taskStore)
+const taskHandlers = createTaskHandlers(ctx, taskStore)
 
-      if (shouldOrphan) {
-        logger.info('session_verification_failed', {
-          sessionId: agentSession.sessionId,
-          displayName: agentSession.displayName,
-          currentWindow: agentSession.currentWindow,
-          logFilePath: agentSession.logFilePath,
-          verificationStatus: verification.status,
-          verificationReason: verification.reason ?? null,
-          nameMatches,
-          bestMatchLog: verification.bestMatch?.logPath ?? null,
-        })
-        const orphanedSession = db.orphanSession(agentSession.sessionId)
-        if (orphanedSession) {
-          orphaned.push(toAgentSession(orphanedSession))
-        }
-        continue
-      }
+// --- Workflow engine (WO-009) ---
+// Variables declared in outer scope for shutdown cleanup access
+let workflowFileWatcher: WorkflowFileWatcher | null = null
+let workflowCleanupInterval: ReturnType<typeof setInterval> | null = null
+let sessionCleanupInterval: ReturnType<typeof setInterval> | null = null
+let cronCleanupInterval: ReturnType<typeof setInterval> | null = null
 
-      if (fallbackUsed) {
-        logger.info('session_verification_name_fallback', {
-          sessionId: agentSession.sessionId,
-          displayName: agentSession.displayName,
-          currentWindow: agentSession.currentWindow,
-          verificationStatus: verification.status,
-        })
-      }
-    }
+if (config.workflowEngineEnabled) {
+  // Start file watcher — scans workflow YAML dir and watches for changes
+  workflowFileWatcher = createWorkflowFileWatcher(ctx, workflowStore)
+  workflowFileWatcher.start()
 
-    activeMap.set(agentSession.currentWindow, agentSession)
-  }
+  // Create session pool and workflow engine
+  initPoolTables(db.db)
+  sessionPoolInstance = createSessionPool(db.db)
+  workflowEngineInstance = createWorkflowEngine(ctx, workflowStore, taskStore, sessionPoolInstance)
+  workflowEngineInstance.recoverRunningWorkflows()
+  workflowEngineInstance.start()
 
-  const hydrated = sessions.map((session) => {
-    const agentSession = activeMap.get(session.tmuxWindow)
-    if (!agentSession) {
-      return session
-    }
-    if (agentSession.displayName !== session.name) {
-      db.updateSession(agentSession.sessionId, { displayName: session.name })
-      agentSession.displayName = session.name
-    }
-    return {
-      ...session,
-      // Use log-based agentType if command-based detection failed
-      agentType: session.agentType ?? agentSession.agentType,
-      agentSessionId: agentSession.sessionId,
-      agentSessionName: agentSession.displayName,
-      lastUserMessage: agentSession.lastUserMessage ?? session.lastUserMessage,
-      // Use persisted log times (survives server restarts, works when tmux lacks creation time)
-      lastActivity: agentSession.lastActivityAt,
-      createdAt: agentSession.createdAt,
-      isPinned: agentSession.isPinned,
-    }
+  logger.info('workflow_engine_started', {
+    dir: config.workflowDir,
+    maxConcurrentRuns: config.workflowMaxConcurrentRuns,
+    pollIntervalMs: config.workflowPollIntervalMs,
+    retentionDays: config.workflowRunRetentionDays,
   })
 
-  if (orphaned.length > 0) {
-    for (const session of orphaned) {
-      broadcast({ type: 'session-orphaned', session })
-    }
-  }
-
-  updateAgentSessions()
-  return hydrated
+  // Schedule periodic run cleanup (every 24h)
+  const cleanupIntervalMs = 24 * 60 * 60 * 1000
+  const deleted = workflowStore.deleteOldRuns(config.workflowRunRetentionDays)
+  if (deleted > 0) logger.info('workflow_cleanup', { deleted })
+  workflowCleanupInterval = setInterval(() => {
+    const d = workflowStore.deleteOldRuns(config.workflowRunRetentionDays)
+    if (d > 0) logger.info('workflow_cleanup', { deleted: d })
+  }, cleanupIntervalMs)
 }
 
-let refreshInFlight = false
-
-async function refreshSessionsAsync(): Promise<void> {
-  if (refreshInFlight) return
-  refreshInFlight = true
-  try {
-    const sessions = await sessionRefreshWorker.refresh(
-      config.tmuxSession,
-      config.discoverPrefixes
-    )
-    const hydrated = hydrateSessionsWithAgentSessions(sessions)
-    const withOverrides = applyForceWorkingOverrides(hydrated)
-    registry.replaceSessions(withOverrides)
-  } catch (error) {
-    // Fallback to sync on worker failure
-    logger.warn('session_refresh_worker_error', {
-      message: error instanceof Error ? error.message : String(error),
-    })
-    const sessions = sessionManager.listWindows()
-    const hydrated = hydrateSessionsWithAgentSessions(sessions)
-    const withOverrides = applyForceWorkingOverrides(hydrated)
-    registry.replaceSessions(withOverrides)
-  } finally {
-    refreshInFlight = false
-  }
+// --- Session cleanup (every 24h) ---
+const cleanupIntervalMs = 24 * 60 * 60 * 1000
+const deletedSessions = db.deleteOldInactiveSessions(config.sessionRetentionDays)
+if (deletedSessions > 0) {
+  logger.info('session_cleanup', {
+    deleted: deletedSessions,
+    retentionDays: config.sessionRetentionDays,
+  })
 }
-
-function refreshSessions() {
-  void refreshSessionsAsync()
-}
-
-// Sync version for startup - ensures sessions are ready before server starts
-function refreshSessionsSync({ verifyAssociations = false } = {}) {
-  const sessions = sessionManager.listWindows()
-  const hydrated = hydrateSessionsWithAgentSessions(sessions, { verifyAssociations })
-  registry.replaceSessions(hydrated)
-}
-
-// Debounced refresh triggered by Enter key in terminal input
-let enterRefreshTimer: Timer | null = null
-const lastUserMessageTimers = new Map<string, Timer>()
-
-function setForceWorking(sessionId: string) {
-  setForceWorkingUntil(sessionId, Date.now() + config.workingGracePeriodMs)
-  // Immediately update registry so UI shows "working" right away
-  registry.updateSession(sessionId, { status: 'working' })
-}
-
-function scheduleEnterRefresh() {
-  if (enterRefreshTimer) {
-    clearTimeout(enterRefreshTimer)
-  }
-  enterRefreshTimer = setTimeout(() => {
-    enterRefreshTimer = null
-    refreshSessions()
-  }, config.enterRefreshDelayMs)
-}
-
-function scheduleLastUserMessageCapture(sessionId: string) {
-  const session = registry.get(sessionId)
-  if (!session) return
-  const tmuxWindow = session.tmuxWindow
-
-  // Set lock immediately to prevent log poller from overwriting with stale data
-  // during the debounce delay (before capture completes)
-  lastUserMessageLocks.set(tmuxWindow, Date.now() + LAST_USER_MESSAGE_LOCK_MS)
-
-  const existing = lastUserMessageTimers.get(tmuxWindow)
-  if (existing) {
-    clearTimeout(existing)
-  }
-  const timer = setTimeout(() => {
-    lastUserMessageTimers.delete(tmuxWindow)
-    void captureLastUserMessage(tmuxWindow)
-  }, config.enterRefreshDelayMs)
-  lastUserMessageTimers.set(tmuxWindow, timer)
-}
-
-async function captureLastUserMessage(tmuxWindow: string) {
-  try {
-    const message = await sessionRefreshWorker.getLastUserMessage(tmuxWindow)
-    if (!message || !message.trim()) return
-    const record = db.getSessionByWindow(tmuxWindow)
-    if (!record) return
-    if (record.lastUserMessage === message) return
-    const updated = db.updateSession(record.sessionId, { lastUserMessage: message })
-    if (!updated) return
-    registry.updateSession(tmuxWindow, { lastUserMessage: message })
-    updateAgentSessions()
-  } catch (error) {
-    logger.warn('last_user_message_capture_error', {
-      tmuxWindow,
-      message: error instanceof Error ? error.message : String(error),
+sessionCleanupInterval = setInterval(() => {
+  const d = db.deleteOldInactiveSessions(config.sessionRetentionDays)
+  if (d > 0) {
+    logger.info('session_cleanup', {
+      deleted: d,
+      retentionDays: config.sessionRetentionDays,
     })
   }
+}, cleanupIntervalMs)
+
+// --- Workflow WebSocket handlers (WO-008/WO-009) ---
+// Adapts real WorkflowStore to the simplified WorkflowStoreApi interface
+const workflowHandlers = config.workflowEngineEnabled
+  ? createWorkflowWsHandlers(ctx, {
+      listWorkflows: () => workflowStore.listWorkflows(),
+      getWorkflow: (id) => workflowStore.getWorkflow(id),
+      listRuns: (limit) => workflowStore.listRuns(limit != null ? { limit } : undefined),
+      listRunsByWorkflow: (workflowId) => workflowStore.listRunsByWorkflow(workflowId),
+      getRun: (runId) => workflowStore.getRun(runId),
+      createRun: (workflowId, variables, projectPath) => {
+        const workflow = workflowStore.getWorkflow(workflowId)
+        if (!workflow) throw new Error(`Workflow not found: ${workflowId}`)
+        const parsed = parseWorkflowYAML(workflow.yaml_content)
+        if (!parsed.valid || !parsed.workflow) {
+          throw new Error('Workflow YAML is invalid')
+        }
+        const stepsState: StepRunState[] = parsed.workflow.steps.map(step => ({
+          name: step.name,
+          type: step.type,
+          status: 'pending' as const,
+          taskId: null,
+          startedAt: null,
+          completedAt: null,
+          errorMessage: null,
+          retryCount: 0,
+          skippedReason: null,
+          resultFile: step.result_file ?? null,
+          resultCollected: false,
+          resultContent: null,
+        }))
+        const outputDir = path.join(config.workflowDir, 'runs', `${workflow.name}-${Date.now()}`)
+        // Build run variables: merge caller-provided variables with standard paths
+        const runVars: Record<string, string> = {
+          run_dir: outputDir,
+          output_dir: outputDir,
+          ...(projectPath ? { project_path: projectPath } : {}),
+          ...variables,
+        }
+        return workflowStore.createRun({
+          workflow_id: workflowId,
+          workflow_name: workflow.name,
+          status: 'running',
+          current_step_index: 0,
+          steps_state: stepsState,
+          output_dir: outputDir,
+          started_at: new Date().toISOString(),
+          completed_at: null,
+          error_message: null,
+          variables: runVars,
+        })
+      },
+      updateRun: (runId, updates) => workflowStore.updateRun(runId, updates),
+      countActiveRuns: () => workflowStore.getRunningRuns().length,
+    }, {
+      cancelRun: (runId) => {
+        const run = workflowStore.getRun(runId)
+        if (run && (run.status === 'running' || run.status === 'pending')) {
+          workflowStore.updateRun(runId, {
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            error_message: 'Cancelled by user',
+          })
+        }
+      },
+    })
+  : null
+
+// --- Cron handlers (WU-002) ---
+const cronHandlers = createCronHandlers(ctx, cronManager, cronHistoryService, cronLogService)
+
+// --- Cron cleanup scheduling (REQ-98, REQ-101) ---
+// Deferred initial cleanup: wait for first poll to populate jobCache
+const cronCleanupDelayMs = 30_000
+setTimeout(() => {
+  if (cronManager.jobCache.size > 0) {
+    cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+    cronManager.pruneRunHistory()
+    logger.info('cron_cleanup_initial', { jobCount: cronManager.jobCache.size })
+  }
+}, cronCleanupDelayMs)
+
+// Periodic cleanup every 24h (same cadence as workflow/session cleanup)
+const cronCleanupIntervalMs = 24 * 60 * 60 * 1000
+cronCleanupInterval = setInterval(() => {
+  if (cronManager.jobCache.size > 0) {
+    cronManager.cleanOrphanedPrefs([...cronManager.jobCache.keys()])
+    cronManager.pruneRunHistory()
+    logger.info('cron_cleanup', { jobCount: cronManager.jobCache.size })
+  }
+}, cronCleanupIntervalMs)
+
+// --- HTTP routes ---
+const tlsEnabled = !!(config.tlsCert && config.tlsKey)
+registerHttpRoutes(app, ctx, tlsEnabled, historyService, sessionPoolInstance)
+registerWoRoutes(app)
+registerSwarmRoutes(app, swarmManager)
+
+// --- Stats ---
+function getStats(): DashboardStats {
+  const sessions = registry.getAll?.() ?? []
+  const activeSessions = Array.isArray(sessions) ? sessions.length : 0
+  const tasks = taskStore.listTasks({ limit: 1000 })
+  const totalTasks = tasks.length
+  const runningTasks = tasks.filter((t: { status: string }) => t.status === 'running').length
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const completedTasksToday = tasks.filter((t: { status: string; completedAt?: string }) => {
+    if (t.status !== 'completed' || !t.completedAt) return false
+    return new Date(t.completedAt).getTime() >= today.getTime()
+  }).length
+  const groups = swarmManager.getGroups()
+  let activeDispatches = 0
+  let completedDispatches = 0
+  let totalWosCompleted = 0
+  let totalWosFailed = 0
+  for (const group of groups) {
+    if (group.status === 'running' || group.status === 'pending') activeDispatches++
+    else completedDispatches++
+    totalWosCompleted += group.completedWos
+    totalWosFailed += group.failedWos
+  }
+  return {
+    activeSessions, totalTasks, runningTasks, completedTasksToday,
+    activeDispatches, completedDispatches, totalWosCompleted, totalWosFailed,
+    uptimeSeconds: Math.floor(process.uptime()),
+    lastUpdated: new Date().toISOString(),
+  }
 }
+registerStatsRoutes(app, getStats)
+const metricsStore = new MetricsStore(db.db)
+swarmManager.setMetricsStore(metricsStore)
+registerTicketRoutes(app, (msg) => broadcast(msg as import('../shared/types').ServerMessage), `http://localhost:${config.port}`, metricsStore)
 
+app.use('/*', serveStatic({ root: './dist/client' }))
 
-// Log startup state for debugging orphan issues
+// --- Registry event wiring ---
+wireRegistryEvents(registry, broadcast)
+const unsubscribeSwarmEvents = swarmManager.onEvent((event) => {
+  broadcastSwarmEvent(event)
+})
+
+// Broadcast stats every 5 seconds
+setInterval(() => {
+  broadcast({ type: 'stats-update', stats: getStats() })
+}, 5000)
+
+// --- Startup state logging ---
 const startupActiveSessions = db.getActiveSessions()
 const startupWindows = sessionManager.listWindows()
 logger.info('startup_state', {
@@ -499,267 +444,127 @@ logger.info('startup_state', {
   })),
 })
 
-refreshSessionsSync({ verifyAssociations: true }) // Sync for startup - ensures sessions are ready
-resurrectPinnedSessions() // Resurrect pinned sessions that lost their tmux windows
-refreshSessionsSync() // Re-hydrate after resurrection
-setInterval(refreshSessions, config.refreshIntervalMs) // Async for periodic
+// Detect systemd availability for cron manager
+cronManager.detectSystemd().catch(() => {})
+
+// Cron AI: generate MCP config and skill file at startup (WU-004, REQ-15/REQ-16)
+cronAiService.generateMcpConfig(config.port).catch((err) => {
+  logger.warn('cron_ai_mcp_config_failed', { error: String(err) })
+})
+cronAiService.generateSkillFile().catch((err) => {
+  logger.warn('cron_ai_skill_file_failed', { error: String(err) })
+})
+
+// --- Initial data load ---
+refreshOrchestrator.refreshSessionsSync({ verifyAssociations: true })
+resurrectPinnedSessions(ctx)
+refreshOrchestrator.refreshSessionsSync()
+setInterval(refreshOrchestrator.refreshSessions, config.refreshIntervalMs)
 if (config.logPollIntervalMs > 0) {
   logPoller.start(config.logPollIntervalMs)
 }
+taskWorker.start()
 
-registry.on('session-update', (session) => {
-  broadcast({ type: 'session-update', session })
-})
-
-registry.on('sessions', (sessions) => {
-  broadcast({ type: 'sessions', sessions })
-})
-
-registry.on('session-removed', (sessionId) => {
-  broadcast({ type: 'session-removed', sessionId })
-})
-
-registry.on('agent-sessions', ({ active, inactive }) => {
-  broadcast({ type: 'agent-sessions', active, inactive })
-})
-
-app.get('/api/health', (c) => c.json({ ok: true }))
-app.get('/api/sessions', (c) => c.json(registry.getAll()))
-
-app.get('/api/session-preview/:sessionId', async (c) => {
-  const sessionId = c.req.param('sessionId')
-  if (!isValidSessionId(sessionId)) {
-    return c.json({ error: 'Invalid session id' }, 400)
-  }
-
-  const record = db.getSessionById(sessionId)
-  if (!record) {
-    return c.json({ error: 'Session not found' }, 404)
-  }
-
-  const logPath = record.logFilePath
-  if (!logPath) {
-    return c.json({ error: 'No log file for session' }, 404)
-  }
-
-  try {
-    const stats = await fs.stat(logPath)
-    if (!stats.isFile()) {
-      return c.json({ error: 'Log file not found' }, 404)
-    }
-
-    // Read last 64KB of the file
-    const TAIL_BYTES = 64 * 1024
-    const fileSize = stats.size
-    const offset = Math.max(0, fileSize - TAIL_BYTES)
-    const fd = await fs.open(logPath, 'r')
-    const buffer = Buffer.alloc(Math.min(TAIL_BYTES, fileSize))
-    await fd.read(buffer, 0, buffer.length, offset)
-    await fd.close()
-
-    const content = buffer.toString('utf8')
-    // Take last 100 lines
-    const lines = content.split('\n').slice(-100)
-
-    return c.json({
-      sessionId,
-      displayName: record.displayName,
-      projectPath: record.projectPath,
-      agentType: record.agentType,
-      lastActivityAt: record.lastActivityAt,
-      lines,
+// --- WebSocket handler map ---
+const wsHandlers = {
+  onSessionRefresh: refreshOrchestrator.refreshSessions,
+  onSessionCreate: sessionHandlers.handleCreate,
+  onSessionKill: sessionHandlers.handleKill,
+  onSessionRename: (ws: ServerWebSocket<WSData>, sessionId: string, newName: string) =>
+    sessionHandlers.handleRename(ws, sessionId, newName),
+  onSessionResume: sessionHandlers.handleSessionResume,
+  onSessionPin: sessionHandlers.handleSessionPin,
+  onTerminalAttach: (ws: ServerWebSocket<WSData>, message: any) =>
+    void terminalHandlers.attachTerminalPersistent(ws, message),
+  onTerminalDetach: terminalHandlers.detachTerminalPersistent,
+  onTerminalInput: terminalHandlers.handleTerminalInputPersistent,
+  onTerminalResize: terminalHandlers.handleTerminalResizePersistent,
+  onCancelCopyMode: terminalHandlers.handleCancelCopyMode,
+  onCheckCopyMode: terminalHandlers.handleCheckCopyMode,
+  onTaskCreate: taskHandlers.handleTaskCreate,
+  onTaskCancel: taskHandlers.handleTaskCancel,
+  onTaskRetry: taskHandlers.handleTaskRetry,
+  onTaskListRequest: taskHandlers.handleTaskListRequest,
+  onTemplateListRequest: taskHandlers.handleTemplateListRequest,
+  // Workflow engine handlers (WO-008) - only wired when engine is enabled
+  ...(workflowHandlers && {
+    onWorkflowListRequest: workflowHandlers.handleWorkflowListRequest,
+    onWorkflowRunListRequest: workflowHandlers.handleWorkflowRunListRequest,
+    onWorkflowRun: workflowHandlers.handleWorkflowRun,
+    onWorkflowRunResume: workflowHandlers.handleWorkflowRunResume,
+    onWorkflowRunCancel: workflowHandlers.handleWorkflowRunCancel,
+  }),
+  // Cron Manager handlers (WU-002)
+  onCronJobSelect: cronHandlers.handleCronJobSelect.bind(cronHandlers),
+  onCronJobRunNow: cronHandlers.handleCronJobRunNow.bind(cronHandlers),
+  onCronJobPause: cronHandlers.handleCronJobPause.bind(cronHandlers),
+  onCronJobResume: cronHandlers.handleCronJobResume.bind(cronHandlers),
+  onCronJobEditFrequency: cronHandlers.handleCronJobEditFrequency.bind(cronHandlers),
+  onCronJobDelete: cronHandlers.handleCronJobDelete.bind(cronHandlers),
+  onCronJobCreate: (ws: ServerWebSocket<WSData>, mode: string, cfg: unknown) =>
+    cronHandlers.handleCronJobCreate(ws, mode as 'cron' | 'systemd', cfg),
+  onCronBulkPause: cronHandlers.handleCronBulkPause.bind(cronHandlers),
+  onCronBulkResume: cronHandlers.handleCronBulkResume.bind(cronHandlers),
+  onCronBulkDelete: cronHandlers.handleCronBulkDelete.bind(cronHandlers),
+  onCronJobSetTags: cronHandlers.handleCronJobSetTags.bind(cronHandlers),
+  onCronJobSetManaged: cronHandlers.handleCronJobSetManaged.bind(cronHandlers),
+  onCronJobLinkSession: cronHandlers.handleCronJobLinkSession.bind(cronHandlers),
+  onCronSudoAuth: cronHandlers.handleCronSudoAuth.bind(cronHandlers),
+  onCronJobLogs: cronHandlers.handleCronJobLogs.bind(cronHandlers),
+  onCronJobHistory: cronHandlers.handleCronJobHistory.bind(cronHandlers),
+  // Cron AI Orchestrator handlers (WU-004)
+  onCronAiContextUpdate: (_ws: ServerWebSocket<WSData>, context: import('../shared/types').UiContext) => {
+    cronAiService.updateContext(context)
+  },
+  onCronAiProposalResponse: (_ws: ServerWebSocket<WSData>, id: string, approved: boolean, feedback?: string) => {
+    const result = cronAiService.resolveProposal(id, approved, feedback)
+    broadcast({ type: 'cron-ai-proposal-resolved', id, status: approved ? 'accepted' : 'rejected', feedback })
+    cronAiService.forwardToMcp({ type: 'proposal_resolved', id, success: result.success, rejected: result.rejected, expired: result.expired, feedback: result.feedback, error: result.error })
+  },
+  onCronAiDrawerOpen: (_ws: ServerWebSocket<WSData>) => {
+    broadcast({ type: 'cron-ai-session-status', status: 'starting' })
+    cronAiService.createAiSession().then(({ sessionId, tmuxTarget }) => {
+      refreshOrchestrator.refreshSessionsSync()
+      broadcast({ type: 'cron-ai-session-status', status: 'waiting', windowId: tmuxTarget, sessionId })
+    }).catch((err) => {
+      console.error('[cron-ai] Failed to create AI session on drawer open:', err)
+      broadcast({ type: 'cron-ai-session-status', status: 'offline' })
     })
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code === 'ENOENT') {
-      return c.json({ error: 'Log file not found' }, 404)
-    }
-    return c.json({ error: 'Unable to read log file' }, 500)
-  }
-})
-app.get('/api/directories', async (c) => {
-  const requestedPath = c.req.query('path') ?? '~'
-
-  if (requestedPath.length > MAX_FIELD_LENGTH) {
-    const payload: DirectoryErrorResponse = {
-      error: 'invalid_path',
-      message: 'Path too long',
-    }
-    return c.json(payload, 400)
-  }
-
-  const trimmedPath = requestedPath.trim()
-  if (!trimmedPath) {
-    const payload: DirectoryErrorResponse = {
-      error: 'invalid_path',
-      message: 'Path is required',
-    }
-    return c.json(payload, 400)
-  }
-
-  const start = Date.now()
-  const resolved = resolveProjectPath(trimmedPath)
-
-  let stats: Awaited<ReturnType<typeof fs.stat>>
-  try {
-    stats = await fs.stat(resolved)
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
-      const payload: DirectoryErrorResponse = {
-        error: 'not_found',
-        message: 'Path does not exist',
-      }
-      return c.json(payload, 404)
-    }
-    if (err.code === 'EACCES' || err.code === 'EPERM') {
-      const payload: DirectoryErrorResponse = {
-        error: 'forbidden',
-        message: 'Permission denied',
-      }
-      return c.json(payload, 403)
-    }
-    const payload: DirectoryErrorResponse = {
-      error: 'internal_error',
-      message: 'Unable to read directory',
-    }
-    return c.json(payload, 500)
-  }
-
-  if (!stats.isDirectory()) {
-    const payload: DirectoryErrorResponse = {
-      error: 'not_found',
-      message: 'Path is not a directory',
-    }
-    return c.json(payload, 404)
-  }
-
-  let directories: DirectoryListing['directories'] = []
-  try {
-    const entries = await fs.readdir(resolved, {
-      withFileTypes: true,
-      encoding: 'utf8',
+  },
+  onCronAiDrawerClose: (_ws: ServerWebSocket<WSData>) => {
+    // Session persists after drawer close — no action needed
+  },
+  onCronAiNewConversation: (_ws: ServerWebSocket<WSData>) => {
+    broadcast({ type: 'cron-ai-session-status', status: 'starting' })
+    cronAiService.killAiSession().catch((err) => {
+      console.error('[cron-ai] Failed to kill AI session for new conversation:', err)
+    }).finally(() => {
+      cronAiService.createAiSession().then(({ sessionId, tmuxTarget }) => {
+        refreshOrchestrator.refreshSessionsSync()
+        broadcast({ type: 'cron-ai-session-status', status: 'waiting', windowId: tmuxTarget, sessionId })
+      }).catch((err) => {
+        console.error('[cron-ai] Failed to create AI session for new conversation:', err)
+        broadcast({ type: 'cron-ai-session-status', status: 'offline' })
+      })
     })
-    directories = entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => {
-        const name = entry.name.toString()
-        return {
-          name,
-          path: path.join(resolved, name),
-        }
-      })
-      .sort((a, b) => {
-        const aDot = a.name.startsWith('.')
-        const bDot = b.name.startsWith('.')
-        if (aDot !== bDot) {
-          return aDot ? -1 : 1
-        }
-        const aLower = a.name.toLowerCase()
-        const bLower = b.name.toLowerCase()
-        if (aLower < bLower) {
-          return -1
-        }
-        if (aLower > bLower) {
-          return 1
-        }
-        return a.name.localeCompare(b.name)
-      })
-  } catch (error) {
-    const err = error as NodeJS.ErrnoException
-    if (err.code === 'EACCES' || err.code === 'EPERM') {
-      const payload: DirectoryErrorResponse = {
-        error: 'forbidden',
-        message: 'Permission denied',
-      }
-      return c.json(payload, 403)
-    }
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
-      const payload: DirectoryErrorResponse = {
-        error: 'not_found',
-        message: 'Path does not exist',
-      }
-      return c.json(payload, 404)
-    }
-    const payload: DirectoryErrorResponse = {
-      error: 'internal_error',
-      message: 'Unable to list directory',
-    }
-    return c.json(payload, 500)
-  }
+  },
+  onCronAiMcpRegister: (ws: ServerWebSocket<WSData>) => {
+    const success = cronAiService.registerMcpClient(ws)
+    send(ws, { type: 'cron-ai-mcp-register', success })
+  },
+  onCronAiNavigate: (_ws: ServerWebSocket<WSData>, action: string, payload: Record<string, unknown>) => {
+    broadcast({ type: 'cron-ai-navigate', action, payload })
+  },
+}
 
-  const truncated = directories.length > MAX_DIRECTORY_ENTRIES
-  const limitedDirectories = truncated
-    ? directories.slice(0, MAX_DIRECTORY_ENTRIES)
-    : directories
-
-  const root = path.parse(resolved).root
-  const parent = resolved === root ? null : path.dirname(resolved)
-  const response: DirectoryListing = {
-    path: resolved,
-    parent,
-    directories: limitedDirectories,
-    truncated,
-  }
-
-  const durationMs = Date.now() - start
-  logger.debug('directories_request', {
-    path: resolved,
-    count: limitedDirectories.length,
-    truncated,
-    durationMs,
-  })
-
-  return c.json(response)
-})
-
-app.get('/api/server-info', (c) => {
-  const tailscaleIp = getTailscaleIp()
-  return c.json({
-    port: config.port,
-    tailscaleIp,
-    protocol: tlsEnabled ? 'https' : 'http',
-  })
-})
-
-// Image upload endpoint for iOS clipboard paste
-app.post('/api/paste-image', async (c) => {
-  try {
-    const formData = await c.req.formData()
-    const file = formData.get('image') as File | null
-    if (!file) {
-      return c.json({ error: 'No image provided' }, 400)
-    }
-
-    // Generate unique filename in temp directory
-    const ext = file.type.split('/')[1] || 'png'
-    const filename = `paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
-    const filepath = `/tmp/${filename}`
-
-    // Write file
-    const buffer = await file.arrayBuffer()
-    await Bun.write(filepath, buffer)
-
-    return c.json({ path: filepath })
-  } catch (error) {
-    return c.json(
-      { error: error instanceof Error ? error.message : 'Upload failed' },
-      500
-    )
-  }
-})
-
-app.use('/*', serveStatic({ root: './dist/client' }))
-
-const tlsEnabled = config.tlsCert && config.tlsKey
-
-Bun.serve<WSData>({
+// --- Server ---
+const serverOptions: Parameters<typeof Bun.serve<WSData>>[0] = {
   port: config.port,
   hostname: config.hostname,
   ...(tlsEnabled && {
     tls: {
-      cert: Bun.file(config.tlsCert),
-      key: Bun.file(config.tlsKey),
+      cert: Bun.file(config.tlsCert!),
+      key: Bun.file(config.tlsKey!),
     },
   }),
   fetch(req, server) {
@@ -772,6 +577,7 @@ Bun.serve<WSData>({
             currentSessionId: null,
             currentTmuxTarget: null,
             connectionId: createConnectionId(),
+            authenticated: !config.authToken,
           },
         })
       ) {
@@ -783,26 +589,32 @@ Bun.serve<WSData>({
     return app.fetch(req)
   },
   websocket: {
-    open(ws) {
+    open(ws: any) {
       sockets.add(ws)
-      send(ws, { type: 'sessions', sessions: registry.getAll() })
-      const agentSessions = registry.getAgentSessions()
-      send(ws, {
-        type: 'agent-sessions',
-        active: agentSessions.active,
-        inactive: agentSessions.inactive,
-      })
-      initializePersistentTerminal(ws)
+      // If no auth configured (dev mode), send initial data immediately
+      // Otherwise, wait for auth message before sending session data
+      if (!config.authToken) {
+        sendInitialWsState(ws)
+      }
     },
-    message(ws, message) {
-      handleMessage(ws, message)
+    message(ws: any, message: any) {
+      const wasAuthenticated = ws.data.authenticated
+      handleMessage(ws, message, wsHandlers, send, config.authToken)
+      // If this message just authenticated the connection, send initial data now
+      if (!wasAuthenticated && ws.data.authenticated) {
+        sendInitialWsState(ws)
+      }
     },
-    close(ws) {
-      cleanupTerminals(ws)
+    close(ws: any) {
+      cronHandlers.onClientDisconnect(ws)
+      cronAiService.unregisterMcpClient()
+      terminalHandlers.cleanupTerminals(ws)
       sockets.delete(ws)
     },
   },
-})
+}
+
+Bun.serve<WSData>(serverOptions)
 
 const protocol = tlsEnabled ? 'https' : 'http'
 const displayHost = config.hostname === '0.0.0.0' ? 'localhost' : config.hostname
@@ -814,12 +626,26 @@ logger.info('server_started', {
   })() : null,
 })
 
-// Cleanup all terminals on server shutdown
+// --- Cleanup ---
 function cleanupAllTerminals() {
+  // Kill AI session before shutdown (WU-004, REQ-70)
+  cronAiService.killAiSession().catch(() => {})
+  unsubscribeSwarmEvents()
+
+  // Stop workflow engine and file watcher
+  if (workflowEngineInstance) workflowEngineInstance.stop()
+  if (workflowFileWatcher) workflowFileWatcher.stop()
+  if (workflowCleanupInterval) clearInterval(workflowCleanupInterval)
+  if (sessionCleanupInterval) clearInterval(sessionCleanupInterval)
+  if (cronCleanupInterval) clearInterval(cronCleanupInterval)
+
+  taskWorker.stop()
   for (const ws of sockets) {
-    cleanupTerminals(ws)
+    terminalHandlers.cleanupTerminals(ws)
   }
   logPoller.stop()
+  cronManager.stopPolling()
+  cronManager.clearSudoCredential()
   db.close()
 }
 
@@ -832,656 +658,3 @@ process.on('SIGTERM', () => {
   cleanupAllTerminals()
   process.exit(0)
 })
-
-function cleanupTerminals(ws: ServerWebSocket<WSData>) {
-  if (ws.data.terminal) {
-    void ws.data.terminal.dispose()
-    ws.data.terminal = null
-  }
-  ws.data.currentSessionId = null
-  ws.data.currentTmuxTarget = null
-}
-
-function broadcast(message: ServerMessage) {
-  const payload = JSON.stringify(message)
-  for (const socket of sockets) {
-    socket.send(payload)
-  }
-}
-
-function send(ws: ServerWebSocket<WSData>, message: ServerMessage) {
-  ws.send(JSON.stringify(message))
-}
-
-function handleMessage(
-  ws: ServerWebSocket<WSData>,
-  rawMessage: string | BufferSource
-) {
-  const text =
-    typeof rawMessage === 'string'
-      ? rawMessage
-      : new TextDecoder().decode(rawMessage)
-
-  let message: ClientMessage
-  try {
-    message = JSON.parse(text) as ClientMessage
-  } catch {
-    send(ws, { type: 'error', message: 'Invalid message payload' })
-    return
-  }
-
-  switch (message.type) {
-    case 'session-refresh':
-      refreshSessions()
-      return
-    case 'session-create':
-      try {
-        const created = sessionManager.createWindow(
-          message.projectPath,
-          message.name,
-          message.command
-        )
-        // Add session to registry immediately so terminal can attach
-        const currentSessions = registry.getAll()
-        registry.replaceSessions([created, ...currentSessions])
-        refreshSessions()
-        send(ws, { type: 'session-created', session: created })
-      } catch (error) {
-        send(ws, {
-          type: 'error',
-          message:
-            error instanceof Error ? error.message : 'Unable to create session',
-        })
-      }
-      return
-    case 'session-kill':
-      handleKill(message.sessionId, ws)
-      return
-    case 'session-rename':
-      handleRename(message.sessionId, message.newName, ws)
-      return
-    case 'terminal-attach':
-      void attachTerminalPersistent(ws, message)
-      return
-    case 'terminal-detach':
-      detachTerminalPersistent(ws, message.sessionId)
-      return
-    case 'terminal-input':
-      handleTerminalInputPersistent(ws, message.sessionId, message.data)
-      return
-    case 'terminal-resize':
-      handleTerminalResizePersistent(
-        ws,
-        message.sessionId,
-        message.cols,
-        message.rows
-      )
-      return
-    case 'tmux-cancel-copy-mode':
-      // Exit tmux copy-mode when user starts typing after scrolling
-      handleCancelCopyMode(message.sessionId, ws)
-      return
-    case 'tmux-check-copy-mode':
-      handleCheckCopyMode(message.sessionId, ws)
-      return
-    case 'session-resume':
-      handleSessionResume(message, ws)
-      return
-    case 'session-pin':
-      handleSessionPin(message.sessionId, message.isPinned, ws)
-      return
-    default:
-      send(ws, { type: 'error', message: 'Unknown message type' })
-  }
-}
-
-function resolveCopyModeTarget(
-  sessionId: string,
-  ws: ServerWebSocket<WSData>,
-  session: Session
-): string {
-  if (ws.data.currentSessionId === sessionId && ws.data.currentTmuxTarget) {
-    return ws.data.currentTmuxTarget
-  }
-  return session.tmuxWindow
-}
-
-function handleCancelCopyMode(sessionId: string, ws: ServerWebSocket<WSData>) {
-  const session = registry.get(sessionId)
-  if (!session) return
-
-  try {
-    // Exit tmux copy-mode quietly.
-    const target = resolveCopyModeTarget(sessionId, ws, session)
-    Bun.spawnSync(['tmux', 'send-keys', '-X', '-t', target, 'cancel'], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-  } catch {
-    // Ignore errors - copy-mode may not be active
-  }
-}
-
-function handleCheckCopyMode(sessionId: string, ws: ServerWebSocket<WSData>) {
-  const session = registry.get(sessionId)
-  if (!session) return
-
-  try {
-    const target = resolveCopyModeTarget(sessionId, ws, session)
-    // Query tmux for pane copy-mode status
-    const result = Bun.spawnSync(
-      ['tmux', 'display-message', '-p', '-t', target, '#{pane_in_mode}'],
-      { stdout: 'pipe', stderr: 'pipe' }
-    )
-    const output = result.stdout.toString().trim()
-    const inCopyMode = output === '1'
-    send(ws, { type: 'tmux-copy-mode-status', sessionId, inCopyMode })
-  } catch {
-    // On error, assume not in copy mode
-    send(ws, { type: 'tmux-copy-mode-status', sessionId, inCopyMode: false })
-  }
-}
-
-function handleKill(sessionId: string, ws: ServerWebSocket<WSData>) {
-  const session = registry.get(sessionId)
-  if (!session) {
-    send(ws, { type: 'kill-failed', sessionId, message: 'Session not found' })
-    return
-  }
-  if (session.source !== 'managed' && !config.allowKillExternal) {
-    send(ws, { type: 'kill-failed', sessionId, message: 'Cannot kill external sessions' })
-    return
-  }
-
-  try {
-    sessionManager.killWindow(session.tmuxWindow)
-    const orphaned = new Map<string, AgentSession>()
-    const orphanById = (agentSessionId?: string | null) => {
-      if (!agentSessionId || orphaned.has(agentSessionId)) return
-      const orphanedSession = db.orphanSession(agentSessionId)
-      if (orphanedSession) {
-        orphaned.set(agentSessionId, toAgentSession(orphanedSession))
-      }
-    }
-
-    orphanById(session.agentSessionId)
-    const recordByWindow = db.getSessionByWindow(session.tmuxWindow)
-    if (recordByWindow) {
-      orphanById(recordByWindow.sessionId)
-    }
-    if (orphaned.size > 0) {
-      updateAgentSessions()
-      for (const orphanedSession of orphaned.values()) {
-        broadcast({ type: 'session-orphaned', session: orphanedSession })
-      }
-    }
-    const remaining = registry.getAll().filter((item) => item.id !== sessionId)
-    registry.replaceSessions(remaining)
-    refreshSessions()
-  } catch (error) {
-    send(ws, {
-      type: 'kill-failed',
-      sessionId,
-      message:
-        error instanceof Error ? error.message : 'Unable to kill session',
-    })
-  }
-}
-
-function handleRename(
-  sessionId: string,
-  newName: string,
-  ws: ServerWebSocket<WSData>
-) {
-  let session = registry.get(sessionId)
-  if (!session) {
-    refreshSessionsSync() // Use sync for inline operations needing immediate results
-    session = registry.get(sessionId)
-    if (!session) {
-      send(ws, { type: 'error', message: 'Session not found' })
-      return
-    }
-  }
-
-  try {
-    sessionManager.renameWindow(session.tmuxWindow, newName)
-    refreshSessions()
-  } catch (error) {
-    send(ws, {
-      type: 'error',
-      message:
-        error instanceof Error ? error.message : 'Unable to rename session',
-    })
-  }
-}
-
-function handleSessionPin(
-  sessionId: string,
-  isPinned: unknown,
-  ws: ServerWebSocket<WSData>
-) {
-  // Validate isPinned is actually a boolean
-  if (typeof isPinned !== 'boolean') {
-    send(ws, { type: 'session-pin-result', sessionId, ok: false, error: 'isPinned must be a boolean' })
-    return
-  }
-
-  if (!isValidSessionId(sessionId)) {
-    send(ws, { type: 'session-pin-result', sessionId, ok: false, error: 'Invalid session id' })
-    return
-  }
-
-  const record = db.getSessionById(sessionId)
-  if (!record) {
-    send(ws, { type: 'session-pin-result', sessionId, ok: false, error: 'Session not found' })
-    return
-  }
-
-  // When pinning, also clear any previous resume error
-  const updated = isPinned
-    ? db.updateSession(sessionId, { isPinned: true, lastResumeError: null })
-    : db.setPinned(sessionId, false)
-  if (!updated) {
-    send(ws, { type: 'session-pin-result', sessionId, ok: false, error: 'Failed to update pin state' })
-    return
-  }
-
-  send(ws, { type: 'session-pin-result', sessionId, ok: true })
-
-  // Update all active sessions that match (in case of edge cases with multiple windows)
-  for (const session of registry.getAll()) {
-    if (session.agentSessionId === sessionId) {
-      registry.updateSession(session.id, { isPinned })
-    }
-  }
-
-  updateAgentSessions()
-}
-
-function resurrectPinnedSessions() {
-  const orphanedPinned = db.getPinnedOrphaned()
-  if (orphanedPinned.length === 0) {
-    return
-  }
-
-  logger.info('resurrect_pinned_sessions_start', { count: orphanedPinned.length })
-
-  for (const record of orphanedPinned) {
-    // Validate sessionId before using in command
-    if (!isValidSessionId(record.sessionId)) {
-      const errorMsg = 'Invalid session id format'
-      db.updateSession(record.sessionId, { isPinned: false, lastResumeError: errorMsg })
-      broadcast({
-        type: 'session-resurrection-failed',
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        error: errorMsg,
-      })
-      logger.error('resurrect_pinned_session_invalid_id', {
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-      })
-      continue
-    }
-
-    const resumeTemplate =
-      record.agentType === 'claude' ? config.claudeResumeCmd : config.codexResumeCmd
-
-    // Validate template contains {sessionId} placeholder
-    if (!resumeTemplate.includes('{sessionId}')) {
-      const errorMsg = `Resume command template missing {sessionId} placeholder: ${resumeTemplate}`
-      db.updateSession(record.sessionId, { isPinned: false, lastResumeError: errorMsg })
-      broadcast({
-        type: 'session-resurrection-failed',
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        error: errorMsg,
-      })
-      logger.error('resurrect_pinned_session_invalid_template', {
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        template: resumeTemplate,
-      })
-      continue
-    }
-
-    const command = resumeTemplate.replace('{sessionId}', record.sessionId)
-    const projectPath =
-      record.projectPath ||
-      process.env.HOME ||
-      process.env.USERPROFILE ||
-      '.'
-
-    try {
-      const created = sessionManager.createWindow(
-        projectPath,
-        record.displayName,
-        command,
-        { excludeSessionId: record.sessionId }
-      )
-      db.updateSession(record.sessionId, {
-        currentWindow: created.tmuxWindow,
-        displayName: created.name,
-        lastResumeError: null, // Clear any previous error on success
-      })
-      logger.info('resurrect_pinned_session_success', {
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        tmuxWindow: created.tmuxWindow,
-      })
-    } catch (error) {
-      // Resurrection failed - unpin the session and persist error
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      db.updateSession(record.sessionId, { isPinned: false, lastResumeError: errorMsg })
-      broadcast({
-        type: 'session-resurrection-failed',
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        error: errorMsg,
-      })
-      logger.error('resurrect_pinned_session_failed', {
-        sessionId: record.sessionId,
-        displayName: record.displayName,
-        error: errorMsg,
-      })
-    }
-  }
-}
-
-function handleSessionResume(
-  message: Extract<ClientMessage, { type: 'session-resume' }>,
-  ws: ServerWebSocket<WSData>
-) {
-  const sessionId = message.sessionId
-  if (!isValidSessionId(sessionId)) {
-    const error: ResumeError = {
-      code: 'NOT_FOUND',
-      message: 'Invalid session id',
-    }
-    send(ws, { type: 'session-resume-result', sessionId, ok: false, error })
-    return
-  }
-
-  const record = db.getSessionById(sessionId)
-  if (!record) {
-    const error: ResumeError = { code: 'NOT_FOUND', message: 'Session not found' }
-    send(ws, { type: 'session-resume-result', sessionId, ok: false, error })
-    return
-  }
-
-  if (record.currentWindow) {
-    const error: ResumeError = {
-      code: 'ALREADY_ACTIVE',
-      message: 'Session is already active',
-    }
-    send(ws, { type: 'session-resume-result', sessionId, ok: false, error })
-    return
-  }
-
-  const resumeTemplate =
-    record.agentType === 'claude' ? config.claudeResumeCmd : config.codexResumeCmd
-
-  // Validate template contains {sessionId} placeholder
-  if (!resumeTemplate.includes('{sessionId}')) {
-    const error: ResumeError = {
-      code: 'RESUME_FAILED',
-      message: `Resume command template missing {sessionId} placeholder`,
-    }
-    send(ws, { type: 'session-resume-result', sessionId, ok: false, error })
-    return
-  }
-
-  const command = resumeTemplate.replace('{sessionId}', sessionId)
-  const projectPath =
-    record.projectPath ||
-    process.env.HOME ||
-    process.env.USERPROFILE ||
-    '.'
-
-  try {
-    const created = sessionManager.createWindow(
-      projectPath,
-      message.name ?? record.displayName,
-      command,
-      { excludeSessionId: sessionId }
-    )
-    db.updateSession(sessionId, {
-      currentWindow: created.tmuxWindow,
-      displayName: created.name,
-      lastResumeError: null, // Clear any previous error on success
-    })
-    // Add session to registry immediately so terminal can attach
-    // (async refresh will update with any additional data later)
-    const currentSessions = registry.getAll()
-    registry.replaceSessions([created, ...currentSessions])
-    refreshSessions()
-    send(ws, { type: 'session-resume-result', sessionId, ok: true, session: created })
-    broadcast({
-      type: 'session-activated',
-      session: toAgentSession({
-        ...record,
-        currentWindow: created.tmuxWindow,
-        displayName: created.name,
-      }),
-      window: created.tmuxWindow,
-    })
-  } catch (error) {
-    const err: ResumeError = {
-      code: 'RESUME_FAILED',
-      message:
-        error instanceof Error ? error.message : 'Unable to resume session',
-    }
-    send(ws, { type: 'session-resume-result', sessionId, ok: false, error: err })
-  }
-}
-
-function initializePersistentTerminal(ws: ServerWebSocket<WSData>) {
-  if (ws.data.terminal) {
-    return
-  }
-
-  const terminal = createPersistentTerminal(ws)
-  ws.data.terminal = terminal
-
-  void terminal.start().catch((error) => {
-    ws.data.terminal = null
-    handleTerminalError(ws, null, error, 'ERR_TMUX_ATTACH_FAILED')
-  })
-}
-
-function createPersistentTerminal(ws: ServerWebSocket<WSData>) {
-  const sessionName = `${config.tmuxSession}-ws-${ws.data.connectionId}`
-
-  const terminal = createTerminalProxy({
-    connectionId: ws.data.connectionId,
-    sessionName,
-    baseSession: config.tmuxSession,
-    monitorTargets: config.terminalMonitorTargets,
-    onData: (data) => {
-      const sessionId = ws.data.currentSessionId
-      if (!sessionId) {
-        return
-      }
-      send(ws, { type: 'terminal-output', sessionId, data })
-    },
-    onExit: () => {
-      const sessionId = ws.data.currentSessionId
-      ws.data.currentSessionId = null
-      ws.data.currentTmuxTarget = null
-      ws.data.terminal = null
-      void terminal.dispose()
-      if (sockets.has(ws)) {
-        sendTerminalError(
-          ws,
-          sessionId,
-          'ERR_TMUX_ATTACH_FAILED',
-          'tmux client exited',
-          true
-        )
-      }
-    },
-  })
-
-  return terminal
-}
-
-async function ensurePersistentTerminal(
-  ws: ServerWebSocket<WSData>
-): Promise<ITerminalProxy | null> {
-  if (!ws.data.terminal) {
-    ws.data.terminal = createPersistentTerminal(ws)
-  }
-
-  try {
-    await ws.data.terminal.start()
-    return ws.data.terminal
-  } catch (error) {
-    handleTerminalError(ws, ws.data.currentSessionId, error, 'ERR_TMUX_ATTACH_FAILED')
-    ws.data.terminal = null
-    return null
-  }
-}
-
-async function attachTerminalPersistent(
-  ws: ServerWebSocket<WSData>,
-  message: Extract<ClientMessage, { type: 'terminal-attach' }>
-) {
-  const { sessionId, tmuxTarget, cols, rows } = message
-
-  if (!isValidSessionId(sessionId)) {
-    sendTerminalError(ws, sessionId, 'ERR_INVALID_WINDOW', 'Invalid session id', false)
-    return
-  }
-
-  const session = registry.get(sessionId)
-  if (!session) {
-    sendTerminalError(ws, sessionId, 'ERR_INVALID_WINDOW', 'Session not found', false)
-    return
-  }
-
-  const target = tmuxTarget ?? session.tmuxWindow
-  if (!isValidTmuxTarget(target)) {
-    sendTerminalError(ws, sessionId, 'ERR_INVALID_WINDOW', 'Invalid tmux target', false)
-    return
-  }
-
-  const terminal = await ensurePersistentTerminal(ws)
-  if (!terminal) {
-    return
-  }
-
-  if (typeof cols === 'number' && typeof rows === 'number') {
-    terminal.resize(cols, rows)
-  }
-
-  // Capture scrollback history BEFORE switching to avoid race with live output
-  const history = captureTmuxHistory(target)
-
-  try {
-    await terminal.switchTo(target, () => {
-      ws.data.currentSessionId = sessionId
-      ws.data.currentTmuxTarget = target
-      // Send history in onReady callback, before output suppression is lifted
-      if (history) {
-        send(ws, { type: 'terminal-output', sessionId, data: history })
-      }
-    })
-    ws.data.currentSessionId = sessionId
-    ws.data.currentTmuxTarget = target
-    send(ws, { type: 'terminal-ready', sessionId })
-  } catch (error) {
-    handleTerminalError(ws, sessionId, error, 'ERR_TMUX_SWITCH_FAILED')
-  }
-}
-
-function captureTmuxHistory(target: string): string | null {
-  try {
-    // Capture full scrollback history (-S - means from start, -E - means to end, -J joins wrapped lines)
-    const result = Bun.spawnSync(
-      ['tmux', 'capture-pane', '-t', target, '-p', '-S', '-', '-E', '-', '-J'],
-      { stdout: 'pipe', stderr: 'pipe' }
-    )
-    if (result.exitCode !== 0) {
-      return null
-    }
-    const output = result.stdout.toString()
-    // Only return if there's actual content
-    if (output.trim().length === 0) {
-      return null
-    }
-    return output
-  } catch {
-    return null
-  }
-}
-
-function detachTerminalPersistent(ws: ServerWebSocket<WSData>, sessionId: string) {
-  if (ws.data.currentSessionId === sessionId) {
-    ws.data.currentSessionId = null
-    ws.data.currentTmuxTarget = null
-  }
-}
-
-function handleTerminalInputPersistent(
-  ws: ServerWebSocket<WSData>,
-  sessionId: string,
-  data: string
-) {
-  if (sessionId !== ws.data.currentSessionId) {
-    return
-  }
-  ws.data.terminal?.write(data)
-
-  // On Enter key: immediately set "working" status and schedule refresh
-  if (data.includes('\r') || data.includes('\n')) {
-    setForceWorking(sessionId)
-    scheduleEnterRefresh()
-    scheduleLastUserMessageCapture(sessionId)
-  }
-}
-
-function handleTerminalResizePersistent(
-  ws: ServerWebSocket<WSData>,
-  sessionId: string,
-  cols: number,
-  rows: number
-) {
-  if (sessionId !== ws.data.currentSessionId) {
-    return
-  }
-  ws.data.terminal?.resize(cols, rows)
-}
-
-
-function sendTerminalError(
-  ws: ServerWebSocket<WSData>,
-  sessionId: string | null,
-  code: TerminalErrorCode,
-  message: string,
-  retryable: boolean
-) {
-  send(ws, {
-    type: 'terminal-error',
-    sessionId,
-    code,
-    message,
-    retryable,
-  })
-}
-
-function handleTerminalError(
-  ws: ServerWebSocket<WSData>,
-  sessionId: string | null,
-  error: unknown,
-  fallbackCode: TerminalErrorCode
-) {
-  if (error instanceof TerminalProxyError) {
-    sendTerminalError(ws, sessionId, error.code, error.message, error.retryable)
-    return
-  }
-
-  const message =
-    error instanceof Error ? error.message : 'Terminal operation failed'
-  sendTerminalError(ws, sessionId, fallbackCode, message, true)
-}
-

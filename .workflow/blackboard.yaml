@@ -1,0 +1,579 @@
+audit_log:
+  - action: 'Created blackboard for FEAT-005: YAML Workflow Engine. 15 phases, 11 decisions, 5 risks, 6 invariants defined.'
+    agent: feature-planner
+    timestamp: '2026-01-29T12:00:00Z'
+  - action: >-
+      Marked all 15 phases and feature status as complete. All work orders WO-001 through WO-015 implemented, reviewed,
+      tests passing (211 server, 79 client). Additional features delivered: workflow variables/templates and task output
+      visibility.
+    agent: main
+    timestamp: '2026-01-30T08:00:57.652Z'
+  - action: 'Code review complete: APPROVED — 3 documentation fixes verified (0 critical, 0 high issues)'
+    agent: code-reviewer
+    details: >-
+      All JSDoc additions correct, linter suppression properly documented, scope expansion justified (security
+      functions)
+    timestamp: '2026-02-04T13:08:47.665Z'
+created: '2026-01-29T12:00:00Z'
+current_phase: 0
+current_phases: []
+decisions:
+  - affects:
+      - workflowEngine
+      - workflowSchema
+    date: '2026-01-29'
+    decision: Inter-step communication via convention-based file paths
+    id: DEC-001
+    made_by: feature-planner
+    rationale: Steps write to agreed-upon paths in per-run output directory. Simple, no shared state needed.
+  - affects:
+      - workflowEngine
+    date: '2026-01-29'
+    decision: 'Error handling: retry then halt'
+    id: DEC-002
+    made_by: feature-planner
+    rationale: Reuses existing task queue retry logic. Halt allows user to diagnose and resume.
+  - affects:
+      - workflowEngine
+      - workflowSchema
+    date: '2026-01-29'
+    decision: Per-step timeouts only, no global workflow timeout
+    id: DEC-003
+    made_by: feature-planner
+    rationale: Simplifies implementation. Global timeout can be added later.
+  - affects:
+      - workflowStore
+      - workflowFileWatcher
+      - workflowEditor
+    date: '2026-01-29'
+    decision: YAML files as source of truth, UI writes back to YAML
+    id: DEC-004
+    made_by: feature-planner
+    rationale: Version-controllable via git. UI is a convenience layer.
+  - affects:
+      - workflowEngine
+      - workflowSchema
+    date: '2026-01-29'
+    decision: Simple skip conditions only (file_exists, output_contains)
+    id: DEC-005
+    made_by: feature-planner
+    rationale: No full branching complexity for MVP. Covers main use cases.
+  - affects:
+      - workflowEngine
+      - workflowSchema
+    date: '2026-01-29'
+    decision: '4 step types for MVP: spawn_session, check_file, delay, check_output'
+    id: DEC-006
+    made_by: feature-planner
+    rationale: Minimum set to support meaningful pipelines. Extensible later.
+  - affects:
+      - workflowHandlers
+      - workflowWsHandlers
+    date: '2026-01-29'
+    decision: Manual triggers only (UI button or REST endpoint)
+    id: DEC-007
+    made_by: feature-planner
+    rationale: Simplest trigger model. Scheduled triggers deferred.
+  - affects:
+      - WorkflowList
+      - WorkflowDetail
+      - WorkflowEditor
+      - WorkflowPanel
+    date: '2026-01-29'
+    decision: 'Two-level UI: dedicated view for CRUD, right panel for monitoring'
+    id: DEC-008
+    made_by: feature-planner
+    rationale: CRUD needs full-page space. Monitoring fits existing panel pattern.
+  - affects:
+      - PipelineDiagram
+    date: '2026-01-29'
+    decision: Pipeline diagram with connected nodes for progress visualization
+    id: DEC-009
+    made_by: feature-planner
+    rationale: Clear visual representation of sequential step flow and status.
+  - affects:
+      - workflowEngine
+      - taskStore
+    date: '2026-01-29'
+    decision: Engine submits steps as tasks to existing task queue
+    id: DEC-010
+    made_by: feature-planner
+    rationale: Maximum reuse of existing infrastructure. Tasks get all queue features (retry, timeout, monitoring).
+  - affects:
+      - workflowEngine
+    date: '2026-01-29'
+    decision: Engine uses polling to check task completion (matching existing task worker pattern)
+    id: DEC-011
+    made_by: feature-planner
+    rationale: Consistent with existing codebase. Optimize to callbacks later if needed.
+existing_context:
+  api_patterns:
+    auth_method: Bearer token via AUTH_TOKEN env var
+    error_format: '{ error: string }'
+    url_format: /api/{resource} with kebab-case
+    websocket_messages: Discriminated union ServerMessage/ClientMessage in src/shared/types.ts
+  constraints:
+    - Must use existing AUTH_TOKEN authentication pattern
+    - Must follow discriminated union pattern for WebSocket messages
+    - Must use factory function pattern for module initialization
+    - Must use prepared statements for SQLite queries
+    - Must use additive migrations only (try/catch ALTER TABLE)
+    - Must follow existing Hono route registration pattern
+  data_patterns:
+    migrations: Additive only via try/catch ALTER TABLE
+    naming: snake_case for SQL columns, camelCase for TypeScript
+    primary_keys: Text IDs generated via {timestamp36}-{random6}
+    timestamps: created_at, updated_at as TEXT with datetime('now')
+  discovery_source: .workflow/discovery.yaml
+  discovery_timestamp: '2026-01-29'
+  gaps:
+    - No YAML parsing library currently in dependencies
+    - No file watching utility currently used
+    - No pipeline/diagram visualization component
+    - No dedicated full-page view routing (current UI is single-page with panels)
+  reuse_candidates:
+    - location: src/server/taskStore.ts
+      name: TaskStore
+      purpose: SQLite CRUD pattern (initTaskStore, prepared statements, mapRow)
+    - location: src/server/taskWorker.ts
+      name: TaskWorker
+      purpose: Background poll loop, tmux spawning, completion detection
+    - location: src/server/handlers/taskHandlers.ts
+      name: taskHandlers
+      purpose: WebSocket handler pattern (createTaskHandlers factory)
+    - location: src/server/httpRoutes.ts
+      name: httpRoutes
+      purpose: Hono HTTP route registration pattern
+    - location: src/server/config.ts
+      name: config
+      purpose: Environment variable parsing pattern
+    - location: src/client/stores/taskStore.ts
+      name: useTaskStore
+      purpose: Zustand store with persist middleware pattern
+    - location: src/server/taskStore.ts:27
+      name: generateId()
+      purpose: ID generation function
+    - location: src/server/index.ts
+      name: ServerContext
+      purpose: Dependency injection context
+  similar_features:
+    - location: src/server/taskStore.ts, src/server/taskWorker.ts
+      name: Task Queue (Phase 4)
+      relevance: high
+      reuse_opportunity: Workflow engine builds on top of task queue; each step becomes a task
+    - location: src/server/taskWorker.ts
+      name: Task Chaining (followUpPrompt)
+      relevance: medium
+      reuse_opportunity: Lightweight predecessor; workflow engine is the full solution
+feature_id: FEAT-005
+invariants:
+  - enforced_by: workflowEngine writes step state after every transition
+    id: INV-001
+    rule: Workflow run state is always persisted in SQLite before advancing to next step
+  - enforced_by: Engine checks step status before executing; only pending/failed steps can be started
+    id: INV-002
+    rule: Each workflow step executes at most once per run attempt (no double-execution)
+  - enforced_by: Run endpoint checks is_valid=1 before creating run
+    id: INV-003
+    rule: Invalid workflows cannot be triggered for a run
+  - enforced_by: WORKFLOW_ENGINE_ENABLED flag gates all workflow code paths
+    id: INV-004
+    rule: Existing task queue functionality is unaffected when workflow engine is disabled
+  - enforced_by: CREATE TABLE IF NOT EXISTS, try/catch ALTER TABLE pattern
+    id: INV-005
+    rule: All new database changes are additive only (no destructive migrations)
+  - enforced_by: Types defined in src/shared/types.ts with type field
+    id: INV-006
+    rule: WebSocket messages follow existing discriminated union pattern
+last_updated: '2026-02-04T13:08:47.672Z'
+objectives:
+  goals:
+    - Define and execute multi-step YAML workflows with 4 step types (spawn_session, check_file, delay, check_output)
+    - Persist workflow definitions and run state in SQLite for crash recovery
+    - Integrate workflow steps with existing task queue (one step = one task)
+    - Provide real-time pipeline visualization via WebSocket and pipeline diagram component
+    - Support YAML file-based and UI-based workflow creation/editing
+    - Enable simple conditions (file_exists, output_contains) to skip steps
+    - Support per-step retry and timeout, reusing existing task queue retry logic
+    - Allow resume from failed step via UI or API
+  non_goals:
+    - run_command or notify step types
+    - Scheduled or event-based triggers
+    - Parallel step execution
+    - Full if/else branching
+    - Workflow versioning or diff
+    - Global workflow timeout
+  success_criteria:
+    - metric: Workflow runs completed successfully
+      target: '> 80% success rate'
+    - metric: p95 WebSocket update latency
+      target: < 200ms
+    - metric: Zero data loss on server restart
+      target: All running workflows recovered from SQLite
+    - metric: Server crashes from workflow engine
+      target: Zero
+open_questions:
+  - decision_needed_by: Phase 6
+    question: Is Bun fs.watch stable enough for production file watching?
+    status: open
+  - decision_needed_by: Phase 3
+    question: Does Bun have built-in YAML support or do we need js-yaml?
+    status: open
+  - decision_needed_by: Phase 5
+    question: Should engine poll for task completion or hook into task worker completion path?
+    status: open
+  - decision_needed_by: Phase 11
+    question: Custom SVG pipeline diagram vs reactflow library?
+    status: open
+phases:
+  - completed_at: '2026-01-30T08:00:47.861Z'
+    name: Shared Type Definitions
+    phase: 1
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:48.129Z'
+    name: Configuration
+    phase: 2
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:48.368Z'
+    name: YAML Schema & Validation
+    phase: 3
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - unit tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:48.633Z'
+    name: Database Schema & Store
+    phase: 4
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - unit tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:48.964Z'
+    name: Workflow Engine Core
+    phase: 5
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - unit tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:49.684Z'
+    name: YAML File Watcher
+    phase: 6
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - integration tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:50.018Z'
+    name: REST API Endpoints
+    phase: 7
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - integration tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:50.262Z'
+    name: WebSocket Integration
+    phase: 8
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - integration tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:50.466Z'
+    name: Server Wiring
+    phase: 9
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - 'integration test: server starts'
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:50.667Z'
+    name: Client Type Definitions & Store
+    phase: 10
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:50.870Z'
+    name: Pipeline Diagram Component
+    phase: 11
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+      - unit tests pass
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:51.077Z'
+    name: Workflow List & Detail Pages
+    phase: 12
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:51.274Z'
+    name: Workflow Editor (Form Builder + YAML Toggle)
+    phase: 13
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:51.497Z'
+    name: Monitoring Panel & Task Queue Integration
+    phase: 14
+    proofs_collected: false
+    proofs_required:
+      - typecheck passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+  - completed_at: '2026-01-30T08:00:51.786Z'
+    name: End-to-End Testing & Deployment Preparation
+    phase: 15
+    proofs_collected: false
+    proofs_required:
+      - e2e tests pass
+      - lint passes
+      - typecheck passes
+      - full test suite passes
+    status: complete
+    work_orders: []
+    work_orders_active: []
+proofs:
+  - last_run: '2026-02-04T13:08:45.401Z'
+    location: src/server/validators.ts
+    requirement: 'Code review: TKT-0003 documentation fixes (validators.ts)'
+    status: passing
+    type: manual_test
+risks:
+  - description: Server restart during active workflow step loses progress
+    id: RISK-001
+    mitigation: All state persisted in SQLite. Engine recovery on startup re-evaluates running workflows.
+    severity: high
+    status: pending
+  - description: Bun fs.watch may be unstable for production file watching
+    id: RISK-002
+    mitigation: Test thoroughly in Phase 6. Fallback to chokidar if issues found.
+    severity: medium
+    status: pending
+  - description: YAML parse errors crash the server
+    id: RISK-003
+    mitigation: All YAML parsing wrapped in try/catch. Invalid YAML stored with is_valid=0.
+    severity: high
+    status: pending
+  - description: Concurrent workflow runs exhaust task queue slots
+    id: RISK-004
+    mitigation: WORKFLOW_MAX_CONCURRENT_RUNS cap. Steps queue normally in task queue.
+    severity: medium
+    status: pending
+  - description: Adding columns to tasks table breaks existing queries
+    id: RISK-005
+    mitigation: Additive columns only (nullable TEXT). Existing queries unaffected.
+    severity: low
+    status: pending
+schema_version: '1.1'
+status: complete
+title: YAML Workflow Engine
+wiring_map:
+  config:
+    - name: WORKFLOW_ENGINE_ENABLED
+      required: false
+      status: not_documented
+      type: env_var
+    - name: WORKFLOW_DIR
+      required: false
+      status: not_documented
+      type: env_var
+    - name: WORKFLOW_MAX_CONCURRENT_RUNS
+      required: false
+      status: not_documented
+      type: env_var
+    - name: WORKFLOW_RUN_RETENTION_DAYS
+      required: false
+      status: not_documented
+      type: env_var
+  consumers:
+    - depends_on:
+        - GET /api/workflows
+        - 'ws: workflow-list'
+        - 'ws: workflow-updated'
+      location: src/client/components/WorkflowList.tsx
+      name: WorkflowList
+      status: not_started
+      type: ui_component
+    - depends_on:
+        - GET /api/workflows/:id
+        - GET /api/workflows/:id/runs
+        - POST /api/workflows/:id/run
+      location: src/client/components/WorkflowDetail.tsx
+      name: WorkflowDetail
+      status: not_started
+      type: ui_component
+    - depends_on:
+        - POST /api/workflows
+        - PUT /api/workflows/:id
+      location: src/client/components/WorkflowEditor.tsx
+      name: WorkflowEditor
+      status: not_started
+      type: ui_component
+    - depends_on:
+        - 'ws: workflow-run-update'
+        - GET /api/workflow-runs/:runId
+      location: src/client/components/PipelineDiagram.tsx
+      name: PipelineDiagram
+      status: not_started
+      type: ui_component
+    - depends_on:
+        - 'ws: workflow-run-update'
+        - 'ws: workflow-list'
+      location: src/client/components/WorkflowPanel.tsx
+      name: WorkflowPanel
+      status: not_started
+      type: ui_component
+    - depends_on:
+        - 'ws: workflow-list'
+        - 'ws: workflow-run-update'
+        - 'ws: workflow-updated'
+      location: src/client/stores/workflowStore.ts
+      name: workflowStore (client)
+      status: not_started
+      type: zustand_store
+  missing_connections: []
+  observability:
+    - name: '[workflow-engine] structured logs'
+      status: not_started
+      type: log_lines
+  producers:
+    - consumers:
+        - WorkflowList
+      location: src/server/handlers/workflowHandlers.ts
+      name: GET /api/workflows
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowDetail
+      location: src/server/handlers/workflowHandlers.ts
+      name: GET /api/workflows/:id
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowEditor
+      location: src/server/handlers/workflowHandlers.ts
+      name: POST /api/workflows
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowEditor
+      location: src/server/handlers/workflowHandlers.ts
+      name: PUT /api/workflows/:id
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowDetail
+      location: src/server/handlers/workflowHandlers.ts
+      name: DELETE /api/workflows/:id
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowDetail
+      location: src/server/handlers/workflowHandlers.ts
+      name: GET /api/workflows/:id/runs
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - WorkflowDetail
+        - WorkflowPanel
+      location: src/server/handlers/workflowHandlers.ts
+      name: POST /api/workflows/:id/run
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - PipelineDiagram
+      location: src/server/handlers/workflowHandlers.ts
+      name: GET /api/workflow-runs/:runId
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - PipelineDiagram
+      location: src/server/handlers/workflowHandlers.ts
+      name: POST /api/workflow-runs/:runId/resume
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - PipelineDiagram
+      location: src/server/handlers/workflowHandlers.ts
+      name: POST /api/workflow-runs/:runId/cancel
+      status: not_started
+      type: http_endpoint
+    - consumers:
+        - workflowStore (client)
+        - PipelineDiagram
+        - WorkflowPanel
+      location: src/server/workflowEngine.ts
+      name: 'ws: workflow-run-update'
+      status: not_started
+      type: websocket_message
+    - consumers:
+        - workflowStore (client)
+        - WorkflowList
+      location: src/server/handlers/workflowWsHandlers.ts
+      name: 'ws: workflow-list'
+      status: not_started
+      type: websocket_message
+    - consumers:
+        - workflowStore (client)
+        - WorkflowList
+      location: src/server/workflowFileWatcher.ts
+      name: 'ws: workflow-updated'
+      status: not_started
+      type: websocket_message
+  storage:
+    - location: src/server/workflowStore.ts
+      name: workflows
+      status: not_started
+      type: sqlite_table
+    - location: src/server/workflowStore.ts
+      name: workflow_runs
+      status: not_started
+      type: sqlite_table
+    - location: src/server/workflowStore.ts
+      name: tasks.workflow_run_id (additive column)
+      status: not_started
+      type: sqlite_migration
+    - location: src/server/workflowStore.ts
+      name: tasks.workflow_step_name (additive column)
+      status: not_started
+      type: sqlite_migration

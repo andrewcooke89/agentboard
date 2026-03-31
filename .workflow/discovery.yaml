@@ -1,0 +1,61 @@
+# Discovery Phase — Workflow Engine Feature
+# Auto-generated from planning session 2026-01-29
+
+feature: workflow-engine
+project: agentboard
+project_path: /Users/andrewcooke/Ai_workflow/claude-orchestrator/agentboard
+
+technology:
+  runtime: Bun 1.x
+  language: TypeScript 5.x
+  backend: Hono
+  database: SQLite (bun:sqlite)
+  frontend: React 18, Zustand, Tailwind CSS
+  terminal: xterm.js
+
+existing_patterns:
+  server:
+    - factory_functions: "createTaskWorker(), initTaskStore()"
+    - prepared_statements: "db.prepare() for all queries"
+    - dependency_injection: "ServerContext passed to all modules"
+    - websocket_messages: "Discriminated union ClientMessage/ServerMessage"
+    - config: "Environment variables with defaults in config.ts"
+    - handlers: "Per-domain handler files in src/server/handlers/"
+  client:
+    - state: "Zustand stores with persist middleware"
+    - components: "React functional components with Tailwind"
+    - panels: "Toggleable right panels (TaskQueue, History)"
+
+key_files:
+  server:
+    - src/server/taskStore.ts: "SQLite CRUD pattern to follow"
+    - src/server/taskWorker.ts: "Background worker pattern (poll loop, tmux spawning)"
+    - src/server/handlers/taskHandlers.ts: "WebSocket handler pattern"
+    - src/server/config.ts: "Config pattern"
+    - src/server/httpRoutes.ts: "HTTP route pattern"
+    - src/server/index.ts: "Server wiring"
+  client:
+    - src/client/stores/taskStore.ts: "Zustand store pattern"
+    - src/client/components/TaskQueue.tsx: "Panel component pattern"
+    - src/client/components/TaskItem.tsx: "List item pattern"
+    - src/client/App.tsx: "Main app, WebSocket handlers, keyboard shortcuts"
+  shared:
+    - src/shared/types.ts: "All shared types, message unions"
+
+related_memory:
+  decisions:
+    - phase4-design-decisions: "Task queue design choices"
+    - task-queue-detection-experiment: "Completion detection via sentinel files"
+    - workflow-engine-design-decisions: "All 11 workflow design decisions"
+  failures:
+    - task-output-capture: "tmux capture-pane unreliable, use tee instead"
+
+dependencies:
+  builds_on:
+    - "Task queue (Phase 4) — spawning, monitoring, retry, completion detection"
+    - "Task chaining (followUpPrompt) — lightweight predecessor"
+  integrates_with:
+    - "TaskStore — workflow steps submitted as tasks"
+    - "TaskWorker — monitors step completion"
+    - "WebSocket broadcasts — real-time progress updates"
+    - "Config system — workflow-specific settings"

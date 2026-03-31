@@ -1,0 +1,32 @@
+version: 1
+id_prefix: TKT
+id_padding: 4
+audit:
+  exclude_patterns:
+    - "**/target/**"
+    - "**/node_modules/**"
+    - "**/*.generated.*"
+    - "**/test_fixtures/**"
+  include_patterns:
+    - src/**/*.rs
+    - crates/**/*.rs
+  chunk_strategy: by_directory
+  chunk_size: 50
+dedup:
+  enabled: true
+  line_tolerance: 5
+  check_resolved: true
+  resolved_lookback_days: 30
+archive:
+  enabled: true
+  after_days: 30
+  compress: false
+severity_defaults:
+  error-handling: medium
+  performance: medium
+  dead-code: low
+  security: high
+  style: info
+  testing: medium
+  maintainability: medium
+  deprecated: low

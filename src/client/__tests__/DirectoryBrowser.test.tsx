@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { ReactElement } from 'react'
 import type { DirectoryListing } from '@shared/types'
 import { useSettingsStore } from '../stores/settingsStore'
+
+// Counteract mock.module('../components/DirectoryBrowser', ...) pollution from
+// ProjectPathPicker.test.tsx. Bun's mock.module intercepts at the resolved-file
+// level, so even absolute-path imports return the mock. We bust the cache by
+// appending a query string, which bun treats as a distinct module entry.
+// @ts-expect-error bun cache-bust query string not understood by tsc
+const _realDB = await import('../components/DirectoryBrowser.tsx?real')
+mock.module('../components/DirectoryBrowser.tsx', () => _realDB)
 
 const globalAny = globalThis as typeof globalThis & {
   fetch?: typeof fetch
@@ -24,6 +32,8 @@ function setupWindow() {
     removeEventListener: (event: string) => {
       keyHandlers.delete(event)
     },
+    innerWidth: 1024,
+    innerHeight: 768,
   } as unknown as Window & typeof globalThis
 }
 
@@ -118,9 +128,8 @@ beforeEach(async () => {
   setupWindow()
   useSettingsStore.setState({ recentPaths: [] })
 
-  if (!DirectoryBrowser) {
-    DirectoryBrowser = (await import('../components/DirectoryBrowser')).DirectoryBrowser
-  }
+  // Use the real component loaded via query-string cache bust (bypasses mock.module pollution)
+  DirectoryBrowser = _realDB.DirectoryBrowser
 })
 
 afterEach(() => {

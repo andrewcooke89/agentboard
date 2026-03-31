@@ -52,6 +52,11 @@ const defaultConfig = {
   logMatchProfile: false,
   claudeResumeCmd: 'claude --resume {sessionId}',
   codexResumeCmd: 'codex resume {sessionId}',
+  taskMaxConcurrent: 5,
+  taskPollIntervalMs: 5000,
+  taskDefaultTimeoutSeconds: 1800,
+  taskRateLimitPerHour: 30,
+  taskOutputDir: '/tmp/agentboard-test-task-outputs',
 }
 
 const configState = { ...defaultConfig }
@@ -251,9 +256,21 @@ class TerminalProxyMock {
 
 mock.module('../../config', () => ({
   config: configState,
+  GEMINI_API_KEY: '',
+  GEMINI_RATE_LIMIT_TOKENS_PER_MINUTE: 60000,
+  DEFAULT_L1_MODEL: 'glm',
+  DEFAULT_L2_MODEL: 'claude',
 }))
 mock.module('../../db', () => ({
+  // Named function exports used by cronManager, cronHistoryService, cronHandlers
+  pruneRunHistory: () => {},
+  deleteOrphanedPrefs: () => {},
+  getRunHistory: () => [],
+  insertRunHistory: () => {},
+  upsertJobPrefs: () => {},
+  getJobPrefs: () => null,
   initDatabase: () => ({
+    db: new (require('bun:sqlite').Database)(':memory:'),
     getSessionById: (sessionId: string) => dbState.records.get(sessionId) ?? null,
     getSessionByLogPath: (logFilePath: string) =>
       Array.from(dbState.records.values()).find(
@@ -318,6 +335,24 @@ mock.module('../../db', () => ({
       Array.from(dbState.records.values()).filter(
         (record) => record.isPinned && record.currentWindow === null
       ),
+    deleteInactiveSession: (sessionId: string) => {
+      const record = dbState.records.get(sessionId)
+      if (!record || record.currentWindow !== null) return false
+      dbState.records.delete(sessionId)
+      return true
+    },
+    deleteOldInactiveSessions: (retentionDays: number) => {
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
+      const toDelete = Array.from(dbState.records.values()).filter(
+        (record) =>
+          record.currentWindow === null &&
+          new Date(record.lastActivityAt).getTime() < cutoff
+      )
+      for (const record of toDelete) {
+        dbState.records.delete(record.sessionId)
+      }
+      return toDelete.length
+    },
     close: () => {},
   }),
 }))

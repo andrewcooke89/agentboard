@@ -1,0 +1,364 @@
+work_order_id: WO-007
+title: "Phase 7: Implement REST API Endpoints"
+phase: 7
+feature_id: FEAT-005
+priority: high
+estimated_hours: 7
+depends_on:
+  - WO-004  # Needs workflowStore
+  - WO-005  # Needs workflow engine for run triggering
+
+description: |
+  Create REST API endpoints for workflow and run management.
+  Follow existing Hono httpRoutes.ts pattern.
+  11 endpoints total for CRUD operations and run control.
+
+  Endpoints:
+  - GET /api/workflows (list with optional status filter)
+  - GET /api/workflows/:id (get single workflow)
+  - POST /api/workflows (create from YAML body)
+  - PUT /api/workflows/:id (update YAML)
+  - DELETE /api/workflows/:id (delete workflow and file)
+  - GET /api/workflows/:id/runs (list runs for workflow)
+  - POST /api/workflows/:id/run (trigger new run)
+  - GET /api/workflow-runs/:runId (get run with steps)
+  - POST /api/workflow-runs/:runId/resume (resume failed run)
+  - POST /api/workflow-runs/:runId/cancel (cancel running workflow)
+
+context:
+  existing_patterns:
+    - "Hono route registration in httpRoutes.ts (lines 15-80)"
+    - "Bearer token auth middleware with AUTH_TOKEN (lines 8-14)"
+    - "Error responses: c.json({ error: 'message' }, status)"
+    - "Input validation before database operations"
+  files_to_create:
+    - src/server/handlers/workflowHandlers.ts
+  files_to_modify:
+    - src/server/httpRoutes.ts (register workflow routes)
+  reference_files:
+    - src/server/httpRoutes.ts (pattern to follow)
+    - src/server/handlers/taskHandlers.ts (similar CRUD pattern)
+    - feature_brief.md (lines 151-169 for endpoint specs)
+
+subtasks:
+  - id: ST-007-01
+    title: "Create workflowHandlers.ts module structure"
+    description: |
+      Create handlers module with factory function receiving ServerContext.
+      Follow taskHandlers.ts pattern.
+    acceptance_criteria:
+      - File created at src/server/handlers/workflowHandlers.ts
+      - Export function: createWorkflowHandlers(ctx) => { registerRoutes: (app) => void }
+      - Destructure workflowStore, config, broadcast from ctx
+      - Type-safe with Hono types
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts (create)
+    estimated_hours: 0.3
+
+  - id: ST-007-02
+    title: "Implement GET /api/workflows (list with filter)"
+    description: |
+      List all workflow definitions with optional status filter.
+    acceptance_criteria:
+      - Route: app.get('/api/workflows', async (c) => {...})
+      - Query param: ?status=valid|invalid (optional)
+      - Call workflowStore.listWorkflows({ status })
+      - Return c.json({ workflows: [...] }, 200)
+      - Auth required (use existing auth middleware)
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Database errors return 500 with error message
+
+  - id: ST-007-03
+    title: "Implement GET /api/workflows/:id"
+    description: |
+      Get single workflow definition by ID.
+    acceptance_criteria:
+      - Route: app.get('/api/workflows/:id', async (c) => {...})
+      - Param: c.req.param('id')
+      - Call workflowStore.getWorkflow(id)
+      - Return c.json({ workflow }, 200) if found
+      - Return c.json({ error: 'Workflow not found', code: 'NOT_FOUND' }, 404) if not found
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Not found returns 404
+      - Database errors return 500
+
+  - id: ST-007-04
+    title: "Implement POST /api/workflows (create from YAML)"
+    description: |
+      Create new workflow from YAML body.
+      Write YAML file to disk.
+    acceptance_criteria:
+      - Route: app.post('/api/workflows', async (c) => {...})
+      - Body: { name: string, yaml: string }
+      - Validate name is kebab-case
+      - Parse YAML with parseWorkflowYAML
+      - Check name uniqueness with getWorkflowByName
+      - Write file to workflowDir/{name}.yaml
+      - File watcher will auto-upsert to DB (OR directly create in DB here)
+      - Return c.json({ workflow }, 201)
+      - Return 400 if validation errors
+      - Return 409 if name conflict
+      - Auth required
+      - Validate workflow name is kebab-case only (lowercase alphanumeric + hyphens, no path separators)
+      - Reject names containing ../, /, \, or any path separator characters
+      - Sanitize filename before writing to disk: {workflowDir}/{name}.yaml
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 1.0
+    error_handling:
+      - YAML validation errors return 400 with errors array
+      - Duplicate name returns 409 CONFLICT
+      - Path traversal or invalid name returns 400 with clear error message
+      - File write errors return 500
+
+  - id: ST-007-05
+    title: "Implement PUT /api/workflows/:id (update YAML)"
+    description: |
+      Update existing workflow YAML.
+      Write updated YAML to file.
+    acceptance_criteria:
+      - Route: app.put('/api/workflows/:id', async (c) => {...})
+      - Param: id, Body: { yaml: string }
+      - Get existing workflow with getWorkflow(id)
+      - Return 404 if not found
+      - Parse new YAML with parseWorkflowYAML
+      - Validate name matches existing (can't rename via PUT)
+      - Write updated YAML to file_path
+      - File watcher will auto-update DB (OR directly update in DB here)
+      - Return c.json({ workflow }, 200)
+      - Return 400 if validation errors
+      - Auth required
+      - Validate workflow name is kebab-case only (lowercase alphanumeric + hyphens, no path separators)
+      - Reject names containing ../, /, \, or any path separator characters
+      - Sanitize filename before writing to disk: {workflowDir}/{name}.yaml
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.8
+    error_handling:
+      - Not found returns 404
+      - Validation errors return 400
+      - Name mismatch returns 400 (can't rename)
+      - Path traversal or invalid name returns 400 with clear error message
+
+  - id: ST-007-06
+    title: "Implement DELETE /api/workflows/:id"
+    description: |
+      Delete workflow and its YAML file.
+    acceptance_criteria:
+      - Route: app.delete('/api/workflows/:id', async (c) => {...})
+      - Get workflow with getWorkflow(id)
+      - Return 404 if not found
+      - Delete YAML file with fs.unlinkSync(file_path) if file_path not null
+      - Delete from DB with deleteWorkflow(id)
+      - Return c.json({ ok: true }, 200)
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Not found returns 404
+      - File delete errors logged but don't block DB delete
+
+  - id: ST-007-07
+    title: "Implement GET /api/workflows/:id/runs"
+    description: |
+      List all runs for a specific workflow.
+      Support status filter, limit, offset.
+    acceptance_criteria:
+      - Route: app.get('/api/workflows/:id/runs', async (c) => {...})
+      - Query params: ?status=running|completed|failed&limit=20&offset=0
+      - Verify workflow exists with getWorkflow(id)
+      - Return 404 if workflow not found
+      - Call workflowStore.listRunsByWorkflow(workflowId, { status, limit, offset })
+      - Return c.json({ runs: [...] }, 200)
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Workflow not found returns 404
+      - Database errors return 500
+
+  - id: ST-007-08
+    title: "Implement POST /api/workflows/:id/run (trigger run)"
+    description: |
+      Trigger a new workflow run.
+      Validate workflow is valid before creating run.
+    acceptance_criteria:
+      - Route: app.post('/api/workflows/:id/run', async (c) => {...})
+      - Get workflow with getWorkflow(id)
+      - Return 404 if not found
+      - Return 400 if workflow.is_valid === 0 (can't run invalid workflows)
+      - Create run with workflowStore.createRun({ workflow_id, workflow_name, steps initialized })
+      - Initialize steps_state from workflow.steps (all pending)
+      - Return c.json({ run }, 201)
+      - Workflow engine will pick up and start execution
+      - Auth required
+      - Before creating run: query count of running workflows
+      - If running count >= config.workflowMaxConcurrentRuns: return 429 with error { error: "Concurrent workflow run limit reached", code: "RATE_LIMIT_EXCEEDED" }
+      - Include limit field in error response showing the configured maximum
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Workflow not found returns 404
+      - Invalid workflow returns 400 INVALID_STATE
+      - Concurrent run limit exceeded returns 429 RATE_LIMIT_EXCEEDED
+      - Database errors return 500
+
+  - id: ST-007-09
+    title: "Implement GET /api/workflow-runs/:runId"
+    description: |
+      Get workflow run with all step details.
+    acceptance_criteria:
+      - Route: app.get('/api/workflow-runs/:runId', async (c) => {...})
+      - Call workflowStore.getRun(runId)
+      - Return c.json({ run }, 200) if found
+      - Return 404 if not found
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Not found returns 404
+
+  - id: ST-007-10
+    title: "Implement POST /api/workflow-runs/:runId/resume"
+    description: |
+      Resume a failed workflow run from the failed step.
+      Validate run is in failed state.
+    acceptance_criteria:
+      - Route: app.post('/api/workflow-runs/:runId/resume', async (c) => {...})
+      - Get run with getRun(runId)
+      - Return 404 if not found
+      - Return 400 if run.status !== 'failed' (can only resume failed runs)
+      - Set run.status = 'running'
+      - Reset current step status from 'failed' to 'pending'
+      - Update run in DB
+      - Return c.json({ run }, 200)
+      - Workflow engine will retry the step
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.8
+    error_handling:
+      - Not found returns 404
+      - Not failed returns 400 INVALID_STATE
+
+  - id: ST-007-11
+    title: "Implement POST /api/workflow-runs/:runId/cancel"
+    description: |
+      Cancel a running workflow.
+      Cancel active step's task if spawn_session.
+    acceptance_criteria:
+      - Route: app.post('/api/workflow-runs/:runId/cancel', async (c) => {...})
+      - Get run with getRun(runId)
+      - Return 404 if not found
+      - Return 400 if run.status !== 'running'
+      - Get current step from steps_state[current_step_index]
+      - If step is spawn_session with taskId: cancel task via taskStore.updateTask(taskId, { status: 'cancelled' })
+      - Set run.status = 'cancelled'
+      - Update run in DB
+      - Return c.json({ run }, 200)
+      - Auth required
+    files_modified:
+      - src/server/handlers/workflowHandlers.ts
+    estimated_hours: 0.8
+    error_handling:
+      - Not found returns 404
+      - Not running returns 400 INVALID_STATE
+      - Task cancel errors logged but don't block workflow cancel
+
+  - id: ST-007-12
+    title: "Register workflow routes in httpRoutes.ts"
+    description: |
+      Wire workflow handlers into main HTTP routes.
+    acceptance_criteria:
+      - Import createWorkflowHandlers in httpRoutes.ts
+      - Call workflowHandlers.registerRoutes(app) after task routes
+      - Only register if config.workflowEngineEnabled === true
+      - Log route registration at info level
+    files_modified:
+      - src/server/httpRoutes.ts
+    estimated_hours: 0.3
+
+  - id: ST-007-13
+    title: "Add integration tests for all endpoints"
+    description: |
+      Create integration test suite against real SQLite and HTTP server.
+    acceptance_criteria:
+      - Test all 11 endpoints with valid inputs (200/201 responses)
+      - Test error cases (404, 400, 409, 401)
+      - Test auth enforcement (401 without token)
+      - Test workflow run trigger creates run in DB
+      - Test resume changes status from failed to running
+      - Test cancel marks run as cancelled
+      - All tests pass with bun test
+    files_modified:
+      - src/server/handlers/workflowHandlers.test.ts (create)
+    estimated_hours: 2.5
+    error_handling:
+      - Tests verify all error codes and messages
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: integration
+    description: "All workflow handler integration tests pass"
+    command: "bun test src/server/handlers/workflowHandlers.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "GET /api/workflows returns 200"
+    command: |
+      curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:4040/api/workflows
+    expected_output: '{"workflows":[]}'
+
+acceptance_criteria:
+  - All 11 REST endpoints implemented
+  - Follow Hono route registration pattern
+  - Bearer token authentication enforced
+  - Error responses follow standard format ({ error, code })
+  - Input validation before database operations
+  - 404 for not found, 400 for validation, 409 for conflicts, 401 for auth
+  - File I/O for workflow YAML create/update/delete
+  - Integration tests cover all endpoints and error cases
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/server/handlers/workflowHandlers.ts if issues arise"
+  - "git checkout src/server/httpRoutes.ts to remove route registration"
+  - "No database schema changes in this phase"
+  - "Routes not registered if WORKFLOW_ENGINE_ENABLED=false"
+
+notes:
+  - "Follow httpRoutes.ts and taskHandlers.ts patterns exactly"
+  - "File watcher auto-syncs YAML file changes to DB (or handlers can directly update DB)"
+  - "Invalid workflows (is_valid=0) cannot be triggered (400 INVALID_STATE)"
+  - "Resume only works on failed runs (400 if not failed)"
+  - "Cancel stops current step's task if spawn_session"
+  - "No FK constraints - workflows can be deleted, runs preserved"
+  - "Auth required on all endpoints (existing AUTH_TOKEN middleware)"
+
+specs_covered:
+  - API-001  # GET /api/workflows
+  - API-002  # GET /api/workflows/:id
+  - API-003  # POST /api/workflows
+  - API-004  # PUT /api/workflows/:id
+  - API-005  # DELETE /api/workflows/:id
+  - API-006  # GET /api/workflows/:id/runs
+  - API-007  # POST /api/workflows/:id/run
+  - API-008  # GET /api/workflow-runs/:runId
+  - API-009  # POST /api/workflow-runs/:runId/resume
+  - API-010  # POST /api/workflow-runs/:runId/cancel

@@ -14,6 +14,10 @@ const originalWindow = globalAny.window
 
 beforeEach(() => {
   globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
     matchMedia: () => ({
       matches: false,
       addEventListener: () => {},

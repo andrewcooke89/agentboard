@@ -1,0 +1,35 @@
+id: TKT-0086
+version: 1
+created_at: 2026-03-16T05:32:37.202Z
+updated_at: 2026-03-16T06:07:51.771Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/scripts/minion-workflow.ts
+  line_start: 248
+  code_snippet: "function gitCurrentBranch(projectPath: string): string {"
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Function
+  'gitCurrentBranch' is declared but never used."
+description: "eslint(no-unused-vars): Function 'gitCurrentBranch' is declared
+  but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:07:51.771Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:07:51.771Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

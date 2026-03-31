@@ -1,0 +1,528 @@
+# Fix Pipeline — Phase 12 (Rewritten)
+# ====================================
+# Spec-governed bug fix pipeline with reproduction, root cause analysis,
+# TDD regression testing, and implementation verification.
+#
+# Original 6-step structure expanded to 11 steps:
+# The broken team_mode on implement-fix (never implemented in engine) is
+# replaced with a deterministic TDD cycle: write-regression-test → verify-red
+# → implement-fix → verify-green.
+#
+# Engine: DAG (auto-detected from depends_on)
+#
+# Context Injection: Gemini extracts bug context early, injected into all
+# subsequent spawn_session steps to reduce workload on main agents.
+
+pipeline:
+  name: fix-pipeline
+  version: "2.1"
+  description: "Bug fix pipeline with TDD regression testing and verdict enforcement"
+
+  system:
+    engine: dag
+    session_pool: true
+    tier_filter: true
+
+  defaults:
+    tier: 2
+    timeoutSeconds: 1200
+    maxRetries: 1
+    constitution_sections:
+      - security
+      - architecture
+      - quality
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+    working_dir: "{{ project_path }}"
+    amendment_budget:
+      quality:
+        per_run: 2
+        per_work_unit: 1
+      reconciliation:
+        per_run: 4
+        per_work_unit: 2
+
+  variables:
+    - name: project_path
+      type: path
+      description: "Root path of the target project"
+      required: true
+    - name: output_dir
+      type: path
+      description: "Directory for pipeline outputs"
+      required: true
+    - name: bug_description
+      type: string
+      description: "Description of the bug and how to reproduce it"
+      required: true
+    - name: affected_spec_path
+      type: path
+      description: "Path to the original feature spec this bug relates to (optional)"
+      required: false
+      default: ""
+    - name: tier
+      type: string
+      description: "Run tier level (1=quick, 2=thorough with TDD)"
+      required: false
+      default: "2"
+
+  steps:
+    # ── Step 1: Write Bug Spec ─────────────────────────────────────────
+    - name: write-bug-spec
+      type: spawn_session
+      model: claude
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a bug spec writer. Create a formal bug specification as a YAML file.
+
+        Bug description provided by the user:
+        {{ bug_description }}
+
+        Affected spec (if provided): {{ affected_spec_path }}
+        Project path: {{ project_path }}
+
+        Investigate the project to understand the bug context. Then write a complete
+        bug specification YAML file to: {{ output_dir }}/spec/bug-spec.yaml
+
+        The file MUST contain these fields:
+          title: "Short descriptive title"
+          description: "Detailed description of the bug"
+          reproduction:
+            steps: ["Step 1", "Step 2", ...]
+            environment: "Runtime environment details"
+          expected: "What should happen"
+          actual: "What actually happens"
+          affected_files: ["path/to/file1.ts", ...]
+          severity: critical|major|minor
+          affected_spec: "{{ affected_spec_path }}"
+
+        Also write a verdict to the same file:
+          verdict: pass
+      description: "Write formal bug specification with reproduction steps"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/spec/bug-spec.yaml"
+      timeoutSeconds: 300
+
+    # ── Step 1.5: Extract Bug Context (NEW) ─────────────────────────────
+    # Gemini extracts relevant context from bug spec and affected code
+    # This context is injected into all subsequent spawn_session steps
+    - name: extract-bug-context
+      type: gemini_offload
+      depends_on: [write-bug-spec]
+      description: "Extract bug context for injection into subsequent analysis steps"
+      prompt_template: |
+        Analyze the bug specification and extract relevant context for the fix team.
+
+        ## Bug Specification
+        {{bug-spec.yaml}}
+
+        Extract and structure:
+        - affected_areas: List of files/components touched by the bug
+        - bug_summary: Concise description of what's broken
+        - reproduction_summary: Key steps to reproduce
+        - severity_assessment: Impact analysis
+        - suggested_investigation_areas: Where to start looking
+
+        Output as YAML.
+      inputs:
+        - path: "{{ output_dir }}/spec/bug-spec.yaml"
+          label: bug-spec.yaml
+      output_file: "{{ output_dir }}/bug-context.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 60
+
+    # ── Step 2: Reproduce Bug ──────────────────────────────────────────
+    - name: reproduce
+      type: spawn_session
+      model: glm
+      depends_on: [write-bug-spec, extract-bug-context]
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a bug reproducer. Your job is to verify that a bug is reproducible
+        before the team invests in root cause analysis.
+
+        Bug context has been extracted and provided below.
+
+        Read the bug specification at: {{ output_dir }}/spec/bug-spec.yaml
+
+        Follow the reproduction steps exactly. Run the code, inspect output, and
+        determine whether the bug is consistently reproducible.
+
+        Write your findings to: {{ output_dir }}/reproduction-report.yaml
+        The file MUST contain:
+          verdict: pass|fail
+          reproduced: true|false
+          reproduction_output: "actual output observed"
+          notes: "any additional observations"
+
+        verdict should be 'pass' if the bug IS reproducible (we confirmed it exists),
+        'fail' if the bug could NOT be reproduced.
+      description: "Verify bug is reproducible using reproduction steps from bug spec"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/reproduction-report.yaml"
+      enforce_verdict:
+        field: verdict
+        allowed: [pass]
+        fail_message: "Bug could not be reproduced (verdict: {{ verdict }})"
+      timeoutSeconds: 600
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 3: Root Cause Analysis ────────────────────────────────────
+    - name: root-cause
+      type: spawn_session
+      depends_on: [reproduce, extract-bug-context]
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a root cause analyst. Perform deep investigation to identify
+        the root cause of a confirmed bug.
+
+        Bug context has been extracted and provided below.
+
+        Read these files:
+          - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
+          - Reproduction report: {{ output_dir }}/reproduction-report.yaml
+
+        Investigate the codebase thoroughly. Trace the execution path, identify
+        the exact location and mechanism of the bug.
+
+        Write your analysis to: {{ output_dir }}/root-cause-analysis.yaml
+        The file MUST contain:
+          verdict: pass
+          root_cause: "Clear description of what causes the bug"
+          location:
+            file: "path/to/file.ts"
+            line_range: "start-end"
+            function: "functionName"
+          mechanism: "How the bug manifests (race condition, wrong logic, missing check, etc.)"
+          fix_approach: "Recommended approach to fix"
+          risk_assessment: "What could go wrong with the fix"
+      description: "Deep investigation to identify root cause of the bug"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/root-cause-analysis.yaml"
+      timeoutSeconds: 900
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 4: Write Fix Spec ─────────────────────────────────────────
+    - name: fix-spec
+      type: spawn_session
+      model: claude
+      depends_on: [root-cause, extract-bug-context]
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a fix specification writer. Write a detailed fix specification
+        that describes exactly what changes need to be made to fix the bug.
+
+        Bug context has been extracted and provided below.
+
+        Read these files:
+          - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
+          - Root cause analysis: {{ output_dir }}/root-cause-analysis.yaml
+
+        Write the fix specification to: {{ output_dir }}/spec/fix-spec.yaml
+        The file MUST contain:
+          verdict: pass
+          title: "Fix: [bug title]"
+          description: "What the fix does"
+          changes:
+            - file: "path/to/file.ts"
+              description: "What to change in this file"
+              change_type: modify|create|delete
+          acceptance_criteria:
+            - "Criterion 1"
+            - "Criterion 2"
+          regression_risks:
+            - "Risk 1: what could break"
+      description: "Write fix specification incorporating root cause analysis"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/spec/fix-spec.yaml"
+      timeoutSeconds: 300
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 5: Capture Test Baseline ────────────────────────────────
+    # Snapshot current test pass/fail counts BEFORE writing regression tests
+    - name: capture-test-baseline
+      type: native_step
+      depends_on: [fix-spec]
+      tier_min: 2
+      command: |
+        BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+        mkdir -p "$(dirname "$BASELINE_FILE")"
+
+        set +e
+        if [ -f "package.json" ]; then
+          TEST_OUTPUT=$(bun test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "Cargo.toml" ]; then
+          TEST_OUTPUT=$(cargo test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "pyproject.toml" ]; then
+          TEST_OUTPUT=$(pytest 2>&1)
+          TEST_EXIT=$?
+        else
+          echo "Unknown test framework"
+          exit 1
+        fi
+        set -e
+
+        # Parse bun test output: "X pass, Y fail, Z skip"
+        PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ pass' | grep -oP '\d+' || echo "0")
+        FAIL_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | grep -oP '\d+' || echo "0")
+        TOTAL_TESTS=$(echo "$TEST_OUTPUT" | grep -oP 'Ran \d+ tests' | grep -oP '\d+' || echo "0")
+
+        echo "{\"pass\": ${PASS_COUNT:-0}, \"fail\": ${FAIL_COUNT:-0}, \"total\": ${TOTAL_TESTS:-0}, \"exit_code\": $TEST_EXIT}" > "$BASELINE_FILE"
+        echo "Baseline captured: pass=${PASS_COUNT:-0} fail=${FAIL_COUNT:-0} total=${TOTAL_TESTS:-0} exit=$TEST_EXIT"
+        cat "$BASELINE_FILE"
+      working_dir: "{{ project_path }}"
+      timeoutSeconds: 300
+
+    # ── Step 6: Write Regression Test ──────────────────────────────────
+    # TDD Red Phase: Write a test that reproduces the bug
+    - name: write-regression-test
+      type: spawn_session
+      model: glm
+      depends_on: [capture-test-baseline, extract-bug-context]
+      tier_min: 2
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a test writer. Write a regression test that reproduces this bug.
+        The test MUST FAIL with the current code (before the fix is applied).
+        Do NOT implement the fix — only write tests.
+
+        Bug context has been extracted and provided below.
+
+        Read these files:
+          - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
+          - Root cause analysis: {{ output_dir }}/root-cause-analysis.yaml
+          - Fix spec: {{ output_dir }}/spec/fix-spec.yaml
+
+        Write test files directly in the project at {{ project_path }}.
+        Follow the project's existing test patterns and conventions.
+
+        Then write a report to: {{ output_dir }}/regression-test-report.yaml
+        The file MUST contain:
+          verdict: pass
+          test_files_created:
+            - "path/to/test/file.test.ts"
+          test_count: N
+          description: "What the tests verify"
+      description: "Write regression test that reproduces the bug (TDD red phase)"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/regression-test-report.yaml"
+      timeoutSeconds: 600
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 7: Verify Red (TDD) ──────────────────────────────────────
+    # Confirm the regression test actually fails (new failures vs baseline)
+    - name: verify-red
+      type: native_step
+      depends_on: [write-regression-test]
+      tier_min: 2
+      command: |
+        BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+        if [ ! -f "$BASELINE_FILE" ]; then
+          echo "ERROR: No baseline file at $BASELINE_FILE"
+          exit 1
+        fi
+        BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+        echo "Baseline failures: $BASELINE_FAIL"
+
+        # Run tests
+        set +e
+        if [ -f "package.json" ]; then
+          TEST_OUTPUT=$(bun test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "Cargo.toml" ]; then
+          TEST_OUTPUT=$(cargo test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "pyproject.toml" ]; then
+          TEST_OUTPUT=$(pytest 2>&1)
+          TEST_EXIT=$?
+        else
+          echo "Unknown test framework"
+          exit 1
+        fi
+        set -e
+
+        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+        NEW_FAILURES=$((${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0}))
+        echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+        if [ "$NEW_FAILURES" -gt 0 ]; then
+          echo "PASS: RED phase verified — $NEW_FAILURES new test failures from regression test"
+          exit 0
+        else
+          echo "ERROR: No new test failures — regression test is trivially passing"
+          echo "Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
+          exit 1
+        fi
+      working_dir: "{{ project_path }}"
+      timeoutSeconds: 300
+
+    # ── Step 8: Implement Fix ──────────────────────────────────────────
+    - name: implement-fix
+      type: spawn_session
+      model: glm
+      depends_on: [fix-spec, verify-red, extract-bug-context]
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are a bug fix implementor. Implement the fix described in the fix spec.
+        Do NOT modify test files — only implementation code.
+
+        Bug context has been extracted and provided below.
+
+        Read these files:
+          - Fix spec: {{ output_dir }}/spec/fix-spec.yaml
+          - Root cause analysis: {{ output_dir }}/root-cause-analysis.yaml
+          - Bug spec: {{ output_dir }}/spec/bug-spec.yaml
+
+        Implement the fix in the project at {{ project_path }}.
+        Follow the fix spec's changes list exactly.
+
+        After implementing, write a report to: {{ output_dir }}/fix-result.yaml
+        The file MUST contain:
+          verdict: pass|fail
+          files_changed:
+            - path: "path/to/file.ts"
+              description: "What was changed"
+          description: "Summary of what was changed and why"
+          tests_expected_to_pass: true
+      description: "Implement the bug fix following fix-spec (do not modify tests)"
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/fix-result.yaml"
+      enforce_verdict:
+        field: verdict
+        allowed: [pass]
+        fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass'"
+      timeoutSeconds: 1800
+      inputs:
+        - path: "{{ output_dir }}/bug-context.yaml"
+          type: context
+          label: BugContext
+
+    # ── Step 8b: Edge contract verification (deterministic, no AI) ────
+    - name: verify-edges
+      type: native_step
+      depends_on: [implement-fix]
+      command: |
+        PLAN_ID=$(grep -oP 'plan_id:\s*\K\S+' "{{ affected_spec_path }}" 2>/dev/null || true)
+        if [ -z "$PLAN_ID" ]; then
+          echo "SKIP: No plan_id in spec — edge verification not applicable"
+          exit 0
+        fi
+        RESULT=$(curl -sf "http://localhost:3847/api/verify/${PLAN_ID}?project_path={{ project_path }}" 2>/dev/null || true)
+        if [ -z "$RESULT" ]; then
+          echo "SKIP: Planner HTTP server not reachable — edge verification skipped"
+          exit 0
+        fi
+        PASSED=$(echo "$RESULT" | jq -r '.passed')
+        echo "$RESULT" | jq .
+        if [ "$PASSED" = "true" ]; then
+          echo "PASS: All edge contracts verified"
+          exit 0
+        else
+          echo "FAIL: Edge contract verification failed"
+          exit 1
+        fi
+      working_dir: "{{ project_path }}"
+      on_step_failure: completed_with_warnings
+      timeoutSeconds: 300
+
+    # ── Step 9: Verify Green (TDD) ────────────────────────────────────
+    # Confirm no NEW failures vs baseline (pre-existing failures are OK)
+    - name: verify-green
+      type: native_step
+      depends_on: [verify-edges]
+      tier_min: 2
+      command: |
+        BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+        if [ ! -f "$BASELINE_FILE" ]; then
+          echo "ERROR: No baseline file at $BASELINE_FILE"
+          exit 1
+        fi
+        BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+        echo "Baseline failures: $BASELINE_FAIL"
+
+        # Run tests
+        set +e
+        if [ -f "package.json" ]; then
+          TEST_OUTPUT=$(bun test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "Cargo.toml" ]; then
+          TEST_OUTPUT=$(cargo test 2>&1)
+          TEST_EXIT=$?
+        elif [ -f "pyproject.toml" ]; then
+          TEST_OUTPUT=$(pytest 2>&1)
+          TEST_EXIT=$?
+        else
+          echo "Unknown test framework"
+          exit 1
+        fi
+        set -e
+
+        CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+        NEW_FAILURES=$((${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0}))
+        echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+        if [ "$NEW_FAILURES" -le 0 ]; then
+          echo "PASS: GREEN phase verified — no new failures vs baseline"
+          echo "  Pre-existing: $BASELINE_FAIL, Current: ${CURRENT_FAIL:-0}"
+          exit 0
+        else
+          echo "FAIL: $NEW_FAILURES new test failures after implementation"
+          echo "  Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
+          exit 1
+        fi
+      working_dir: "{{ project_path }}"
+      timeoutSeconds: 300
+
+    # ── Step 10: Observe and Learn ─────────────────────────────────────
+    - name: observe-and-learn
+      type: gemini_offload
+      depends_on: [implement-fix]
+      prompt_template: |
+        Analyze the following bug fix pipeline artifacts and extract learning patterns.
+
+        ## Bug Specification
+        {{bug-spec.yaml}}
+
+        ## Root Cause Analysis
+        {{root-cause-analysis.yaml}}
+
+        ## Fix Result
+        {{fix-result.yaml}}
+
+        Focus on:
+        1. Bug reproduction — was the bug easily reproducible? What made it hard/easy?
+        2. Root cause — was the root cause in expected location? Was it a systemic issue?
+        3. Fix complexity — did the fix touch expected files or spread further?
+        4. Regression risk — were there regression concerns?
+        5. Process gaps — could the bug have been caught earlier (in tests, conformance, audit)?
+
+        Produce structured YAML learning entries with confidence: RAW.
+      input_files:
+        - "{{ output_dir }}/spec/bug-spec.yaml"
+        - "{{ output_dir }}/root-cause-analysis.yaml"
+        - "{{ output_dir }}/fix-result.yaml"
+      output_file: "{{ output_dir }}/learning-entries.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 120

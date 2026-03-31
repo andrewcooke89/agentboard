@@ -1,0 +1,39 @@
+id: TKT-0002
+version: 1
+created_at: 2026-02-04T02:42:22.585Z
+updated_at: 2026-03-16T04:47:27.110Z
+category: style
+severity: info
+status: resolved
+source:
+  file: /Users/andrewcooke/Ai_workflow/claude-orchestrator/agentboard/src/server/paths.ts
+  line_start: 3
+  line_end: 3
+  code_snippet: const homeDir = process.env.HOME || process.env.USERPROFILE || ''
+  content_hash: 38b2eb38847c8ae4
+related_locations: []
+title: Add explicit type annotation to homeDir constant
+description: The homeDir constant relies on type inference. Adding an explicit
+  type annotation improves code readability and makes the intent clearer.
+suggestion: "Change line 3 to: const homeDir: string = process.env.HOME ||
+  process.env.USERPROFILE || ''"
+auto_fixable: true
+fix_confidence: high
+effort: small
+found_by: auditor
+related_tickets: []
+tags:
+  - typescript
+  - test-ticket
+  - server
+notes:
+  - timestamp: 2026-03-16T04:47:27.110Z
+    author: system
+    content: "Status changed to resolved: source file removed"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.110Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source file removed

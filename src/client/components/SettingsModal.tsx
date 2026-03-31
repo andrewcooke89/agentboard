@@ -14,6 +14,7 @@ import { useThemeStore, type Theme } from '../stores/themeStore'
 import { getEffectiveModifier, getModifierDisplay } from '../utils/device'
 import { Switch } from './Switch'
 import { playPermissionSound, playIdleSound, primeAudio } from '../utils/sound'
+import { requestNotificationPermission, getNotificationPermission, showNotification } from '../utils/notification'
 
 interface SettingsChangeFlags {
   webglChanged: boolean
@@ -84,8 +85,47 @@ export default function SettingsModal({
   const setSoundOnPermission = useSettingsStore((state) => state.setSoundOnPermission)
   const soundOnIdle = useSettingsStore((state) => state.soundOnIdle)
   const setSoundOnIdle = useSettingsStore((state) => state.setSoundOnIdle)
+  const projectPathPresets = useSettingsStore((state) => state.projectPathPresets)
+  const addProjectPathPreset = useSettingsStore((state) => state.addProjectPathPreset)
+  const removeProjectPathPreset = useSettingsStore((state) => state.removeProjectPathPreset)
+  const notifyOnPermission = useSettingsStore((state) => state.notifyOnPermission)
+  const setNotifyOnPermission = useSettingsStore((state) => state.setNotifyOnPermission)
+  const notifyOnIdle = useSettingsStore((state) => state.notifyOnIdle)
+  const setNotifyOnIdle = useSettingsStore((state) => state.setNotifyOnIdle)
+  const sessionGroupMode = useSettingsStore((state) => state.sessionGroupMode)
+  const setSessionGroupMode = useSettingsStore((state) => state.setSessionGroupMode)
+  // Cron Manager settings
+  const cronPollInterval = useSettingsStore((state) => state.cronPollInterval)
+  const setCronPollInterval = useSettingsStore((state) => state.setCronPollInterval)
+  const cronAvatarStyle = useSettingsStore((state) => state.cronAvatarStyle)
+  const setCronAvatarStyle = useSettingsStore((state) => state.setCronAvatarStyle)
+  const cronSudoGracePeriod = useSettingsStore((state) => state.cronSudoGracePeriod)
+  const setCronSudoGracePeriod = useSettingsStore((state) => state.setCronSudoGracePeriod)
+  const cronShowSystemJobs = useSettingsStore((state) => state.cronShowSystemJobs)
+  const setCronShowSystemJobs = useSettingsStore((state) => state.setCronShowSystemJobs)
+  const cronShowUserJobs = useSettingsStore((state) => state.cronShowUserJobs)
+  const setCronShowUserJobs = useSettingsStore((state) => state.setCronShowUserJobs)
+  const cronDefaultTimelineVisible = useSettingsStore((state) => state.cronDefaultTimelineVisible)
+  const setCronDefaultTimelineVisible = useSettingsStore((state) => state.setCronDefaultTimelineVisible)
+  const cronDefaultTimelineRange = useSettingsStore((state) => state.cronDefaultTimelineRange)
+  const setCronDefaultTimelineRange = useSettingsStore((state) => state.setCronDefaultTimelineRange)
+  const cronNotifyFailure = useSettingsStore((state) => state.cronNotifyFailure)
+  const setCronNotifyFailure = useSettingsStore((state) => state.setCronNotifyFailure)
+  const cronNotifyMissedRun = useSettingsStore((state) => state.cronNotifyMissedRun)
+  const setCronNotifyMissedRun = useSettingsStore((state) => state.setCronNotifyMissedRun)
+  const cronNotifyManualRun = useSettingsStore((state) => state.cronNotifyManualRun)
+  const setCronNotifyManualRun = useSettingsStore((state) => state.setCronNotifyManualRun)
+  const cronDesktopNotifications = useSettingsStore((state) => state.cronDesktopNotifications)
+  const setCronDesktopNotifications = useSettingsStore((state) => state.setCronDesktopNotifications)
+  const cronAutoTagSuggestions = useSettingsStore((state) => state.cronAutoTagSuggestions)
+  const setCronAutoTagSuggestions = useSettingsStore((state) => state.setCronAutoTagSuggestions)
+  const cronMaxHistoryDays = useSettingsStore((state) => state.cronMaxHistoryDays)
+  const setCronMaxHistoryDays = useSettingsStore((state) => state.setCronMaxHistoryDays)
+  const cronMaxHistoryPerJob = useSettingsStore((state) => state.cronMaxHistoryPerJob)
+  const setCronMaxHistoryPerJob = useSettingsStore((state) => state.setCronMaxHistoryPerJob)
 
   const [draftDir, setDraftDir] = useState(defaultProjectDir)
+  const [newPresetPath, setNewPresetPath] = useState('')
   const [draftPresets, setDraftPresets] = useState<CommandPreset[]>(commandPresets)
   const [draftDefaultPresetId, setDraftDefaultPresetId] = useState(defaultPresetId)
   const [draftSortMode, setDraftSortMode] =
@@ -106,12 +146,30 @@ export default function SettingsModal({
   const [draftShowLastUserMessage, setDraftShowLastUserMessage] = useState(
     showLastUserMessage
   )
-  const [draftShowSessionIdPrefix, setDraftShowSessionIdSuffix] = useState(
+  const [draftShowSessionIdPrefix, setDraftShowSessionIdPrefix] = useState(
     showSessionIdPrefix
   )
   const [draftTheme, setDraftTheme] = useState<Theme>(theme)
   const [draftSoundOnPermission, setDraftSoundOnPermission] = useState(soundOnPermission)
   const [draftSoundOnIdle, setDraftSoundOnIdle] = useState(soundOnIdle)
+  const [draftNotifyOnPermission, setDraftNotifyOnPermission] = useState(notifyOnPermission)
+  const [draftNotifyOnIdle, setDraftNotifyOnIdle] = useState(notifyOnIdle)
+  const [draftSessionGroupMode, setDraftSessionGroupMode] = useState(sessionGroupMode)
+  // Cron Manager draft state
+  const [draftCronPollInterval, setDraftCronPollInterval] = useState(cronPollInterval)
+  const [draftCronAvatarStyle, setDraftCronAvatarStyle] = useState(cronAvatarStyle)
+  const [draftCronSudoGracePeriod, setDraftCronSudoGracePeriod] = useState(cronSudoGracePeriod)
+  const [draftCronShowSystemJobs, setDraftCronShowSystemJobs] = useState(cronShowSystemJobs)
+  const [draftCronShowUserJobs, setDraftCronShowUserJobs] = useState(cronShowUserJobs)
+  const [draftCronDefaultTimelineVisible, setDraftCronDefaultTimelineVisible] = useState(cronDefaultTimelineVisible)
+  const [draftCronDefaultTimelineRange, setDraftCronDefaultTimelineRange] = useState(cronDefaultTimelineRange)
+  const [draftCronNotifyFailure, setDraftCronNotifyFailure] = useState(cronNotifyFailure)
+  const [draftCronNotifyMissedRun, setDraftCronNotifyMissedRun] = useState(cronNotifyMissedRun)
+  const [draftCronNotifyManualRun, setDraftCronNotifyManualRun] = useState(cronNotifyManualRun)
+  const [draftCronDesktopNotifications, setDraftCronDesktopNotifications] = useState(cronDesktopNotifications)
+  const [draftCronAutoTagSuggestions, setDraftCronAutoTagSuggestions] = useState(cronAutoTagSuggestions)
+  const [draftCronMaxHistoryDays, setDraftCronMaxHistoryDays] = useState(cronMaxHistoryDays)
+  const [draftCronMaxHistoryPerJob, setDraftCronMaxHistoryPerJob] = useState(cronMaxHistoryPerJob)
 
   // New preset form state
   const [showAddForm, setShowAddForm] = useState(false)
@@ -142,10 +200,27 @@ export default function SettingsModal({
       setDraftShortcutModifier(shortcutModifier)
       setDraftShowProjectName(showProjectName)
       setDraftShowLastUserMessage(showLastUserMessage)
-      setDraftShowSessionIdSuffix(showSessionIdPrefix)
+      setDraftShowSessionIdPrefix(showSessionIdPrefix)
       setDraftTheme(theme)
       setDraftSoundOnPermission(soundOnPermission)
       setDraftSoundOnIdle(soundOnIdle)
+      setDraftNotifyOnPermission(notifyOnPermission)
+      setDraftNotifyOnIdle(notifyOnIdle)
+      setDraftSessionGroupMode(sessionGroupMode)
+      setDraftCronPollInterval(cronPollInterval)
+      setDraftCronAvatarStyle(cronAvatarStyle)
+      setDraftCronSudoGracePeriod(cronSudoGracePeriod)
+      setDraftCronShowSystemJobs(cronShowSystemJobs)
+      setDraftCronShowUserJobs(cronShowUserJobs)
+      setDraftCronDefaultTimelineVisible(cronDefaultTimelineVisible)
+      setDraftCronDefaultTimelineRange(cronDefaultTimelineRange)
+      setDraftCronNotifyFailure(cronNotifyFailure)
+      setDraftCronNotifyMissedRun(cronNotifyMissedRun)
+      setDraftCronNotifyManualRun(cronNotifyManualRun)
+      setDraftCronDesktopNotifications(cronDesktopNotifications)
+      setDraftCronAutoTagSuggestions(cronAutoTagSuggestions)
+      setDraftCronMaxHistoryDays(cronMaxHistoryDays)
+      setDraftCronMaxHistoryPerJob(cronMaxHistoryPerJob)
       setShowAddForm(false)
       setNewLabel('')
       setNewBaseCommand('')
@@ -199,6 +274,23 @@ export default function SettingsModal({
     theme,
     soundOnPermission,
     soundOnIdle,
+    notifyOnPermission,
+    notifyOnIdle,
+    sessionGroupMode,
+    cronPollInterval,
+    cronAvatarStyle,
+    cronSudoGracePeriod,
+    cronShowSystemJobs,
+    cronShowUserJobs,
+    cronDefaultTimelineVisible,
+    cronDefaultTimelineRange,
+    cronNotifyFailure,
+    cronNotifyMissedRun,
+    cronNotifyManualRun,
+    cronDesktopNotifications,
+    cronAutoTagSuggestions,
+    cronMaxHistoryDays,
+    cronMaxHistoryPerJob,
     isOpen,
   ])
 
@@ -209,7 +301,8 @@ export default function SettingsModal({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (typeof e.stopPropagation === 'function') e.stopPropagation()
+        e.preventDefault()
+        e.stopPropagation()
         onClose()
       }
     }
@@ -243,6 +336,23 @@ export default function SettingsModal({
     setTheme(draftTheme)
     setSoundOnPermission(draftSoundOnPermission)
     setSoundOnIdle(draftSoundOnIdle)
+    setNotifyOnPermission(draftNotifyOnPermission)
+    setNotifyOnIdle(draftNotifyOnIdle)
+    setSessionGroupMode(draftSessionGroupMode)
+    setCronPollInterval(draftCronPollInterval)
+    setCronAvatarStyle(draftCronAvatarStyle)
+    setCronSudoGracePeriod(draftCronSudoGracePeriod)
+    setCronShowSystemJobs(draftCronShowSystemJobs)
+    setCronShowUserJobs(draftCronShowUserJobs)
+    setCronDefaultTimelineVisible(draftCronDefaultTimelineVisible)
+    setCronDefaultTimelineRange(draftCronDefaultTimelineRange)
+    setCronNotifyFailure(draftCronNotifyFailure)
+    setCronNotifyMissedRun(draftCronNotifyMissedRun)
+    setCronNotifyManualRun(draftCronNotifyManualRun)
+    setCronDesktopNotifications(draftCronDesktopNotifications)
+    setCronAutoTagSuggestions(draftCronAutoTagSuggestions)
+    setCronMaxHistoryDays(draftCronMaxHistoryDays)
+    setCronMaxHistoryPerJob(draftCronMaxHistoryPerJob)
     onClose({ webglChanged })
   }
 
@@ -318,6 +428,66 @@ export default function SettingsModal({
               className="input"
               autoFocus
             />
+          </div>
+
+          {/* Project Path Presets Section */}
+          <div className="border-t border-border pt-4">
+            <label className="mb-2 block text-xs text-secondary">
+              Favorite Project Paths
+            </label>
+            <p className="text-[10px] text-muted mb-3">
+              Quick-select buttons shown in the new session dialog.
+            </p>
+            {projectPathPresets.length > 0 && (
+              <div className="space-y-1.5 mb-3">
+                {projectPathPresets.map((preset) => (
+                  <div
+                    key={preset}
+                    className="flex items-center gap-2 border border-border p-2"
+                  >
+                    <span className="flex-1 text-xs font-mono truncate" title={preset}>
+                      {preset}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn text-xs px-2 py-0.5"
+                      onClick={() => removeProjectPathPreset(preset)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input
+                value={newPresetPath}
+                onChange={(e) => setNewPresetPath(e.target.value)}
+                placeholder="~/projects/my-project"
+                className="input flex-1 text-xs font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    if (newPresetPath.trim()) {
+                      addProjectPathPreset(newPresetPath.trim())
+                      setNewPresetPath('')
+                    }
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn text-xs"
+                onClick={() => {
+                  if (newPresetPath.trim()) {
+                    addProjectPathPreset(newPresetPath.trim())
+                    setNewPresetPath('')
+                  }
+                }}
+              >
+                Add
+              </button>
+            </div>
           </div>
 
           {/* Command Presets Section */}
@@ -535,6 +705,33 @@ export default function SettingsModal({
             </div>
           )}
 
+          <div className="border-t border-border pt-4">
+            <label className="mb-2 block text-xs text-secondary">
+              Group Sessions By
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={`btn flex-1 ${draftSessionGroupMode === 'none' ? 'btn-primary' : ''}`}
+                onClick={() => setDraftSessionGroupMode('none')}
+              >
+                None
+              </button>
+              <button
+                type="button"
+                className={`btn flex-1 ${draftSessionGroupMode === 'project' ? 'btn-primary' : ''}`}
+                onClick={() => setDraftSessionGroupMode('project')}
+              >
+                Project
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted">
+              {draftSessionGroupMode === 'project'
+                ? 'Sessions grouped by project folder with collapsible headers'
+                : 'Sessions shown as a flat list'}
+            </p>
+          </div>
+
           <div className="border-t border-border pt-4 space-y-3">
             <label className="mb-1 block text-xs text-secondary">
               Session List Details
@@ -572,7 +769,7 @@ export default function SettingsModal({
               </div>
               <Switch
                 checked={draftShowSessionIdPrefix}
-                onCheckedChange={setDraftShowSessionIdSuffix}
+                onCheckedChange={setDraftShowSessionIdPrefix}
               />
             </div>
           </div>
@@ -625,6 +822,67 @@ export default function SettingsModal({
                   onCheckedChange={(checked) => {
                     setDraftSoundOnIdle(checked)
                     if (checked) void primeAudio() // Unlock audio on user gesture
+                  }}
+                />
+              </div>
+            </div>
+            {/* Browser Notifications */}
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex-1">
+                <div className="text-sm text-primary">Permission Notification</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notification when a session needs permission.
+                  {getNotificationPermission() === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
+                  className="btn text-xs px-2 py-1"
+                >
+                  Test
+                </button>
+                <Switch
+                  checked={draftNotifyOnPermission}
+                  onCheckedChange={async (checked) => {
+                    if (checked) {
+                      const perm = await requestNotificationPermission()
+                      if (perm !== 'granted') return
+                    }
+                    setDraftNotifyOnPermission(checked)
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-between mt-3">
+              <div className="flex-1">
+                <div className="text-sm text-primary">Idle Notification</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notification when a session finishes working.
+                  {getNotificationPermission() === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => showNotification('Agentboard', { body: 'Test notification' })}
+                  className="btn text-xs px-2 py-1"
+                >
+                  Test
+                </button>
+                <Switch
+                  checked={draftNotifyOnIdle}
+                  onCheckedChange={async (checked) => {
+                    if (checked) {
+                      const perm = await requestNotificationPermission()
+                      if (perm !== 'granted') return
+                    }
+                    setDraftNotifyOnIdle(checked)
                   }}
                 />
               </div>
@@ -762,6 +1020,206 @@ export default function SettingsModal({
                 checked={draftTheme === 'dark'}
                 onCheckedChange={(checked) => setDraftTheme(checked ? 'dark' : 'light')}
               />
+            </div>
+          </div>
+
+          {/* Cron Manager Section */}
+          <div className="border-t border-border pt-4 space-y-3">
+            <label className="mb-1 block text-xs text-secondary">Cron Manager</label>
+
+            {/* Poll Interval */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Poll Interval</div>
+                <div className="text-[10px] text-muted">How often to refresh job status (2–30s)</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="2"
+                  max="30"
+                  step="1"
+                  value={draftCronPollInterval}
+                  onChange={(e) => setDraftCronPollInterval(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-8 text-right">{draftCronPollInterval}s</span>
+              </div>
+            </div>
+
+            {/* Avatar Style */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Avatar Style</div>
+                <div className="text-[10px] text-muted">Dicebear style for job avatars</div>
+              </div>
+              <select
+                value={draftCronAvatarStyle}
+                onChange={(e) => setDraftCronAvatarStyle(e.target.value)}
+                className="input text-xs py-1 px-2 w-auto"
+              >
+                {['bottts', 'identicon', 'thumbs', 'avataaars', 'micah', 'pixel-art'].map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sudo Grace Period */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Sudo Grace Period</div>
+                <div className="text-[10px] text-muted">How long sudo credentials are cached (seconds)</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="60"
+                  max="3600"
+                  step="60"
+                  value={draftCronSudoGracePeriod}
+                  onChange={(e) => setDraftCronSudoGracePeriod(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-12 text-right">{draftCronSudoGracePeriod}s</span>
+              </div>
+            </div>
+
+            {/* Show system/user job toggles */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Show System Jobs</div>
+                <div className="text-[10px] text-muted">Include system-level cron jobs</div>
+              </div>
+              <Switch checked={draftCronShowSystemJobs} onCheckedChange={setDraftCronShowSystemJobs} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Show User Jobs</div>
+                <div className="text-[10px] text-muted">Include user-level cron jobs</div>
+              </div>
+              <Switch checked={draftCronShowUserJobs} onCheckedChange={setDraftCronShowUserJobs} />
+            </div>
+
+            {/* Default Timeline */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Timeline Visible by Default</div>
+                <div className="text-[10px] text-muted">Show schedule timeline on open</div>
+              </div>
+              <Switch checked={draftCronDefaultTimelineVisible} onCheckedChange={setDraftCronDefaultTimelineVisible} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Default Timeline Range</div>
+                <div className="text-[10px] text-muted">24h view or 7-day view</div>
+              </div>
+              <div className="flex gap-1">
+                {(['24h', '7d'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setDraftCronDefaultTimelineRange(r)}
+                    className={`btn text-xs px-2 py-0.5 ${draftCronDefaultTimelineRange === r ? 'btn-primary' : ''}`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Notification categories */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Failure</div>
+                <div className="text-[10px] text-muted">Alert when a cron job fails</div>
+              </div>
+              <Switch checked={draftCronNotifyFailure} onCheckedChange={setDraftCronNotifyFailure} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Missed Run</div>
+                <div className="text-[10px] text-muted">Alert when a scheduled run is missed</div>
+              </div>
+              <Switch checked={draftCronNotifyMissedRun} onCheckedChange={setDraftCronNotifyMissedRun} />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Notify on Manual Run</div>
+                <div className="text-[10px] text-muted">Alert when a manually triggered run completes</div>
+              </div>
+              <Switch checked={draftCronNotifyManualRun} onCheckedChange={setDraftCronNotifyManualRun} />
+            </div>
+
+            {/* Desktop Notifications */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Desktop Notifications</div>
+                <div className="text-[10px] text-muted">
+                  Show OS notifications for cron events (max 1 per job per 5 min)
+                  {typeof Notification !== 'undefined' && Notification.permission === 'denied' && (
+                    <span className="text-danger ml-1">(Blocked in browser settings)</span>
+                  )}
+                </div>
+              </div>
+              <Switch
+                checked={draftCronDesktopNotifications}
+                onCheckedChange={async (checked) => {
+                  if (checked && typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
+                    const perm = await requestNotificationPermission()
+                    if (perm !== 'granted') return
+                  }
+                  setDraftCronDesktopNotifications(checked)
+                }}
+              />
+            </div>
+
+            {/* Auto-tag suggestions */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Auto-tag Suggestions</div>
+                <div className="text-[10px] text-muted">Suggest tags based on command patterns</div>
+              </div>
+              <Switch checked={draftCronAutoTagSuggestions} onCheckedChange={setDraftCronAutoTagSuggestions} />
+            </div>
+
+            {/* Max History Days */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Max History Days</div>
+                <div className="text-[10px] text-muted">How many days of run history to retain</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="7"
+                  max="365"
+                  step="7"
+                  value={draftCronMaxHistoryDays}
+                  onChange={(e) => setDraftCronMaxHistoryDays(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-10 text-right">{draftCronMaxHistoryDays}d</span>
+              </div>
+            </div>
+
+            {/* Max History Per Job */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-primary">Max History Per Job</div>
+                <div className="text-[10px] text-muted">Maximum run history entries per job</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="50"
+                  max="2000"
+                  step="50"
+                  value={draftCronMaxHistoryPerJob}
+                  onChange={(e) => setDraftCronMaxHistoryPerJob(parseInt(e.target.value, 10))}
+                  className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+                />
+                <span className="text-xs text-secondary w-12 text-right">{draftCronMaxHistoryPerJob}</span>
+              </div>
             </div>
           </div>
 

@@ -1,0 +1,35 @@
+id: TKT-0036
+version: 1
+created_at: 2026-03-13T07:25:43.943Z
+updated_at: 2026-03-16T04:47:26.946Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/cleanup-scheduling-regression.test.ts
+  line_start: 33
+  code_snippet: // Find where setDb is called
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'setDbCalls'
+  is declared but never used. Unused variables s..."
+description: "eslint(no-unused-vars): Variable 'setDbCalls' is declared but
+  never used. Unused variables should start with a '_'."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T04:47:26.945Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:26.945Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

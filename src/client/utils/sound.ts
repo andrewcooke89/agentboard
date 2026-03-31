@@ -122,7 +122,7 @@ export async function playPermissionSound(): Promise<void> {
       peakGain: 0.15,
       type: 'sine',
     })
-  } catch {
+  } catch (_e) {
     // Ignore all playback errors
   }
 }
@@ -145,7 +145,7 @@ export async function playIdleSound(): Promise<void> {
       peakGain: 0.08, // Lower to avoid clipping with two oscillators
       type: 'sine',
     })
-  } catch {
+  } catch (_e) {
     // Ignore all playback errors
   }
 }

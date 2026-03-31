@@ -1,0 +1,188 @@
+# Rust: Hook dispatch loop to emit swarm events via EventReporter
+
+id: WO-006
+group_id: swarm-view
+title: "Hook minion-executor dispatch loop to emit swarm events via EventReporter"
+description: |
+  Integrate the EventReporter into the dispatch loop so that swarm events
+  are emitted in real-time as work orders progress through execution.
+
+  ## 1. Modify `crates/minion-executor/src/dispatcher/mod.rs`
+
+  In the `dispatch_group()` function:
+  - Import EventReporter from `crate::event_reporter`
+  - Create an EventReporter instance using `config.agentboard_url.as_deref()`
+  - Pass the EventReporter to `dispatch_with_scheduler()` (it needs to be added
+    as a parameter)
+  - After constructing the work order list and before calling the scheduler,
+    emit a `GroupStarted` event:
+    ```rust
+    reporter.report(SwarmEvent::GroupStarted {
+        group_id: group_id.clone(),
+        timestamp: EventReporter::now_iso(),
+        total_wos: work_orders.len(),
+        wo_ids: work_orders.iter().map(|wo| wo.id.clone()).collect(),
+        edges: work_orders.iter()
+            .flat_map(|wo| wo.depends_on.iter().map(move |dep| DependencyEdge {
+                from: dep.clone(),
+                to: wo.id.clone(),
+            }))
+            .collect(),
+    }).await;
+    ```
+  - After dispatch completes, emit a `GroupCompleted` event with summary stats
+
+  ## 2. Modify `crates/minion-executor/src/dispatcher/scheduler.rs`
+
+  Add `event_reporter: EventReporter` parameter to the dispatch function.
+  Store it in the dispatch loop context.
+
+  At each event handling point in the dispatch loop:
+
+  ### When spawning an executor (WO starts running):
+  ```rust
+  reporter.report(SwarmEvent::WoStatusChanged {
+      group_id: group_id.clone(),
+      timestamp: EventReporter::now_iso(),
+      wo_id: wo_id.clone(),
+      old_status: "ready".to_string(),
+      new_status: "running".to_string(),
+      model: effective_model.clone(),
+      attempt: current_attempt,
+      tier: current_tier,
+  }).await;
+  ```
+
+  ### On DispatchEvent::Completed:
+  ```rust
+  reporter.report(SwarmEvent::WoCompleted {
+      group_id: group_id.clone(),
+      timestamp: EventReporter::now_iso(),
+      wo_id: wo_id.clone(),
+      token_usage: TokenUsageSummary {
+          input_tokens: result.token_usage.input_tokens,
+          output_tokens: result.token_usage.output_tokens,
+      },
+      gate_results: result.gate_results.as_ref().map(|gr| GateResultSummary {
+          all_passed: gr.all_passed,
+          gates: gr.gates.iter().map(|g| GateEntry {
+              name: g.name.clone(),
+              passed: g.passed,
+              output: g.output.clone(),
+          }).collect(),
+      }),
+      files_changed: result.diffs.iter().map(|d| d.file.clone()).collect(),
+      duration_seconds: 0.0, // calculate from timestamps if available
+  }).await;
+  ```
+
+  ### On DispatchEvent::Failed (before escalation logic):
+  ```rust
+  reporter.report(SwarmEvent::WoFailed {
+      group_id: group_id.clone(),
+      timestamp: EventReporter::now_iso(),
+      wo_id: wo_id.clone(),
+      error: result.error.clone().unwrap_or_default(),
+      gate_detail: result.gate_results.as_ref()
+          .and_then(|gr| gr.error_context.clone()),
+      model: current_model.clone(),
+      attempt: current_attempt,
+      tier: current_tier,
+  }).await;
+  ```
+
+  ### On escalation (after deciding to escalate):
+  ```rust
+  reporter.report(SwarmEvent::WoEscalated {
+      group_id: group_id.clone(),
+      timestamp: EventReporter::now_iso(),
+      wo_id: wo_id.clone(),
+      from_tier,
+      to_tier,
+      to_model: next_model.clone(),
+      error_history: state_store.get_error_history(&wo_id)?
+          .into_iter()
+          .map(|e| ErrorHistoryEntrySummary {
+              tier: e.tier,
+              model: e.model,
+              attempt: e.attempt,
+              error: e.error,
+              gate_detail: e.gate_detail,
+          })
+          .collect(),
+  }).await;
+  ```
+
+  ## 3. Update `dispatch_group` function signature
+
+  Thread the EventReporter through. The reporter is `Clone` so it can be
+  shared across the dispatch loop without Arc.
+
+  ## Important Notes
+
+  - EventReporter::report() is fire-and-forget — it logs errors but never
+    returns Err. This means `.await` on it is safe and won't interrupt dispatch.
+  - The reporter needs `Clone` because it's used across async contexts.
+  - If agentboard_url is not configured, EventReporter::disabled() is used
+    and all report calls are no-ops.
+  - Read the existing scheduler.rs dispatch loop carefully to understand where
+    each event should be emitted. Follow the existing code flow.
+  - Make sure all existing tests still compile — the tests use MockExecutor and
+    may need the EventReporter parameter added (use EventReporter::disabled()).
+
+task: implement
+scope: crates/minion-executor/src/
+
+interface_files:
+  - crates/minion-executor/src/event_reporter.rs
+reference_files:
+  - crates/minion-executor/src/dispatcher/scheduler.rs
+  - crates/minion-executor/src/dispatcher/mod.rs
+  - crates/minion-executor/src/executor.rs
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+    - call_graph
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: true
+  lint: false
+  typecheck: false
+  tests:
+    run: true
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 2
+  timeout_minutes: 12
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 2
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

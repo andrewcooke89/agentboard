@@ -1,0 +1,160 @@
+work_order_id: WO-001
+title: "Phase 1: Define Shared TypeScript Types for Workflows"
+phase: 1
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 3
+depends_on: []
+
+description: |
+  Define all TypeScript types for the workflow engine in src/shared/types.ts.
+  This establishes the type foundation for both server and client code.
+
+  Key types to define:
+  - WorkflowDefinition (parsed from YAML)
+  - WorkflowStep (step schema with discriminated union for step types)
+  - WorkflowStepType enum (spawn_session, check_file, delay, check_output)
+  - StepCondition (file_exists, output_contains)
+  - WorkflowRun (run instance with step state)
+  - StepRunState (per-step execution state)
+  - WorkflowStatus enum (pending, running, completed, failed, cancelled)
+  - WebSocket message types (workflow-run-update, workflow-list, etc.)
+
+context:
+  existing_patterns:
+    - "Discriminated unions for ServerMessage/ClientMessage (see types.ts lines 58-137)"
+    - "snake_case DB columns, camelCase TypeScript (see Task interface)"
+    - "Status enums as string literals (see SessionStatus, TaskStatus)"
+  files_to_modify:
+    - src/shared/types.ts
+  reference_files:
+    - feature_brief.md (lines 195-283 for YAML schema and data model)
+    - .workflow/blackboard.yaml (decisions DEC-001 through DEC-011)
+
+subtasks:
+  - id: ST-001-01
+    title: "Define WorkflowStepType and WorkflowStatus enums"
+    description: |
+      Add type-safe string literal unions for step types and workflow statuses.
+      Follow existing pattern from SessionStatus and TaskStatus.
+    acceptance_criteria:
+      - WorkflowStepType = 'spawn_session' | 'check_file' | 'delay' | 'check_output'
+      - WorkflowStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 0.5
+
+  - id: ST-001-02
+    title: "Define StepCondition interface with discriminated union"
+    description: |
+      Create condition types for step execution control.
+      Use discriminated union pattern with 'type' field.
+    acceptance_criteria:
+      - StepCondition with type discriminator ('file_exists' | 'output_contains')
+      - file_exists variant has 'path' field
+      - output_contains variant has 'step' and 'contains' fields
+      - All fields properly typed (strings, no any types)
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 0.5
+
+  - id: ST-001-03
+    title: "Define WorkflowStep interface with step type variants"
+    description: |
+      Create base WorkflowStep interface with common fields, then type-specific fields.
+      Each step type has required/optional fields per YAML schema in feature brief.
+    acceptance_criteria:
+      - Base fields: name (string), type (WorkflowStepType)
+      - spawn_session fields: projectPath, prompt, output_path?, timeoutSeconds?, maxRetries?
+      - check_file fields: path, timeoutSeconds?, max_age_seconds?
+      - delay fields: seconds
+      - check_output fields: step (string reference), contains
+      - Optional condition field on all step types
+      - All optional fields marked with ? operator
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 1.0
+
+  - id: ST-001-04
+    title: "Define WorkflowDefinition and WorkflowRun interfaces"
+    description: |
+      Define top-level workflow definition (maps to YAML + DB workflows table)
+      and workflow run instance (maps to workflow_runs table).
+    acceptance_criteria:
+      - WorkflowDefinition matches workflows table schema (id, name, description, yaml_content, file_path, is_valid, validation_errors, step_count, created_at, updated_at)
+      - WorkflowRun matches workflow_runs table schema (id, workflow_id, workflow_name, status, current_step_index, steps_state, output_dir, started_at, completed_at, error_message, created_at)
+      - steps_state typed as StepRunState[] (not string)
+      - validation_errors typed as string[] (not string)
+      - All timestamp fields are string type (ISO format from SQLite)
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 0.5
+
+  - id: ST-001-05
+    title: "Define StepRunState interface"
+    description: |
+      Define per-step execution state stored in workflow_runs.steps_state JSON column.
+      Tracks step progress through pending -> running -> completed/failed/skipped.
+    acceptance_criteria:
+      - Fields: name, type, status, taskId?, startedAt?, completedAt?, errorMessage?, retryCount, skippedReason?
+      - status is 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+      - taskId links to tasks table for spawn_session steps (string | null)
+      - All optional timestamp fields nullable
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 0.3
+
+  - id: ST-001-06
+    title: "Add workflow WebSocket message types to ServerMessage/ClientMessage unions"
+    description: |
+      Extend existing discriminated unions with workflow-specific messages.
+      Follow exact message format from feature brief API section (lines 172-189).
+    acceptance_criteria:
+      - ServerMessage extended with 5 new variants (workflow-list, workflow-updated, workflow-removed, workflow-run-update, workflow-run-list)
+      - ClientMessage extended with 5 new variants (workflow-list-request, workflow-run-list-request, workflow-run, workflow-run-resume, workflow-run-cancel)
+      - Each message has 'type' discriminator field
+      - Payload fields match feature brief exactly (workflowId, runId, workflows, runs, run)
+      - No breaking changes to existing message types
+    files_modified:
+      - src/shared/types.ts
+    estimated_hours: 0.5
+
+test_criteria:
+  - test_type: compilation
+    description: "bun run typecheck passes with no errors"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: validation
+    description: "All workflow types are exported and importable"
+    command: "grep 'export.*Workflow' src/shared/types.ts"
+    expected_output: "WorkflowDefinition, WorkflowRun, WorkflowStep, WorkflowStatus exported"
+
+acceptance_criteria:
+  - All workflow types defined with proper TypeScript syntax
+  - No 'any' types used (all fields properly typed)
+  - Discriminated unions use 'type' field consistently
+  - Optional fields marked with ? operator
+  - Timestamp fields are string type (not Date)
+  - All types exported from types.ts
+  - bun run typecheck passes
+  - No breaking changes to existing types
+
+rollback_procedures:
+  - "git diff src/shared/types.ts to see changes"
+  - "git checkout src/shared/types.ts if compilation fails"
+  - "No database changes in this phase"
+
+notes:
+  - "This work order only adds types, no implementation logic"
+  - "Follow existing codebase patterns: discriminated unions, string literal types, snake_case DB / camelCase TS"
+  - "Reference feature_brief.md lines 195-283 for exact field names and types"
+  - "StepRunState mirrors Task interface pattern (see types.ts lines 137-160)"
+  - "Convention-based file paths are stored as explicit strings (no template variables or substitution)"
+
+specs_covered:
+  - YAML-SCHEMA-001  # WorkflowStep type definitions
+  - YAML-SCHEMA-002  # StepCondition definitions
+  - DATA-MODEL-001   # SQLite workflows table mapping
+  - DATA-MODEL-002   # SQLite workflow_runs table mapping
+  - WS-MSG-001       # WebSocket message type definitions

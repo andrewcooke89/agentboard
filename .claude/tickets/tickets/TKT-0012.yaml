@@ -1,0 +1,57 @@
+id: TKT-0012
+version: 1
+created_at: 2026-02-04T07:37:18.566Z
+updated_at: 2026-03-16T04:47:27.060Z
+category: error-handling
+severity: high
+status: resolved
+source:
+  file: src/server/workflowEngine.ts
+  line_start: 517
+  line_end: 527
+  code_snippet: >-
+    } catch (err) {
+      // File doesn't exist yet, can't be read, or exceeded size limit
+      if (err instanceof Error && err.message.startsWith('Output file too large')) {
+        stepState.status = 'failed'
+        stepState.errorMessage = err.message
+        stepState.completedAt = new Date().toISOString()
+        failWorkflow(run, `Step "${sanitizeForLog(step.name)}": ${sanitizeForLog(stepState.errorMessage)}`)
+        return
+      }
+      // Otherwise file doesn't exist yet or can't be read - keep waiting
+    }
+  content_hash: a0e30b08847eb737
+related_locations: []
+title: Error ignored when file read fails during check_output step
+description: When check_output step fails to read a file, most errors are
+  silently ignored with comment 'Otherwise file doesn't exist yet or can't be
+  read - keep waiting'. Permission errors or I/O failures are indistinguishable
+  from file not being created yet, potentially causing indefinite waiting. Only
+  'too large' errors fail the workflow.
+suggestion: "Categorize file read errors: (1) ENOENT = file doesn't exist, keep
+  waiting; (2) EACCES = permission error, fail immediately; (3) EIO = I/O error,
+  retry with backoff, fail after N attempts. Add timeout to prevent indefinite
+  waiting on permission errors. Log distinct error codes for monitoring."
+auto_fixable: false
+fix_confidence: high
+effort: small
+found_by: auditor
+audit_run_id: AUDIT-2026-02-04-b94f2253-eed3-4a6e-ac97-4085270c800a
+related_tickets: []
+tags:
+  - error-handling
+  - workflow
+  - filesystem
+  - ERR-006
+notes:
+  - timestamp: 2026-03-16T04:47:27.060Z
+    author: system
+    content: "Status changed to resolved: source code modified since ticket creation"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T04:47:27.060Z
+  resolved_by: sweep
+  pr_url: null
+  commit_sha: null
+  resolution_notes: source code modified since ticket creation

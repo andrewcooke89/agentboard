@@ -1,0 +1,382 @@
+# Release Pipeline — Phase 16
+# ============================
+# Spec-governed release validation, tagging, and deployment pipeline.
+# Covers REQ-01 through REQ-10, REQ-28, REQ-30 from Phase 16.
+#
+# This pipeline ensures every release:
+#   - Is governed by a formal release spec (REQ-02)
+#   - Passes readiness checks (REQ-03)
+#   - Has proper versioning and changelog (REQ-04, REQ-30)
+#   - Passes full test suite (REQ-05)
+#   - Undergoes adversarial audit (REQ-06)
+#   - Receives explicit human approval (REQ-07)
+#   - Is tagged, built, and deployed (REQ-08)
+#   - Is verified post-deployment with rollback capability (REQ-09)
+#   - Always runs at Tier 3 — no tier downgrade allowed (REQ-10, REQ-28)
+#
+# Trigger types: manual only (releases are intentional, not automated)
+# Depends on: Phase 14 (audit-pipeline), Phase 11 (conformance agents), Phase 13 (gemini_offload)
+#
+# Context Injection: Gemini extracts release context early, injected into
+# audit and verification steps to focus adversarial review.
+
+pipeline:
+  name: release-pipeline
+  version: "1.1"
+  description: "Spec-governed release validation, tagging, and deployment"
+
+  # System configuration (REQ-28)
+  # Session pool enabled for parallel verification tasks
+  # Tier filter DISABLED — releases ALWAYS run at Tier 3, no exceptions
+  system:
+    session_pool: true
+    tier_filter: false
+
+  # Trigger configuration
+  # Releases are intentional, developer-initiated actions — never automated
+  triggers:
+    manual:
+      enabled: true
+      command: "workflow release <spec-id>"
+      description: "Developer initiates release for specific spec"
+
+    scheduled:
+      enabled: true
+      cron: "manual"
+      description: "Releases support scheduled triggers per REQ-28 but require human initiation"
+
+  # Pipeline defaults
+  # REQ-10: All releases must run at Tier 3 minimum
+  # REQ-07: Failures pause pipeline and notify developer for decision
+  defaults:
+    tier_min: 3
+    timeout_minutes: 120
+    on_failure: pause_and_notify
+
+  # Tier enforcement (REQ-10, REQ-28)
+  # Releases are critical operations that must never run at degraded tier
+  # Any attempt to override tier is rejected and logged
+  tier_enforcement:
+    required_tier: 3
+    downgrade_allowed: false
+    override_rejection: true
+    audit_log: "Attempted tier override rejected — release pipelines are always Tier 3"
+
+  # Rollback configuration (REQ-08, REQ-09)
+  # Automatic rollback triggered if post-deploy verification fails
+  # Reverts to previous git tag and produces rollback report
+  rollback:
+    mechanism: revert_to_previous_tag
+    timeout_minutes: 15
+    auto_trigger: post_deploy_verification_fails
+    produces: [rollback-report.yaml]
+
+  # Pipeline stages
+  steps:
+    # ── Step 1: Write Release Spec ───────────────────────────────────
+    # REQ-02: Every release is governed by a formal spec
+    # Uses spec-writer in release mode to create comprehensive release spec
+    - name: write-release-spec
+      type: spawn_session
+      model: claude
+      agent: spec-writer
+      mode: release
+      description: "Create formal release specification with scope, prerequisites, deployment plan"
+      inputs:
+        - project_profile
+        - constitution_sections
+      outputs:
+        - "{{ run_dir }}/spec/release-spec.yaml"
+      timeout_seconds: 600
+
+      # REQ-02: Clarifying questions ensure spec completeness
+      clarifying_questions:
+        categories:
+          - completeness: "What features/fixes are included in this release?"
+          - prerequisites: "Are all dependencies updated? Database migrations ready?"
+          - rollback: "What is the rollback procedure if deployment fails?"
+          - breaking_changes: "Are there breaking changes? How are they documented?"
+          - deployment: "What is the deployment target and deployment procedure?"
+          - monitoring: "What post-deploy metrics indicate success/failure?"
+
+    # ── Step 2: Validate Readiness ──────────────────────────────────
+    # REQ-03: Multi-check readiness validation before proceeding
+    # Ensures all included specs passed conformance, no drift alerts, no critical findings
+    - name: validate-readiness
+      type: native_step
+      description: "Verify release readiness: conformance, no drift, no critical findings, traceability complete"
+      depends_on: [write-release-spec]
+      on_failure: pause_and_notify
+
+      # REQ-03: Five readiness checks must all pass
+      checks:
+        - all_included_specs_conformance_pass: "All specs referenced in release-spec.yaml must have conformance=pass"
+        - no_active_drift_alerts: "No unresolved drift alerts from drift-detector hook"
+        - no_open_critical_findings: "No critical severity findings from previous audits"
+        - traceability_complete: "All requirements have traced implementations (Phase 10 traceability)"
+        - changelog_generated: "CHANGELOG.md updated with all changes since last release"
+
+      # REQ-10: Tier override rejection
+      # Release pipelines categorically reject tier downgrade attempts
+      # This is a SAFETY INVARIANT — releases at Tier 2 or lower are prohibited
+      tier_override_rejection:
+        enabled: true
+        note: "Release pipelines reject any tier downgrade attempt. Releases always run at Tier 3."
+
+    # ── Step 2.5: Extract Release Context (NEW) ───────────────────────────
+    # Gemini extracts release context to focus adversarial review
+    - name: extract-release-context
+      type: gemini_offload
+      depends_on: [validate-readiness]
+      description: "Extract release context for focused adversarial audit and verification"
+      prompt_template: |
+        Analyze the release specification and extract key context for audit and verification.
+
+        ## Release Specification
+        {{release-spec.yaml}}
+
+        Extract and structure:
+        - release_scope: What's being released (features, fixes, changes)
+        - risk_areas: High-risk components that need extra scrutiny
+        - breaking_changes: Any breaking changes that need verification
+        - deployment_targets: Where this is being deployed
+        - rollback_strategy: How to revert if needed
+        - verification_focus: What to verify in testing and post-deploy
+
+        Output as YAML.
+      inputs:
+        - path: "{{ run_dir }}/spec/release-spec.yaml"
+          label: release-spec.yaml
+      output_file: "{{ run_dir }}/release-context.yaml"
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 60
+
+    # ── Step 3: Version and Changelog ────────────────────────────────
+    # REQ-04, REQ-30: Semantic versioning with developer override capability
+    # Auto-determines version based on change type, but allows developer override in spec
+    - name: version-and-changelog
+      type: native_step
+      description: "Bump version using semantic versioning rules, generate changelog, update lockfiles"
+      depends_on: [validate-readiness]
+      actions:
+        - bump_version
+        - generate_changelog
+        - update_lockfiles
+      outputs:
+        - "{{ run_dir }}/version.yaml"
+        - "{{ run_dir }}/CHANGELOG.md"
+
+      # REQ-30: Semantic versioning rules
+      # MAJOR: breaking changes or backward-incompatible API changes
+      # MINOR: new features, no breaking changes
+      # PATCH: only fixes and maintenance, no new features
+      version_rules:
+        MAJOR:
+          - breaking_change: true
+          - backward_incompatible_api: true
+        MINOR:
+          - new_features: true
+          - breaking_change: false
+        PATCH:
+          - only_fixes: true
+          - only_maintenance: true
+
+      # REQ-30: Developer can override auto-determined version in release spec
+      # Useful when semantic analysis is incorrect or special version needed (e.g., 1.0.0 for first release)
+      developer_override: true
+
+    # ── Step 4: Full Test Suite ─────────────────────────────────────
+    # REQ-05: Comprehensive testing before release
+    # Runs all unit tests, integration tests, and benchmark regression tests
+    - name: full-test-suite
+      type: native_step
+      description: "Execute full test suite: unit tests, integration tests, benchmark regression checks"
+      depends_on: [version-and-changelog]
+      on_failure: pause_and_notify
+      actions:
+        - cargo_test_all
+        - integration_tests
+        - benchmark_regression
+      outputs:
+        - "{{ run_dir }}/test-results.yaml"
+        - "{{ run_dir }}/benchmark-report.yaml"
+
+    # ── Step 5: Pre-Release Audit ───────────────────────────────────
+    # REQ-06: Adversarial audit of release diff
+    # Uses audit-orchestrator in adversarial posture to audit changes since last release
+    # Scope limited to release_diff (only changes since last tag) for efficiency
+    - name: pre-release-audit
+      type: spawn_session
+      model: claude
+      agent: audit-orchestrator
+      posture: adversarial
+      description: "Adversarial audit of release diff — find issues in changes since last release"
+      depends_on: [full-test-suite, extract-release-context]
+      inputs:
+        - path: "{{ run_dir }}/release-context.yaml"
+          type: context
+          label: ReleaseContext
+        - path: "{{ run_dir }}/spec/release-spec.yaml"
+        - constitution_sections
+      outputs:
+        - "{{ run_dir }}/audit-report.yaml"
+      timeout_seconds: 1800
+
+      # REQ-06: Audit scope is release_diff, not full codebase
+      # This audits only the changes included in the release (git diff last_tag..HEAD)
+      scope: release_diff
+
+      # REQ-07: Human gate follows audit
+      # Developer must review audit verdict before proceeding
+      human_gate: true
+
+      agent_prompt_override: |
+        ADVERSARIAL FRAMING: You are auditing release changes. Find issues that
+        could break production, cause data loss, or violate constitutional rules.
+        Focus on the delta since last release tag. Report findings with severity,
+        evidence (file:line), and impact assessment.
+
+        Release context has been provided above to focus your review on high-risk areas.
+
+    # ── Step 6: Deployment Approval ─────────────────────────────────
+    # REQ-07: Explicit human approval required before deployment
+    # Developer reviews all artifacts and explicitly approves deploy
+    # Automated deploy without human sign-off is NOT permitted
+    - name: deployment-approval
+      type: human_gate
+      description: "Developer reviews and explicitly approves deployment. Automated deploy without human sign-off is NOT permitted."
+      depends_on: [pre-release-audit]
+      approval_required: explicit
+
+      # REQ-07: All critical artifacts presented to developer for review
+      presents:
+        - "{{ run_dir }}/spec/release-spec.yaml"
+        - "{{ run_dir }}/test-results.yaml"
+        - "{{ run_dir }}/benchmark-report.yaml"
+        - "{{ run_dir }}/audit-report.yaml"
+        - "{{ run_dir }}/CHANGELOG.md"
+
+    # ── Step 7: Tag and Build ────────────────────────────────────────
+    # REQ-08: Create git tag and build release artifacts
+    # Tag format: v{version} (e.g., v1.2.3)
+    - name: tag-and-build
+      type: native_step
+      description: "Create git tag (v{{version}}), build release binaries, create artifacts"
+      depends_on: [deployment-approval]
+      actions:
+        - git_tag: "v{{ version }}"
+        - build_release
+        - build_artifacts
+      outputs:
+        - "{{ run_dir }}/release-artifacts/"
+
+    # ── Step 8: Deploy ───────────────────────────────────────────────
+    # REQ-08: Deploy to target environment
+    # Rollback triggered automatically if post-deploy verification fails (Step 9)
+    - name: deploy
+      type: native_step
+      description: "Deploy release artifacts to target environment"
+      depends_on: [tag-and-build]
+      actions:
+        - deploy_to_target
+      outputs:
+        - "{{ run_dir }}/deploy-receipt.yaml"
+
+      # REQ-08, REQ-09: Rollback configuration
+      # If post-deploy verification fails, automatically revert to previous tag
+      rollback:
+        trigger: post_deploy_verification_fails
+        action: revert_to_previous_tag
+
+    # ── Step 9: Post-Deploy Verification ─────────────────────────────
+    # REQ-09: Verify deployment health and trigger rollback if failing
+    # Uses acceptance-tester in post_deploy mode to verify service health
+    - name: post-deploy-verify
+      type: spawn_session
+      model: claude
+      agent: acceptance-tester
+      mode: post_deploy
+      description: "Verify deployment health: endpoints responding, smoke tests pass, no error spike"
+      depends_on: [deploy, extract-release-context]
+      timeout_minutes: 15
+      on_failure: trigger_rollback
+
+      # REQ-09: Three critical post-deploy checks
+      checks:
+        - health_endpoints_responding: "All health/readiness endpoints return 200"
+        - smoke_tests_pass: "Critical path smoke tests execute successfully"
+        - no_error_rate_spike: "Error rate within acceptable threshold (< 5% increase from baseline)"
+
+      outputs:
+        - "{{ run_dir }}/post-deploy-report.yaml"
+
+      # REQ-09: Rollback on failure produces rollback report
+      rollback_on_failure:
+        enabled: true
+        produces: ["{{ run_dir }}/rollback-report.yaml"]
+
+      inputs:
+        - path: "{{ run_dir }}/release-context.yaml"
+          type: context
+          label: ReleaseContext
+
+    # ── Step 10: Observe and Learn ───────────────────────────────────
+    # Extract learning patterns from release process
+    # Uses gemini_offload to analyze release artifacts and produce learning entries
+    - name: observe-and-learn
+      type: gemini_offload
+      posture: neutral
+      description: "Extract learning patterns from release process for knowledge memory"
+      depends_on: [post-deploy-verify]
+      prompt_template: |
+        Analyze the following release process artifacts and extract learning patterns.
+
+        ## Audit Report
+        {{audit_report}}
+
+        ## Test Results
+        {{test_results}}
+
+        ## Deploy Receipt
+        {{deploy_receipt}}
+
+        ## Post-Deploy Report
+        {{post_deploy_report}}
+
+        Focus on:
+        1. Test failures — were there test issues that delayed release?
+        2. Audit findings — what types of issues were found in pre-release audit?
+        3. Deployment issues — were there rollbacks or post-deploy verification failures?
+        4. Version accuracy — did auto-determined version match expected version?
+        5. Process gaps — are there missing checks or validation steps?
+        Produce structured learning entries with confidence: RAW.
+      inputs:
+        - path: "{{ run_dir }}/audit-report.yaml"
+          label: audit_report
+        - path: "{{ run_dir }}/test-results.yaml"
+          label: test_results
+        - path: "{{ run_dir }}/deploy-receipt.yaml"
+          label: deploy_receipt
+        - path: "{{ run_dir }}/post-deploy-report.yaml"
+          label: post_deploy_report
+      output_path: "{{ run_dir }}/learning-entries.yaml"
+      output_format: yaml
+      model: gemini-2.5-flash
+      max_tokens: 4000
+      timeoutSeconds: 120
+
+# Release Pipeline Requirements Coverage
+# ───────────────────────────────────────
+# REQ-01: Pipeline structure ✓ (11 steps with context extraction)
+# REQ-02: Formal release spec ✓ (step 1: write-release-spec)
+# REQ-03: Readiness validation ✓ (step 2: validate-readiness, 5 checks)
+# REQ-04: Version management ✓ (step 3: version-and-changelog)
+# REQ-05: Full test suite ✓ (step 4: full-test-suite)
+# REQ-06: Pre-release audit ✓ (step 5: pre-release-audit with context injection)
+# REQ-07: Human approval ✓ (step 6: deployment-approval)
+# REQ-08: Tag and deploy ✓ (steps 7-8: tag-and-build, deploy)
+# REQ-09: Post-deploy verify ✓ (step 9: post-deploy-verify with context injection)
+# REQ-10: Tier enforcement ✓ (tier_enforcement section, tier_override_rejection in step 2)
+# REQ-28: System config ✓ (system.session_pool=true, system.tier_filter=false)
+# REQ-30: Semantic versioning ✓ (step 3: version_rules, developer_override)

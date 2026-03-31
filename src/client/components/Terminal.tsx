@@ -8,9 +8,10 @@ import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useEdgeSwipeToOpenDrawer } from '../hooks/useEdgeSwipeToOpenDrawer'
 import { useThemeStore, terminalThemes } from '../stores/themeStore'
 import { useSettingsStore, getFontFamily } from '../stores/settingsStore'
-import { isIOSDevice, getEffectiveModifier, getModifierDisplay } from '../utils/device'
+import { isIOSDevice, getEffectiveModifier, getModifierDisplay, matchesModifier } from '../utils/device'
 import TerminalControls from './TerminalControls'
 import SessionDrawer from './SessionDrawer'
+import TerminalSearch from './TerminalSearch'
 import { PlusIcon, XCloseIcon, DotsVerticalIcon, Menu01Icon } from '@untitledui-icons/react/line'
 import Edit05Icon from '@untitledui-icons/react/line/esm/Edit05Icon'
 import Settings01Icon from '@untitledui-icons/react/line/esm/Settings01Icon'
@@ -107,13 +108,14 @@ export default function Terminal({
   const [isDrawerOpen, setIsDrawerOpen] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [showSearch, setShowSearch] = useState(false)
   const lastSelectionInsideRef = useRef(false)
   const clearIOSSelectionRef = useRef<(() => void) | null>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const endSessionButtonRef = useRef<HTMLButtonElement>(null)
 
-  const { containerRef, terminalRef, inTmuxCopyModeRef, setTmuxCopyMode } = useTerminal({
+  const { containerRef, terminalRef, searchAddonRef, inTmuxCopyModeRef, setTmuxCopyMode } = useTerminal({
     sessionId: session?.id ?? null,
     tmuxTarget: session?.tmuxWindow ?? null,
     sendMessage,
@@ -177,6 +179,25 @@ export default function Terminal({
   // Handle Escape key to close confirm modal
   const handleCloseConfirm = useCallback(() => setShowEndConfirm(false), [])
   useEscapeToClose(showEndConfirm, handleCloseConfirm)
+
+  // Handle Cmd+F / Ctrl+F to open search
+  useEffect(() => {
+    const effectiveModifier = getEffectiveModifier(shortcutModifier)
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Only handle if we have a session and search is not already open
+      if (!session || showSearch) return
+
+      // Cmd+F / Ctrl+F
+      if (matchesModifier(event, effectiveModifier) && event.code === 'KeyF') {
+        event.preventDefault()
+        setShowSearch(true)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [session, showSearch, shortcutModifier])
 
   const handleEndSession = () => {
     if (!session) return
@@ -660,9 +681,7 @@ export default function Terminal({
       // Don't preventDefault - that breaks iOS selection dismissal
       // We'll swallow the synthetic mouse event instead to protect tmux
       if (isSelectingTextRef.current || activeSelection) {
-        if (inTmuxCopyModeRef.current) {
-          swallowNextMouseRef.current = true
-        }
+        swallowNextMouseRef.current = inTmuxCopyModeRef.current
         return
       }
 
@@ -680,36 +699,36 @@ export default function Terminal({
       }
 
       const minVelocity = 0.12 // pixels per ms
-      if (Math.abs(endVelocity) > minVelocity) {
-        let currentVelocity = endVelocity
-        let lastFrameTime = performance.now()
+      if (Math.abs(endVelocity) <= minVelocity) return
 
-        const animateMomentum = () => {
-          const now = performance.now()
-          const deltaTime = now - lastFrameTime
-          lastFrameTime = now
+    const animateMomentum = () => {
+      const now = performance.now()
+      const deltaTime = now - lastFrameTime
+      lastFrameTime = now
 
-          const distance = currentVelocity * deltaTime
-          accumulatedDelta += distance
-          const threshold = Math.max(6, lineHeightPx * 0.6)
-          const scrollEvents = Math.trunc(accumulatedDelta / threshold)
-          if (scrollEvents !== 0) {
-            sendScrollToTmux(scrollEvents)
-            accumulatedDelta -= scrollEvents * threshold
-          }
+      const distance = currentVelocity * deltaTime
+      accumulatedDelta += distance
+      const threshold = Math.max(6, lineHeightPx * 0.6)
+      const scrollEvents = Math.trunc(accumulatedDelta / threshold)
+      if (scrollEvents !== 0) {
+        sendScrollToTmux(scrollEvents)
+        accumulatedDelta -= scrollEvents * threshold
+      }
 
-          currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
+      currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
 
-          if (Math.abs(currentVelocity) > 0.02) {
-            momentumAnimationId = requestAnimationFrame(animateMomentum)
-          } else {
-            momentumAnimationId = null
-          }
-        }
-
+      if (Math.abs(currentVelocity) > 0.02) {
         momentumAnimationId = requestAnimationFrame(animateMomentum)
+      } else {
+        momentumAnimationId = null
       }
     }
+
+    let currentVelocity = endVelocity
+    let lastFrameTime = performance.now()
+
+    momentumAnimationId = requestAnimationFrame(animateMomentum)
+  }
 
     // Swallow synthetic mouse events after iOS selection dismissal to protect tmux
     const handleMouseDown = (e: MouseEvent) => {
@@ -996,6 +1015,14 @@ export default function Terminal({
           <div className="absolute inset-0 flex items-center justify-center text-sm text-muted">
             Select a session to view terminal
           </div>
+        )}
+
+        {/* Terminal search bar */}
+        {showSearch && session && (
+          <TerminalSearch
+            searchAddon={searchAddonRef.current}
+            onClose={() => setShowSearch(false)}
+          />
         )}
 
         {/* Scroll to bottom button */}

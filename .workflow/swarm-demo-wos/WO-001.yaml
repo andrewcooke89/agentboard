@@ -1,0 +1,92 @@
+id: WO-001
+group_id: swarm-demo
+title: "Create backend stats API endpoint"
+description: |
+  Create `src/server/statsRoutes.ts` with a stats API endpoint and register it.
+
+  ## 1. Create `src/server/statsRoutes.ts`
+
+  ```typescript
+  import { Hono } from 'hono'
+  import type { DashboardStats } from '../shared/dashboardTypes'
+
+  export function registerStatsRoutes(
+    app: Hono,
+    getStats: () => DashboardStats
+  ): void {
+    app.get('/api/stats', (c) => {
+      return c.json(getStats())
+    })
+  }
+  ```
+
+  ## 2. Modify `src/server/index.ts`
+
+  - Import registerStatsRoutes and DashboardStats type
+  - Create a `getStats()` function that aggregates from existing managers:
+    - `activeSessions`: count sessions from SessionManager with status !== 'unknown'
+    - `totalTasks` / `runningTasks`: from the task tracking (check how tasks are stored)
+    - `completedTasksToday`: tasks completed today (if available, else 0)
+    - `activeDispatches` / `completedDispatches`: from SwarmManager groups
+    - `totalWosCompleted` / `totalWosFailed`: aggregate from SwarmManager groups
+    - `uptimeSeconds`: process.uptime()
+    - `lastUpdated`: new Date().toISOString()
+  - Call `registerStatsRoutes(app, getStats)`
+  - Set up a 5-second interval that broadcasts stats via WebSocket:
+    ```typescript
+    setInterval(() => {
+      broadcast({ type: 'stats-update', stats: getStats() })
+    }, 5000)
+    ```
+
+  Look at how existing routes are registered in index.ts and follow the same pattern.
+  Look at SessionManager and SwarmManager to find the right methods for data.
+
+task: implement
+scope: src/server/
+interface_files:
+  - src/shared/dashboardTypes.ts
+reference_files:
+  - src/server/index.ts
+  - src/server/SwarmManager.ts
+  - src/server/httpRoutes.ts
+input_files: []
+intern_context:
+  enabled: true
+  search_depth: 2
+  tools:
+    - file_dependencies
+    - find_references
+depends_on:
+  - WO-PREP-001
+prefer_after: []
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+execution:
+  mode: unattended
+  model: ""
+  max_retries: 2
+  timeout_minutes: 8
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+isolation:
+  type: none
+  base: HEAD
+output:
+  commit: true
+  commit_prefix: "feat"

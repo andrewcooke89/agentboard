@@ -1,0 +1,309 @@
+work_order_id: WO-005
+title: "Phase 5: Implement Workflow Engine Core"
+phase: 5
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 12
+depends_on:
+  - WO-002  # Needs workflow config
+  - WO-004  # Needs workflowStore
+
+description: |
+  Create workflowEngine.ts following taskWorker.ts pattern.
+  Core engine loop: poll running workflows, check step status, advance pipeline.
+  Execute steps sequentially via task queue integration.
+  Handle conditions, retries, timeouts, and server restart recovery.
+
+  Step execution by type:
+  - spawn_session: create task in task queue, wait for completion
+  - check_file: verify file exists at path
+  - delay: setTimeout for N seconds
+  - check_output: read referenced step output, check contains string
+
+context:
+  existing_patterns:
+    - "taskWorker.ts poll loop pattern (lines 50-80): setInterval, getNextQueued, process"
+    - "Factory function: createTaskWorker(ctx, taskStore) returns { start, stop }"
+    - "Task completion detection via status polling"
+    - "Retry logic: increment retryCount, check maxRetries"
+  files_to_create:
+    - src/server/workflowEngine.ts
+  files_to_modify:
+    - src/server/index.ts (start engine after server init)
+  reference_files:
+    - src/server/taskWorker.ts (pattern to follow)
+    - feature_brief.md (lines 472-539 for Phase 5 spec)
+    - .workflow/blackboard.yaml (DEC-001: convention-based paths, DEC-002: retry then halt)
+
+subtasks:
+  - id: ST-005-01
+    title: "Create WorkflowEngine interface and factory function"
+    description: |
+      Define engine interface with start/stop methods.
+      Factory function receives ServerContext, workflowStore, taskStore.
+    acceptance_criteria:
+      - createWorkflowEngine(ctx, workflowStore, taskStore) factory function
+      - Returns { start: () => void, stop: () => void, recoverRunningWorkflows: () => Promise<void> }
+      - Follows taskWorker.ts pattern exactly
+      - Type-safe with proper interfaces
+    files_modified:
+      - src/server/workflowEngine.ts (create)
+    estimated_hours: 0.5
+
+  - id: ST-005-02
+    title: "Implement engine poll loop"
+    description: |
+      Core loop: poll for running workflows, process current step.
+      Use config.workflowPollIntervalMs (default 2000ms).
+    acceptance_criteria:
+      - setInterval at workflowPollIntervalMs
+      - Query workflowStore.getRunningRuns() each interval
+      - For each running workflow, call processWorkflowStep(run)
+      - Stop interval on stop() call
+      - Clear interval reference properly
+      - Log poll loop start/stop at info level
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Catch errors in poll loop, log, continue (don't crash engine)
+
+  - id: ST-005-03
+    title: "Implement spawn_session step execution"
+    description: |
+      Create task in task queue for spawn_session steps.
+      Prepend scratch directory path to prompt.
+      Monitor task completion to advance workflow.
+    acceptance_criteria:
+      - Check if step already has taskId (resume case)
+      - If no taskId, create task via taskStore.createTask()
+      - Set task fields: projectPath, prompt (prepended with output_dir), timeoutSeconds, maxRetries
+      - Store taskId in step state (updateRun with modified steps_state)
+      - Set step.workflow_run_id and step.workflow_step_name in task
+      - Poll task status: if completed/failed, advance workflow
+      - On task completion: mark step as completed, increment current_step_index
+      - On task failure after max retries: mark step as failed, halt workflow
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 2.5
+    error_handling:
+      - Task creation errors halt workflow with error message
+      - Task failures increment step retryCount
+      - Retry exhaustion halts workflow (status=failed)
+
+  - id: ST-005-04
+    title: "Implement check_file step execution"
+    description: |
+      Verify file exists at specified path (relative to scratch directory).
+      Support timeout and max_age_seconds validation.
+    acceptance_criteria:
+      - Resolve path relative to run.output_dir
+      - Check file exists with fs.existsSync()
+      - If max_age_seconds specified, check file mtime
+      - Mark step completed if file exists and age OK
+      - Mark step failed if file missing after timeout
+      - Timeout tracked via step startedAt timestamp
+      - Advance workflow on completion
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.5
+    error_handling:
+      - File missing: wait until timeout, then mark failed
+      - File too old: mark failed with clear error message
+
+  - id: ST-005-05
+    title: "Implement delay step execution"
+    description: |
+      Wait for specified seconds before marking step complete.
+      Use setTimeout to avoid blocking poll loop.
+    acceptance_criteria:
+      - On first poll: record step.startedAt, set status=running
+      - On subsequent polls: check if (now - startedAt) >= seconds
+      - When delay elapsed: mark step completed, advance workflow
+      - Non-blocking (poll loop continues)
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Delay uses wall-clock time (not setTimeout) for restart-safe behavior
+
+  - id: ST-005-06
+    title: "Implement check_output step execution"
+    description: |
+      Read referenced step's output file and check for expected string.
+      Resolve output path from referenced step's output_path field.
+    acceptance_criteria:
+      - Find referenced step in steps_state by name
+      - Get output_path from referenced step (convention-based)
+      - Resolve path relative to run.output_dir
+      - Read file contents (fs.readFileSync with utf-8)
+      - Check if contents.includes(condition.contains)
+      - Mark step completed if string found, failed if not
+      - Advance workflow on completion
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.5
+    error_handling:
+      - File not found: mark step failed
+      - File read error: mark step failed with error message
+      - String not found: mark step failed with clear message
+
+  - id: ST-005-07
+    title: "Implement condition evaluation (file_exists, output_contains)"
+    description: |
+      Evaluate step conditions before execution.
+      Skip step if condition not met.
+    acceptance_criteria:
+      - Before executing step, check if step.condition exists
+      - For file_exists: check if file exists at path (relative to output_dir)
+      - For output_contains: read file, check contains string (same logic as check_output)
+      - If condition not met: mark step as skipped, set skippedReason
+      - If condition met: execute step normally
+      - Advance to next step if skipped
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.5
+    error_handling:
+      - Condition evaluation errors treated as "condition not met" (skip step)
+
+  - id: ST-005-08
+    title: "Implement workflow advancement logic"
+    description: |
+      Advance to next step when current step completes.
+      Handle workflow completion when all steps done.
+    acceptance_criteria:
+      - When step status changes to completed/failed/skipped, increment current_step_index
+      - If current_step_index >= steps.length: mark workflow as completed
+      - If step failed: mark workflow as failed, halt (don't advance)
+      - Update run in database after each step transition
+      - Broadcast workflow-run-update via WebSocket after each transition
+      - On workflow completion (status completed/failed/cancelled): schedule scratch directory deletion (output_dir) after a configurable delay (default: 7 days, or immediately if run is cancelled)
+      - Log: "[workflow-engine] scheduled cleanup of scratch dir for run {runId}"
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Database update errors logged, workflow halted
+
+  - id: ST-005-09
+    title: "Implement server restart recovery (recoverRunningWorkflows)"
+    description: |
+      On server startup, resume all running workflows from current step.
+      Check if current step's task completed while server was down.
+    acceptance_criteria:
+      - recoverRunningWorkflows() called on server startup (before poll loop starts)
+      - Query workflowStore.getRunningRuns()
+      - For each running workflow:
+        - Get current step from steps_state[current_step_index]
+        - If step is spawn_session with taskId: check task status
+          - If task completed: advance workflow
+          - If task failed: handle retry/halt logic
+          - If task running: continue monitoring (orphaned tasks handled by taskWorker)
+        - If step is check_file/delay/check_output: re-evaluate
+      - Log recovery actions at info level
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 2.0
+    error_handling:
+      - Recovery errors logged, workflow marked failed
+      - Orphaned tasks handled by existing markOrphanedTasksFailed logic
+
+  - id: ST-005-10
+    title: "Implement scratch directory creation"
+    description: |
+      Create per-run output directory when workflow starts.
+      Convention: ~/.agentboard/task-outputs/workflow-{runId}/
+    acceptance_criteria:
+      - When workflow transitions from pending to running:
+        - Set output_dir to {config.taskOutputDir}/workflow-{runId}/
+        - Create directory with fs.mkdirSync({ recursive: true })
+        - Log directory creation at info level
+      - Prepend output_dir to spawn_session prompts: "Output directory: {output_dir}\n\n{prompt}"
+    files_modified:
+      - src/server/workflowEngine.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Directory creation errors halt workflow with error message
+
+  - id: ST-005-11
+    title: "Add unit tests for workflow engine"
+    description: |
+      Create comprehensive unit test suite with mocked task store.
+      Test all step types, conditions, advancement, recovery.
+    acceptance_criteria:
+      - Mock workflowStore and taskStore
+      - Test spawn_session step creates task correctly
+      - Test check_file step validates file existence
+      - Test delay step waits correct duration
+      - Test check_output step reads file and validates contents
+      - Test file_exists condition skips step when file missing
+      - Test output_contains condition skips step when string not found
+      - Test workflow advancement through all steps
+      - Test workflow halts on failed step after max retries
+      - Test recovery resumes workflows correctly
+      - All tests pass with bun test
+    files_modified:
+      - src/server/workflowEngine.test.ts (create)
+    estimated_hours: 3.0
+    error_handling:
+      - Tests verify error cases and edge cases
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow engine unit tests pass"
+    command: "bun test src/server/workflowEngine.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "Engine poll loop starts and stops cleanly"
+    command: |
+      # Test engine lifecycle
+      bun eval "import {createWorkflowEngine} from './src/server/workflowEngine.ts'; /* mock dependencies */; const engine = createWorkflowEngine(...); engine.start(); setTimeout(() => engine.stop(), 1000);"
+    expected_output: "No errors"
+
+acceptance_criteria:
+  - Workflow engine factory function implemented
+  - Poll loop runs at configured interval
+  - All 4 step types (spawn_session, check_file, delay, check_output) implemented
+  - Both condition types (file_exists, output_contains) implemented
+  - Step advancement logic correct (sequential execution)
+  - Retry logic for spawn_session steps (reuses task queue retry)
+  - Server restart recovery implemented
+  - Scratch directory creation and path prepending
+  - WebSocket broadcasts on step transitions
+  - Unit tests achieve >95% coverage
+  - bun run typecheck passes
+  - bun run test passes
+  - No blocking operations in poll loop
+
+rollback_procedures:
+  - "git checkout src/server/workflowEngine.ts if issues arise"
+  - "Set WORKFLOW_ENGINE_ENABLED=false to disable engine"
+  - "No database schema changes in this phase"
+  - "Engine stop() method cleans up interval"
+
+notes:
+  - "Follow taskWorker.ts pattern closely - proven architecture"
+  - "Convention-based paths: steps reference explicit paths, no variable substitution"
+  - "Output directory prepended to spawn_session prompts for agent awareness"
+  - "Polling-based completion detection (consistent with existing task worker)"
+  - "All step state transitions persisted to database immediately (crash-safe)"
+  - "WebSocket broadcasts enable real-time UI updates"
+  - "Retry logic reuses task queue's existing retry mechanism for spawn_session"
+  - "Non-spawn steps fail immediately (no retry for check_file, delay, check_output)"
+
+specs_covered:
+  - ENGINE-001  # Core poll loop
+  - ENGINE-002  # spawn_session execution
+  - ENGINE-003  # check_file execution
+  - ENGINE-004  # delay execution
+  - ENGINE-005  # check_output execution
+  - ENGINE-006  # Condition evaluation
+  - ENGINE-007  # Workflow advancement
+  - ENGINE-008  # Server restart recovery
+  - ENGINE-009  # Scratch directory management

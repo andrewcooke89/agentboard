@@ -1,0 +1,253 @@
+work_order_id: WO-008
+title: "Phase 8: Implement WebSocket Integration"
+phase: 8
+feature_id: FEAT-005
+priority: high
+estimated_hours: 4
+depends_on:
+  - WO-001  # Needs WebSocket message types
+  - WO-004  # Needs workflowStore
+  - WO-005  # Needs workflow engine for run triggering
+
+description: |
+  Implement WebSocket handlers for real-time workflow updates.
+  Extend existing WebSocket message dispatch in server/index.ts.
+  5 client messages, 5 server messages.
+
+  Client messages:
+  - workflow-list-request
+  - workflow-run-list-request
+  - workflow-run (trigger)
+  - workflow-run-resume
+  - workflow-run-cancel
+
+  Server messages (broadcast by engine/watcher):
+  - workflow-list
+  - workflow-updated
+  - workflow-removed
+  - workflow-run-update
+  - workflow-run-list
+
+context:
+  existing_patterns:
+    - "WebSocket message dispatch in src/server/index.ts (lines 180-250)"
+    - "Handler pattern: if (message.type === 'xxx') { ... }"
+    - "Broadcast via clients.forEach(c => c.send(JSON.stringify(msg)))"
+    - "Engine/watcher broadcast via ctx.broadcast(message)"
+  files_to_create:
+    - src/server/handlers/workflowWsHandlers.ts
+  files_to_modify:
+    - src/server/index.ts (add workflow message handlers to dispatch)
+  reference_files:
+    - src/server/index.ts (WebSocket dispatch lines 180-250)
+    - src/server/handlers/taskHandlers.ts (similar WebSocket handler pattern)
+    - feature_brief.md (lines 172-189 for WebSocket message specs)
+
+subtasks:
+  - id: ST-008-01
+    title: "Create workflowWsHandlers.ts module"
+    description: |
+      Create handlers module with functions for each client message type.
+      Follow taskHandlers.ts pattern.
+    acceptance_criteria:
+      - File created at src/server/handlers/workflowWsHandlers.ts
+      - Export object with handler functions: { handleWorkflowListRequest, handleWorkflowRunListRequest, handleWorkflowRun, handleWorkflowRunResume, handleWorkflowRunCancel }
+      - Each handler receives (ctx, message, ws) parameters
+      - Type-safe with ClientMessage types
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts (create)
+    estimated_hours: 0.3
+
+  - id: ST-008-02
+    title: "Implement handleWorkflowListRequest"
+    description: |
+      Send current workflow list to requesting client.
+    acceptance_criteria:
+      - Handler for message.type === 'workflow-list-request'
+      - Call workflowStore.listWorkflows()
+      - Send workflow-list message to client: ws.send(JSON.stringify({ type: 'workflow-list', workflows }))
+      - Log request at debug level
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts
+    estimated_hours: 0.3
+    error_handling:
+      - Database errors logged, send empty workflows array
+
+  - id: ST-008-03
+    title: "Implement handleWorkflowRunListRequest"
+    description: |
+      Send workflow run list to requesting client.
+      Support optional workflowId filter.
+    acceptance_criteria:
+      - Handler for message.type === 'workflow-run-list-request'
+      - Optional message.workflowId filter
+      - If workflowId: call listRunsByWorkflow(workflowId)
+      - If no workflowId: call listRuns()
+      - Send workflow-run-list message: ws.send(JSON.stringify({ type: 'workflow-run-list', runs }))
+      - Log request at debug level
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts
+    estimated_hours: 0.4
+    error_handling:
+      - Database errors logged, send empty runs array
+
+  - id: ST-008-04
+    title: "Implement handleWorkflowRun (trigger via WebSocket)"
+    description: |
+      Trigger a workflow run via WebSocket message.
+      Same logic as POST /api/workflows/:id/run.
+    acceptance_criteria:
+      - Handler for message.type === 'workflow-run'
+      - Param: message.workflowId
+      - Validate workflow exists and is valid (same as REST endpoint)
+      - Create run with workflowStore.createRun()
+      - Broadcast workflow-run-update to all clients with new run
+      - Log run trigger at info level
+      - Before creating run: check concurrent run count
+      - If limit exceeded: send error message { type: 'error', message: "Concurrent run limit reached", code: "RATE_LIMIT_EXCEEDED" }
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts
+    estimated_hours: 0.6
+    error_handling:
+      - Workflow not found: send error message to client
+      - Invalid workflow: send error message
+      - Concurrent run limit exceeded: send error message to client
+
+  - id: ST-008-05
+    title: "Implement handleWorkflowRunResume"
+    description: |
+      Resume a failed workflow run via WebSocket.
+      Same logic as POST /api/workflow-runs/:runId/resume.
+    acceptance_criteria:
+      - Handler for message.type === 'workflow-run-resume'
+      - Param: message.runId
+      - Validate run exists and status is 'failed'
+      - Set run.status = 'running', reset current step to pending
+      - Update run in DB
+      - Broadcast workflow-run-update with resumed run
+      - Log resume at info level
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Run not found: send error message
+      - Run not failed: send error message
+
+  - id: ST-008-06
+    title: "Implement handleWorkflowRunCancel"
+    description: |
+      Cancel a running workflow via WebSocket.
+      Same logic as POST /api/workflow-runs/:runId/cancel.
+    acceptance_criteria:
+      - Handler for message.type === 'workflow-run-cancel'
+      - Param: message.runId
+      - Validate run exists and status is 'running'
+      - Cancel current step's task if spawn_session
+      - Set run.status = 'cancelled'
+      - Update run in DB
+      - Broadcast workflow-run-update with cancelled run
+      - Log cancel at info level
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Run not found: send error message
+      - Run not running: send error message
+
+  - id: ST-008-07
+    title: "Integrate handlers into WebSocket dispatch"
+    description: |
+      Wire workflow handlers into main WebSocket message dispatch.
+    acceptance_criteria:
+      - Import workflowWsHandlers in src/server/index.ts
+      - Add handler calls in WebSocket message dispatch (around line 200)
+      - Only handle workflow messages if config.workflowEngineEnabled === true
+      - Example: if (message.type === 'workflow-list-request') { handleWorkflowListRequest(ctx, message, ws) }
+      - Add handlers for all 5 client message types
+    files_modified:
+      - src/server/index.ts
+    estimated_hours: 0.5
+
+  - id: ST-008-08
+    title: "Add workflow engine broadcast integration"
+    description: |
+      Ensure workflow engine broadcasts workflow-run-update on step transitions.
+      Already implemented in engine (WO-005), verify integration.
+    acceptance_criteria:
+      - Verify engine calls ctx.broadcast({ type: 'workflow-run-update', run }) after step state changes
+      - Verify file watcher calls ctx.broadcast({ type: 'workflow-updated', workflow }) on file changes
+      - Verify file watcher calls ctx.broadcast({ type: 'workflow-removed', workflowId }) on file delete
+      - No changes needed if already implemented in WO-005 and WO-006
+    files_modified:
+      - (verification only, changes in WO-005/WO-006 if needed)
+    estimated_hours: 0.3
+
+  - id: ST-008-09
+    title: "Add integration tests for WebSocket handlers"
+    description: |
+      Create integration test suite for WebSocket message flow.
+    acceptance_criteria:
+      - Test workflow-list-request returns workflows
+      - Test workflow-run-list-request returns runs
+      - Test workflow-run triggers a run and broadcasts update
+      - Test workflow-run-resume changes run status
+      - Test workflow-run-cancel marks run as cancelled
+      - Test engine broadcasts workflow-run-update on step changes
+      - All tests pass with bun test
+    files_modified:
+      - src/server/handlers/workflowWsHandlers.test.ts (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify error messages sent to client
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: integration
+    description: "All WebSocket handler integration tests pass"
+    command: "bun test src/server/handlers/workflowWsHandlers.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "WebSocket workflow-list-request returns workflows"
+    command: |
+      # Use wscat or test harness
+      wscat -c ws://localhost:4040 -x '{"type":"workflow-list-request"}'
+    expected_output: '{"type":"workflow-list","workflows":[]}'
+
+acceptance_criteria:
+  - All 5 client message handlers implemented
+  - Handlers integrated into main WebSocket dispatch
+  - Engine broadcasts workflow-run-update on step changes
+  - File watcher broadcasts workflow-updated/workflow-removed
+  - Error messages sent to client on validation failures
+  - Integration tests cover all message types
+  - bun run typecheck passes
+  - bun run test passes
+  - WebSocket broadcasts reach all connected clients
+
+rollback_procedures:
+  - "git checkout src/server/handlers/workflowWsHandlers.ts if issues arise"
+  - "git checkout src/server/index.ts to remove handler integration"
+  - "No database schema changes in this phase"
+  - "Handlers not active if WORKFLOW_ENGINE_ENABLED=false"
+
+notes:
+  - "Follow existing WebSocket dispatch pattern in index.ts"
+  - "Broadcasts vs unicast: list requests send to single client, updates broadcast to all"
+  - "Error messages use { type: 'error', message } format (existing pattern)"
+  - "WebSocket handlers duplicate REST API logic (trigger/resume/cancel)"
+  - "Real-time updates enable reactive UI without polling"
+  - "p95 latency target < 200ms (feature brief requirement)"
+
+specs_covered:
+  - WS-001  # workflow-list-request handler
+  - WS-002  # workflow-run-list-request handler
+  - WS-003  # workflow-run handler
+  - WS-004  # workflow-run-resume handler
+  - WS-005  # workflow-run-cancel handler
+  - WS-006  # Engine broadcast integration
+  - WS-007  # File watcher broadcast integration

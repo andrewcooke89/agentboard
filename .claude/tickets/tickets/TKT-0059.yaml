@@ -1,0 +1,37 @@
+id: TKT-0059
+version: 1
+created_at: 2026-03-16T04:47:27.276Z
+updated_at: 2026-03-16T06:29:48.157Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/__tests__/wu004-lifecycle.test.ts
+  line_start: 9
+  code_snippet: import { describe, it, expect, mock } from 'bun:test'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is
+  imported but never used."
+description: "eslint(no-unused-vars): Identifier 'mock' is imported but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:29:48.157Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im
+      [TKT-0059]"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:29:48.157Z
+  resolved_by: minion-fix
+  pr_url: null
+  commit_sha: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Identifier 'mock' is im [TKT-0059]"

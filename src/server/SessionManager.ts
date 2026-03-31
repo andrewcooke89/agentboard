@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { inferAgentType } from './agentDetection'
 import { config } from './config'
 import { normalizeProjectPath } from './logDiscovery'
-import { generateSessionName } from './nameGenerator'
+import { generateSessionName, generateDescriptiveName } from './nameGenerator'
 import { logger } from './logger'
 import { resolveProjectPath } from './paths'
 import {
@@ -130,10 +130,14 @@ export class SessionManager {
     if (baseName) {
       baseName = baseName.replace(/\s+/g, '-')
     } else {
-      // Generate random name, retry if collision with tmux windows or DB
-      do {
-        baseName = generateSessionName()
-      } while (nameExists(baseName))
+      // Generate descriptive name from project path + timestamp
+      baseName = generateDescriptiveName(resolvedPath)
+      // If collision, fall back to random name with retries
+      if (nameExists(baseName)) {
+        do {
+          baseName = generateSessionName()
+        } while (nameExists(baseName))
+      }
     }
 
     const finalCommand = command?.trim() || 'claude'

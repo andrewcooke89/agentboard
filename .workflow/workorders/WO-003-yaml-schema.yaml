@@ -1,0 +1,229 @@
+work_order_id: WO-003
+title: "Phase 3: Implement YAML Schema Parsing and Validation"
+phase: 3
+feature_id: FEAT-005
+priority: critical
+estimated_hours: 6
+depends_on:
+  - WO-001  # Needs WorkflowDefinition types
+
+description: |
+  Create workflowSchema.ts module for YAML parsing and validation.
+  Validates workflow YAML structure, step types, conditions, and references.
+  Returns structured validation results with error array.
+
+  Validation rules:
+  - Required fields present (name, steps array)
+  - Step types valid (spawn_session, check_file, delay, check_output)
+  - Unique step names within workflow
+  - check_output references valid prior step names
+  - Condition types valid (file_exists, output_contains)
+  - Non-empty steps array (at least 1 step)
+
+context:
+  existing_patterns:
+    - "No existing YAML parsing in codebase - need to add dependency"
+    - "Validation returns structured result, not throws (see feature brief)"
+    - "Invalid YAML stored with is_valid=0 flag (non-blocking errors)"
+  files_to_create:
+    - src/server/workflowSchema.ts
+  files_to_modify:
+    - package.json (add js-yaml or check Bun built-in YAML support)
+  reference_files:
+    - feature_brief.md (lines 195-227 for YAML schema)
+    - .workflow/blackboard.yaml (open question: does Bun have built-in YAML?)
+
+subtasks:
+  - id: ST-003-01
+    title: "Investigate YAML parsing options (Bun built-in vs js-yaml)"
+    description: |
+      Determine if Bun has built-in YAML support or if js-yaml dependency needed.
+      Document decision for Phase 3 implementation.
+    acceptance_criteria:
+      - Test Bun.YAML or Bun.yaml API if available
+      - If not available, add 'js-yaml' and '@types/js-yaml' to package.json
+      - Document decision in work order notes
+      - Verify YAML.parse() and YAML.stringify() work
+    files_modified:
+      - package.json (if js-yaml needed)
+    estimated_hours: 0.5
+    error_handling:
+      - If Bun YAML unstable, fall back to js-yaml
+
+  - id: ST-003-02
+    title: "Create workflowSchema.ts with parse function"
+    description: |
+      Create new module with parseWorkflowYAML() function.
+      Handle YAML parse errors gracefully (return validation result).
+    acceptance_criteria:
+      - File created at src/server/workflowSchema.ts
+      - Export parseWorkflowYAML(yamlContent: string): ValidationResult
+      - ValidationResult type: { valid: boolean; workflow?: WorkflowDefinition; errors: string[] }
+      - YAML.parse() wrapped in try/catch
+      - Syntax errors returned in errors array (not thrown)
+      - Strip !! tags from YAML (security: prevent prototype pollution)
+    files_modified:
+      - src/server/workflowSchema.ts (create)
+    estimated_hours: 1.0
+    error_handling:
+      - YAML syntax errors caught and added to errors array
+      - Invalid UTF-8 handled gracefully
+      - Empty input returns validation error
+
+  - id: ST-003-03
+    title: "Implement required field validation"
+    description: |
+      Validate workflow has required top-level fields: name, steps.
+      Check each step has required fields based on step type.
+    acceptance_criteria:
+      - name field required (string, non-empty)
+      - steps field required (array, non-empty)
+      - Each step has name (string, non-empty)
+      - Each step has type (valid WorkflowStepType)
+      - spawn_session steps have projectPath and prompt
+      - check_file steps have path
+      - delay steps have seconds (number > 0)
+      - check_output steps have step (string) and contains (string)
+      - Clear error messages for each missing field
+    files_modified:
+      - src/server/workflowSchema.ts
+    estimated_hours: 1.5
+    error_handling:
+      - Accumulate all validation errors (don't stop at first error)
+      - Field path in error messages (e.g., "steps[0].projectPath is required")
+
+  - id: ST-003-04
+    title: "Implement step name uniqueness validation"
+    description: |
+      Ensure all step names within a workflow are unique.
+      Track seen names and report duplicates.
+    acceptance_criteria:
+      - Build Set of step names while iterating steps
+      - Detect duplicate names and add to errors array
+      - Error message includes both occurrences' indices
+      - Case-sensitive comparison ("step-1" != "Step-1")
+    files_modified:
+      - src/server/workflowSchema.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Multiple duplicates all reported (not just first)
+
+  - id: ST-003-05
+    title: "Implement check_output step reference validation"
+    description: |
+      Validate check_output steps reference valid prior step names.
+      Enforce steps can only reference earlier steps (sequential execution).
+    acceptance_criteria:
+      - Build Set of seen step names while iterating
+      - check_output 'step' field must reference name in seen set
+      - Error if step references itself
+      - Error if step references later step (not yet executed)
+      - Clear error message with step name and invalid reference
+    files_modified:
+      - src/server/workflowSchema.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Report all invalid references (not just first)
+
+  - id: ST-003-06
+    title: "Implement condition validation"
+    description: |
+      Validate step conditions have correct structure and fields.
+      Check condition.type is valid and required fields present.
+    acceptance_criteria:
+      - condition.type must be 'file_exists' or 'output_contains'
+      - file_exists condition has 'path' field (string)
+      - output_contains condition has 'step' and 'contains' fields (strings)
+      - output_contains 'step' references valid prior step (reuse ST-003-05 logic)
+      - Conditions are optional (missing condition is valid)
+    files_modified:
+      - src/server/workflowSchema.ts
+    estimated_hours: 1.0
+    error_handling:
+      - Invalid condition types reported clearly
+      - Missing condition fields reported with field path
+
+  - id: ST-003-07
+    title: "Add unit tests for YAML validation"
+    description: |
+      Create comprehensive unit test suite covering all validation rules.
+      Use test fixtures from feature brief (valid-workflow.yaml, invalid-workflow.yaml).
+    acceptance_criteria:
+      - Test valid workflow parses successfully (valid=true, no errors)
+      - Test missing name field (error in errors array)
+      - Test empty steps array (error)
+      - Test invalid step type (error)
+      - Test duplicate step names (error)
+      - Test check_output invalid reference (error)
+      - Test invalid condition type (error)
+      - Test YAML syntax error (caught and returned in errors)
+      - All tests pass with bun test
+    files_modified:
+      - src/server/workflowSchema.test.ts (create)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify error messages are clear and actionable
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All validation unit tests pass"
+    command: "bun test src/server/workflowSchema.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "Valid workflow YAML parses successfully"
+    command: |
+      echo 'name: test-workflow
+steps:
+  - name: step1
+    type: spawn_session
+    projectPath: /tmp
+    prompt: test' | bun eval "import {parseWorkflowYAML} from './src/server/workflowSchema.ts'; const result = parseWorkflowYAML(await Bun.stdin.text()); console.log(JSON.stringify(result));"
+    expected_output: '{"valid":true,"errors":[]}'
+
+  - test_type: integration
+    description: "Invalid workflow returns validation errors"
+    command: |
+      echo 'name: test
+steps: []' | bun eval "import {parseWorkflowYAML} from './src/server/workflowSchema.ts'; const result = parseWorkflowYAML(await Bun.stdin.text()); console.log(result.errors.length > 0);"
+    expected_output: 'true'
+
+acceptance_criteria:
+  - parseWorkflowYAML function implemented and exported
+  - All validation rules from feature brief implemented
+  - YAML syntax errors handled gracefully (not thrown)
+  - Validation errors accumulated (all errors returned, not just first)
+  - Error messages are clear and actionable with field paths
+  - Unit tests achieve >95% coverage of validation logic
+  - bun run typecheck passes
+  - bun run test passes
+  - !! tags stripped from YAML (security requirement)
+  - No crashes on malformed input
+
+rollback_procedures:
+  - "git checkout src/server/workflowSchema.ts if issues arise"
+  - "Remove js-yaml from package.json if dependency added"
+  - "bun install to restore dependencies"
+  - "No database changes in this phase"
+
+notes:
+  - "This is pure validation logic - no database or file I/O"
+  - "Invalid YAML is stored in DB with is_valid=0 (Phase 4)"
+  - "Feature brief specifies accumulating all errors, not fail-fast"
+  - "Reference feature_brief.md lines 195-227 for exact YAML schema"
+  - "Convention-based paths (output_path field) stored as-is, no variable substitution"
+  - "Decision needed: Bun built-in YAML vs js-yaml (open question in blackboard)"
+
+specs_covered:
+  - YAML-PARSE-001   # YAML parsing with error handling
+  - YAML-VALIDATE-001  # Required field validation
+  - YAML-VALIDATE-002  # Step type validation
+  - YAML-VALIDATE-003  # Step name uniqueness
+  - YAML-VALIDATE-004  # check_output reference validation
+  - YAML-VALIDATE-005  # Condition validation
+  - YAML-SECURITY-001  # Strip !! tags (prototype pollution prevention)

@@ -1,0 +1,53 @@
+# feature_spec_v1.yaml — Schema for feature specifications (Phase 9)
+#
+# Used by the spec_validate step type to validate feature specs.
+# This is a YAML-based schema (not JSON Schema) — validated by specValidator.ts.
+
+version: "feature_spec_v1.0"
+
+required_fields:
+  title:
+    type: string
+    description: "Human-readable title of the feature"
+  acceptance:
+    type: array
+    description: "List of acceptance criteria (each must have a 'type' field)"
+  scope:
+    type: object
+    description: "Scope definition with included/excluded paths"
+
+optional_fields:
+  plan_id:
+    type: string
+    description: "Planner plan ID for edge contract verification"
+  description:
+    type: string
+    description: "Detailed description of the feature"
+  constraints:
+    type: object
+    description: "Technical constraints and limitations"
+  schema_version:
+    type: string
+    description: "Version of the schema this spec conforms to"
+  tags:
+    type: array
+    description: "Classification tags for the feature"
+  priority:
+    type: string
+    description: "Priority level (critical, high, medium, low)"
+  dependencies:
+    type: array
+    description: "External dependencies or prerequisite features"
+  risks:
+    type: array
+    description: "Known risks and mitigations"
+  non_functional:
+    type: object
+    description: "Non-functional requirements (performance, security, etc.)"
+
+valid_acceptance_types:
+  - contract
+  - property
+  - benchmark
+  - invariant
+  - behavioral

@@ -1,0 +1,240 @@
+work_order_id: WO-006
+title: "Phase 6: Implement YAML File Watcher"
+phase: 6
+feature_id: FEAT-005
+priority: high
+estimated_hours: 5
+depends_on:
+  - WO-003  # Needs parseWorkflowYAML
+  - WO-004  # Needs workflowStore
+
+description: |
+  Create workflowFileWatcher.ts to watch YAML workflow directory.
+  Auto-parse and upsert workflows to SQLite on file changes.
+  Handle file creation, modification, and deletion.
+  Debounce rapid changes (editor save churn).
+
+  Features:
+  - Watch WORKFLOW_DIR for .yaml/.yml files
+  - Parse and validate on file change
+  - Upsert to database (insert or update by name)
+  - Broadcast workflow-updated via WebSocket
+  - Create directory if it doesn't exist
+  - Debounce at 500ms to avoid rapid re-parse
+
+context:
+  existing_patterns:
+    - "No existing file watching in codebase - new capability"
+    - "Factory function pattern: createFileWatcher(ctx, workflowStore) returns { start, stop }"
+    - "WebSocket broadcast via ctx.broadcast(message)"
+  files_to_create:
+    - src/server/workflowFileWatcher.ts
+  files_to_modify:
+    - src/server/index.ts (start watcher after workflowStore init)
+  reference_files:
+    - feature_brief.md (lines 512-522 for Phase 6 spec)
+    - .workflow/blackboard.yaml (open question: Bun fs.watch stability, RISK-002)
+
+subtasks:
+  - id: ST-006-01
+    title: "Investigate Bun fs.watch API stability"
+    description: |
+      Test Bun's built-in fs.watch for file watching.
+      Document stability and decide on fallback to chokidar if needed.
+    acceptance_criteria:
+      - Test Bun.watch() or fs.watch() on test directory
+      - Verify events fire on file create/modify/delete
+      - Check for false positives (duplicate events)
+      - Document findings in work order notes
+      - If unstable, add chokidar to package.json as dependency
+    files_modified:
+      - package.json (if chokidar needed)
+    estimated_hours: 1.0
+    error_handling:
+      - If Bun fs.watch unstable, use chokidar library
+
+  - id: ST-006-02
+    title: "Create FileWatcher interface and factory function"
+    description: |
+      Define watcher interface with start/stop methods.
+      Factory receives ServerContext and workflowStore.
+    acceptance_criteria:
+      - createWorkflowFileWatcher(ctx, workflowStore) factory function
+      - Returns { start: () => void, stop: () => void }
+      - Type-safe with proper interfaces
+      - Follows existing factory pattern
+    files_modified:
+      - src/server/workflowFileWatcher.ts (create)
+    estimated_hours: 0.3
+
+  - id: ST-006-03
+    title: "Implement directory creation and validation"
+    description: |
+      Create WORKFLOW_DIR if it doesn't exist on start.
+      Validate directory is readable.
+    acceptance_criteria:
+      - On start(): check if config.workflowDir exists
+      - If not exists: fs.mkdirSync({ recursive: true })
+      - Log directory creation at info level
+      - If creation fails: log error, watcher disabled (no crash)
+      - Validate directory is readable with fs.accessSync
+    files_modified:
+      - src/server/workflowFileWatcher.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Directory creation errors logged, watcher disabled
+      - Permission errors logged, watcher disabled
+
+  - id: ST-006-04
+    title: "Implement file watching with debounce"
+    description: |
+      Watch workflow directory for .yaml/.yml file changes.
+      Debounce at 500ms to avoid rapid re-parse on editor saves.
+    acceptance_criteria:
+      - Use fs.watch(workflowDir) (or chokidar if decided in ST-006-01)
+      - Filter events to .yaml and .yml files only
+      - Debounce per-file with 500ms timeout (Map<filePath, timeoutId>)
+      - On file change (after debounce): call handleFileChange(filePath)
+      - On file delete: call handleFileDelete(filePath)
+      - Handle 'rename' events (covers both create and delete)
+      - Stop watching on stop() call
+    files_modified:
+      - src/server/workflowFileWatcher.ts
+    estimated_hours: 1.5
+    error_handling:
+      - Watch errors logged, continue watching
+      - Clear all debounce timeouts on stop()
+
+  - id: ST-006-05
+    title: "Implement handleFileChange (parse and upsert)"
+    description: |
+      Read YAML file, parse, validate, upsert to database.
+      Broadcast workflow-updated via WebSocket.
+    acceptance_criteria:
+      - Read file with fs.readFileSync(filePath, 'utf-8')
+      - Parse with parseWorkflowYAML(yamlContent)
+      - Extract workflow name from YAML (not filename)
+      - Check if workflow exists: workflowStore.getWorkflowByName(name)
+      - If exists: update with updateWorkflow(id, { yaml_content, file_path, is_valid, validation_errors, step_count, updated_at })
+      - If not exists: create with createWorkflow({ name, yaml_content, file_path, is_valid, validation_errors, step_count })
+      - Broadcast ctx.broadcast({ type: 'workflow-updated', workflow })
+      - Log parse success/failure at info level
+    files_modified:
+      - src/server/workflowFileWatcher.ts
+    estimated_hours: 1.5
+    error_handling:
+      - File read errors logged, skip update
+      - Parse errors stored in validation_errors, workflow marked is_valid=0
+      - Database errors logged, no crash
+
+  - id: ST-006-06
+    title: "Implement handleFileDelete"
+    description: |
+      Remove workflow from database when YAML file deleted.
+      Broadcast workflow-removed via WebSocket.
+    acceptance_criteria:
+      - Extract workflow name from file path (or query by file_path)
+      - workflowStore.getWorkflowByName(name) or query by file_path
+      - If found: deleteWorkflow(id)
+      - Broadcast ctx.broadcast({ type: 'workflow-removed', workflowId: id })
+      - Log deletion at info level
+      - Handle case where workflow already deleted (idempotent)
+    files_modified:
+      - src/server/workflowFileWatcher.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Workflow not found: log warning, no error
+      - Database errors logged, no crash
+
+  - id: ST-006-07
+    title: "Implement initial directory scan"
+    description: |
+      On watcher start, scan directory for existing YAML files.
+      Parse and upsert all found workflows.
+    acceptance_criteria:
+      - On start(): call fs.readdirSync(workflowDir)
+      - Filter to .yaml/.yml files
+      - For each file: call handleFileChange(filePath)
+      - Log scan start/complete at info level with file count
+      - Errors in individual files don't stop scan
+    files_modified:
+      - src/server/workflowFileWatcher.ts
+    estimated_hours: 0.5
+    error_handling:
+      - Individual file errors logged, scan continues
+
+  - id: ST-006-08
+    title: "Add integration tests for file watcher"
+    description: |
+      Create integration test suite with temp directory.
+      Test file create/modify/delete flows.
+    acceptance_criteria:
+      - Create temp directory for test workflows
+      - Test file creation triggers parse and upsert
+      - Test file modification triggers update
+      - Test file deletion triggers workflow removal
+      - Test invalid YAML stored with is_valid=0
+      - Test debounce (rapid changes only trigger one parse)
+      - Test initial directory scan
+      - All tests pass with bun test
+    files_modified:
+      - src/server/workflowFileWatcher.test.ts (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Tests verify error cases (invalid YAML, missing files)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: integration
+    description: "All file watcher integration tests pass"
+    command: "bun test src/server/workflowFileWatcher.test.ts"
+    expected_output: "All tests pass"
+
+  - test_type: integration
+    description: "File watcher detects new workflow file"
+    command: |
+      # Start watcher in background, write file, verify in DB
+      # (complex test - covered in test suite)
+    expected_output: "Workflow appears in database"
+
+acceptance_criteria:
+  - File watcher factory function implemented
+  - WORKFLOW_DIR created if not exists
+  - Watches .yaml and .yml files only
+  - Debounce at 500ms per file
+  - handleFileChange parses and upserts workflows
+  - handleFileDelete removes workflows
+  - Initial directory scan on start
+  - WebSocket broadcasts on workflow changes
+  - Invalid YAML stored with is_valid=0 (non-blocking)
+  - Integration tests pass
+  - bun run typecheck passes
+  - bun run test passes
+  - Watcher stops cleanly on stop() call
+
+rollback_procedures:
+  - "git checkout src/server/workflowFileWatcher.ts if issues arise"
+  - "Set WORKFLOW_ENGINE_ENABLED=false to disable watcher"
+  - "Watcher stop() cleans up fs.watch handle and debounce timeouts"
+  - "No database schema changes in this phase"
+
+notes:
+  - "Decision needed: Bun fs.watch vs chokidar (test in ST-006-01)"
+  - "Debounce prevents rapid re-parse during editor saves (feature brief requirement)"
+  - "Invalid YAML stored but cannot be run (is_valid=0 check in run endpoint)"
+  - "File watcher errors don't crash server (log and continue pattern)"
+  - "Initial scan ensures existing files loaded on server start"
+  - "Workflow name from YAML, not filename (YAML 'name' field is unique key)"
+  - "WebSocket broadcasts enable real-time UI updates when files change"
+
+specs_covered:
+  - WATCHER-001  # Directory watching
+  - WATCHER-002  # File change detection
+  - WATCHER-003  # Parse and upsert
+  - WATCHER-004  # File deletion handling
+  - WATCHER-005  # Debounce logic
+  - WATCHER-006  # Initial directory scan

@@ -1,0 +1,37 @@
+id: TKT-0050
+version: 1
+created_at: 2026-03-16T04:47:27.275Z
+updated_at: 2026-03-16T06:20:50.963Z
+category: style
+severity: medium
+status: resolved
+source:
+  file: /home/andrew-cooke/tools/agentboard/src/server/mcp/__tests__/wu005-cronMcpServer-readTools.test.ts
+  line_start: 16
+  code_snippet: import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
+related_locations: []
+title: "[eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is
+  imported but never used."
+description: "eslint(no-unused-vars): Identifier 'mock' is imported but never used."
+suggestion: Fix the eslint(no-unused-vars) issue
+auto_fixable: true
+effort: small
+found_by: minion-detect
+related_tickets: []
+tags:
+  - nightly
+  - oxlint
+notes:
+  - timestamp: 2026-03-16T06:20:50.963Z
+    author: system
+    content: "Status changed to resolved: Committed: fix(minion):
+      [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im
+      [TKT-0050]"
+resolution:
+  status: fixed
+  resolved_at: 2026-03-16T06:20:50.963Z
+  resolved_by: minion-fix
+  pr_url: null
+  commit_sha: null
+  resolution_notes: "Committed: fix(minion): [eslint(no-unused-vars)]
+    eslint(no-unused-vars): Identifier 'mock' is im [TKT-0050]"

@@ -1,0 +1,255 @@
+# Codex prep: Rust event reporter module for minion-executor
+
+id: WO-PREP-002
+group_id: swarm-view
+title: "Create Rust event reporter module for broadcasting dispatch events to agentboard"
+description: |
+  Create `crates/minion-executor/src/event_reporter.rs` — an HTTP client module
+  that posts dispatch events to the agentboard API as they happen during
+  work order execution.
+
+  ## Module: `event_reporter.rs`
+
+  ```rust
+  use std::time::Duration;
+  use serde::Serialize;
+  use tracing::{debug, warn};
+
+  /// Reports dispatch events to the agentboard swarm API.
+  #[derive(Clone)]
+  pub struct EventReporter {
+      http_client: reqwest::Client,
+      base_url: String,
+      enabled: bool,
+  }
+
+  /// Swarm event types matching the TypeScript SwarmEvent union.
+  #[derive(Debug, Clone, Serialize)]
+  #[serde(tag = "type", rename_all = "snake_case")]
+  pub enum SwarmEvent {
+      GroupStarted {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          #[serde(rename = "totalWos")]
+          total_wos: usize,
+          #[serde(rename = "woIds")]
+          wo_ids: Vec<String>,
+          edges: Vec<DependencyEdge>,
+      },
+      WoStatusChanged {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          #[serde(rename = "woId")]
+          wo_id: String,
+          #[serde(rename = "oldStatus")]
+          old_status: String,
+          #[serde(rename = "newStatus")]
+          new_status: String,
+          model: String,
+          attempt: u32,
+          tier: u32,
+      },
+      WoCompleted {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          #[serde(rename = "woId")]
+          wo_id: String,
+          #[serde(rename = "tokenUsage")]
+          token_usage: TokenUsageSummary,
+          #[serde(rename = "gateResults")]
+          gate_results: Option<GateResultSummary>,
+          #[serde(rename = "filesChanged")]
+          files_changed: Vec<String>,
+          #[serde(rename = "durationSeconds")]
+          duration_seconds: f64,
+      },
+      WoFailed {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          #[serde(rename = "woId")]
+          wo_id: String,
+          error: String,
+          #[serde(rename = "gateDetail")]
+          gate_detail: Option<String>,
+          model: String,
+          attempt: u32,
+          tier: u32,
+      },
+      WoEscalated {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          #[serde(rename = "woId")]
+          wo_id: String,
+          #[serde(rename = "fromTier")]
+          from_tier: u32,
+          #[serde(rename = "toTier")]
+          to_tier: u32,
+          #[serde(rename = "toModel")]
+          to_model: String,
+          #[serde(rename = "errorHistory")]
+          error_history: Vec<ErrorHistoryEntrySummary>,
+      },
+      GroupCompleted {
+          #[serde(rename = "groupId")]
+          group_id: String,
+          timestamp: String,
+          status: String,
+          #[serde(rename = "totalDurationSeconds")]
+          total_duration_seconds: f64,
+          #[serde(rename = "completedWos")]
+          completed_wos: u32,
+          #[serde(rename = "failedWos")]
+          failed_wos: u32,
+          #[serde(rename = "totalTokens")]
+          total_tokens: TokenUsageSummary,
+      },
+  }
+
+  #[derive(Debug, Clone, Serialize)]
+  pub struct DependencyEdge {
+      pub from: String,
+      pub to: String,
+  }
+
+  #[derive(Debug, Clone, Serialize)]
+  pub struct TokenUsageSummary {
+      #[serde(rename = "inputTokens")]
+      pub input_tokens: u32,
+      #[serde(rename = "outputTokens")]
+      pub output_tokens: u32,
+  }
+
+  #[derive(Debug, Clone, Serialize)]
+  pub struct GateResultSummary {
+      #[serde(rename = "allPassed")]
+      pub all_passed: bool,
+      pub gates: Vec<GateEntry>,
+  }
+
+  #[derive(Debug, Clone, Serialize)]
+  pub struct GateEntry {
+      pub name: String,
+      pub passed: bool,
+      pub output: Option<String>,
+  }
+
+  #[derive(Debug, Clone, Serialize)]
+  pub struct ErrorHistoryEntrySummary {
+      pub tier: u32,
+      pub model: String,
+      pub attempt: u32,
+      pub error: String,
+      #[serde(rename = "gateDetail")]
+      pub gate_detail: Option<String>,
+  }
+  ```
+
+  ## EventReporter Implementation
+
+  ```rust
+  impl EventReporter {
+      /// Create a new reporter. If base_url is None, reporting is disabled (no-op).
+      pub fn new(base_url: Option<&str>) -> Self { ... }
+
+      /// Create a disabled reporter (no-op for all calls).
+      pub fn disabled() -> Self { ... }
+
+      /// Report an event. Fire-and-forget: errors are logged but never propagated.
+      /// This must never block or fail the dispatch loop.
+      pub async fn report(&self, event: SwarmEvent) {
+          if !self.enabled { return; }
+          let url = format!("{}/api/swarm/events", self.base_url);
+          match self.http_client.post(&url)
+              .json(&event)
+              .send()
+              .await
+          {
+              Ok(resp) if resp.status().is_success() => {
+                  debug!("Swarm event reported successfully");
+              }
+              Ok(resp) => {
+                  warn!(status = %resp.status(), "Swarm event report got non-2xx");
+              }
+              Err(e) => {
+                  warn!(error = %e, "Failed to report swarm event (non-fatal)");
+              }
+          }
+      }
+
+      /// Helper: get current ISO timestamp.
+      pub fn now_iso() -> String {
+          chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+      }
+  }
+  ```
+
+  The HTTP client should have a short timeout (5 seconds) so it never blocks
+  the dispatch loop. Use `reqwest::Client::builder().timeout(Duration::from_secs(5))`.
+
+  ## Module Registration
+
+  Add `pub mod event_reporter;` to both `src/lib.rs` and `src/main.rs`.
+
+  ## Tests
+
+  Add basic tests:
+  - `test_disabled_reporter_is_noop` — disabled reporter doesn't panic
+  - `test_event_serialization` — verify SwarmEvent serializes to expected JSON
+    (check that serde rename_all and tag work correctly)
+  - `test_now_iso_format` — verify timestamp format
+
+task: implement
+scope: crates/minion-executor/src/
+
+interface_files: []
+reference_files:
+  - crates/minion-executor/src/cc_executor.rs
+  - crates/minion-executor/src/api_client.rs
+  - crates/minion-executor/src/config.rs
+input_files: []
+
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: true
+  lint: false
+  typecheck: false
+  tests:
+    run: true
+    scope: relevant
+    specific:
+      - event_reporter
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 2
+  timeout_minutes: 8
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

@@ -1,0 +1,128 @@
+# Frontend: DAG visualization component
+
+id: WO-003
+group_id: swarm-view
+title: "Create DAG graph visualization component for work order dependencies"
+description: |
+  Create `src/client/components/swarm/DagGraph.tsx` — an SVG-based directed
+  acyclic graph visualization that shows work order dependencies and their
+  real-time status.
+
+  ## Requirements
+
+  Props interface:
+  ```typescript
+  interface DagGraphProps {
+    wos: Record<string, SwarmWoState>  // WO states keyed by ID
+    edges: Array<{ from: string; to: string }>  // dependency edges
+    selectedWoId: string | null
+    onSelectWo: (woId: string) => void
+  }
+  ```
+
+  ## Layout Algorithm (no external dependencies)
+
+  Implement a simple layered DAG layout:
+  1. Topological sort the WOs using the edges
+  2. Assign layers: WOs with no dependencies go to layer 0,
+     WOs depending on layer N go to layer N+1
+  3. Within each layer, space nodes evenly vertically
+  4. Position: x = layer * horizontalSpacing, y = indexInLayer * verticalSpacing
+  5. Center each layer vertically relative to the tallest layer
+
+  Constants: nodeWidth=160, nodeHeight=50, horizontalSpacing=220, verticalSpacing=70
+
+  ## Node Rendering
+
+  Each WO node is an SVG group containing:
+  - Rounded rect (rx=8) with fill color based on status:
+    - pending: #374151 (gray-700)
+    - ready: #1e3a5f (blue-900)
+    - running: #1e40af (blue-700) with a subtle CSS pulse animation
+    - completed: #166534 (green-800)
+    - failed: #991b1b (red-800)
+    - escalated: #92400e (amber-800)
+  - Text: WO ID (truncated to fit, e.g. "WO-003"), white, 12px, centered
+  - Small status icon or badge in the corner showing the escalation tier
+    if tier > 0 (just a small circle with the tier number)
+  - Selected node gets a 2px white border/outline
+  - On click: call onSelectWo(woId)
+  - On hover: show tooltip with WO title (use HTML title attribute for simplicity)
+
+  ## Edge Rendering
+
+  Draw edges as SVG path elements:
+  - From the right center of the source node to the left center of the target node
+  - Use a cubic bezier curve for smooth routing
+  - Color: #4B5563 (gray-600) for normal edges
+  - If both connected nodes are completed, use #166534 (green-800)
+  - If target is running, use #3B82F6 (blue-500)
+  - Arrow heads using SVG marker-end
+
+  ## Responsive Container
+
+  Wrap the SVG in a div with overflow-auto. Calculate SVG viewBox from the
+  computed layout bounds plus padding. The component should handle empty state
+  (no WOs) gracefully with a centered "No active swarm" message.
+
+  ## Styling
+
+  Use inline SVG styles (no Tailwind inside SVG). The container div can use
+  Tailwind classes. Match the dark theme of the agentboard app.
+
+  Do NOT use any external graph/visualization libraries. Pure React + SVG.
+  Use useMemo for layout computation to avoid recalculating on every render.
+
+task: implement
+scope: src/client/components/swarm/
+
+interface_files:
+  - src/shared/swarmTypes.ts
+reference_files:
+  - src/client/components/PipelineDiagram.tsx
+input_files: []
+
+intern_context:
+  enabled: true
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on:
+  - WO-002
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 2
+  timeout_minutes: 10
+
+escalation:
+  enabled: true
+  after_retries: 2
+  to: codex
+  mode: unattended
+  include_error_context: true
+  chain:
+    - model: codex
+      mode: unattended
+      max_retries: 1
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

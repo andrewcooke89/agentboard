@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Database as SQLiteDatabase } from 'bun:sqlite'
-import type { AgentType } from '../shared/types'
+import type { AgentType, JobRunRecord } from '../shared/types'
 import { resolveProjectPath } from './paths'
+import { createPoolStore } from './poolStore'
 
 export interface AgentSessionRecord {
   id: number
@@ -35,6 +36,8 @@ export interface SessionDatabase {
   displayNameExists: (displayName: string, excludeSessionId?: string) => boolean
   setPinned: (sessionId: string, isPinned: boolean) => AgentSessionRecord | null
   getPinnedOrphaned: () => AgentSessionRecord[]
+  deleteInactiveSession: (sessionId: string) => boolean
+  deleteOldInactiveSessions: (retentionDays: number) => number
   close: () => void
 }
 
@@ -83,6 +86,13 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   ensureDataDir(dbPath)
 
   const db = new SQLiteDatabase(dbPath)
+
+  // Enable WAL mode for better concurrent read/write performance (Phase 5)
+  if (dbPath !== ':memory:') {
+    db.exec('PRAGMA journal_mode = WAL')
+    db.exec('PRAGMA synchronous = NORMAL')
+  }
+
   migrateDatabase(db)
   db.exec(CREATE_TABLE_SQL)
   db.exec(CREATE_INDEXES_SQL)
@@ -90,6 +100,8 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   migrateDeduplicateDisplayNames(db)
   migrateIsPinnedColumn(db)
   migrateLastResumeErrorColumn(db)
+  initCronTables(db)
+  migrateCronJobPrefsLastSeenAt(db)
 
   const insertStmt = db.prepare(
     `INSERT INTO agent_sessions
@@ -120,6 +132,15 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
   )
   const selectByDisplayNameExcluding = db.prepare(
     'SELECT 1 FROM agent_sessions WHERE display_name = $displayName AND session_id != $excludeSessionId LIMIT 1'
+  )
+  const deleteInactiveSessionStmt = db.prepare(
+    'DELETE FROM agent_sessions WHERE session_id = $sessionId AND current_window IS NULL'
+  )
+  const deleteOldInactiveSessionsStmt = db.prepare(
+    `DELETE FROM agent_sessions
+     WHERE current_window IS NULL
+       AND last_activity_at < datetime('now', $olderThan)
+     RETURNING session_id`
   )
 
   const updateStmt = (fields: string[]) =>
@@ -269,6 +290,14 @@ export function initDatabase(options: { path?: string } = {}): SessionDatabase {
         )
         .all() as Record<string, unknown>[]
       return rows.map(mapRow)
+    },
+    deleteInactiveSession: (sessionId) => {
+      const result = deleteInactiveSessionStmt.run({ $sessionId: sessionId })
+      return result.changes > 0
+    },
+    deleteOldInactiveSessions: (retentionDays) => {
+      const rows = deleteOldInactiveSessionsStmt.all({ $olderThan: `-${retentionDays} days` }) as Record<string, unknown>[]
+      return rows.length
     },
     close: () => {
       db.close()
@@ -459,4 +488,334 @@ function getColumnNames(db: SQLiteDatabase, tableName: string): string[] {
     .prepare(`PRAGMA table_info(${tableName})`)
     .all() as Array<{ name?: string }>
   return rows.map((row) => String(row.name ?? '')).filter(Boolean)
+}
+
+// ─── Session Pool Tables (Phase 5) ──────────────────────────────────────────
+
+export function initPoolTables(db: SQLiteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_pool_config (
+      id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      max_slots INTEGER NOT NULL DEFAULT 2,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT OR IGNORE INTO session_pool_config (id, max_slots) VALUES (1, 2);
+
+    CREATE TABLE IF NOT EXISTS pool_slot_requests (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      step_name TEXT NOT NULL,
+      tier INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'queued',
+      requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+      granted_at TEXT,
+      released_at TEXT,
+      FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pool_requests_status ON pool_slot_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_pool_requests_priority ON pool_slot_requests(tier DESC, requested_at ASC);
+  `)
+}
+
+export function reconcilePoolSlots(db: SQLiteDatabase): void {
+  // Check if tmux is available
+  let tmuxAvailable = false
+  try {
+    const result = Bun.spawnSync(['tmux', '-V'], { stdout: 'pipe', stderr: 'pipe' })
+    tmuxAvailable = result.exitCode === 0
+  } catch {
+    tmuxAvailable = false
+  }
+
+  // If tmux not available, release all active and queued slots (safe fallback)
+  if (!tmuxAvailable) {
+    db.exec(`
+      UPDATE pool_slot_requests
+      SET status = 'released', released_at = datetime('now')
+      WHERE status IN ('active', 'queued')
+    `)
+    return
+  }
+
+  // Check if required tables exist (handles test environment and partial initialization)
+  let tablesExist = false
+  try {
+    const result = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('tasks', 'workflow_runs')"
+    ).all() as Array<{ name: string }>
+    tablesExist = result.length === 2
+  } catch (e) {
+    console.error(e)
+    tablesExist = false
+  }
+
+  // If tables don't exist, release all active and queued slots (safe fallback)
+  if (!tablesExist) {
+    db.exec(`
+      UPDATE pool_slot_requests
+      SET status = 'released', released_at = datetime('now')
+      WHERE status IN ('active', 'queued')
+    `)
+    return
+  }
+
+  // CF-03/REQ-29: Use poolStore.reconcileOrphanedSlots with a tmux session checker.
+  // This checks each active slot's tmux session before releasing, and promotes
+  // queued entries in priority order after releasing orphaned slots.
+  const poolStore = createPoolStore(db)
+
+  // Query directly to avoid circular dependencies
+  const getTaskStmt = db.prepare('SELECT * FROM tasks WHERE id = $id')
+  const getRunStmt = db.prepare('SELECT * FROM workflow_runs WHERE id = $id')
+
+  poolStore.reconcileOrphanedSlots((_slotId, runId, stepName) => {
+    // Returns true if tmux session is alive, false if dead/orphaned
+    try {
+      const runRow = getRunStmt.get({ $id: runId }) as Record<string, unknown> | undefined
+      if (!runRow) return false
+
+      const stepsStateStr = String(runRow.steps_state ?? '[]')
+      const stepsState = JSON.parse(stepsStateStr) as Array<{ name: string; taskId: string | null }>
+
+      const step = stepsState.find((s) => s.name === stepName)
+      if (!step || !step.taskId) return false
+
+      const taskRow = getTaskStmt.get({ $id: step.taskId }) as Record<string, unknown> | undefined
+      if (!taskRow || !taskRow.tmux_window) return false
+
+      const tmuxWindow = String(taskRow.tmux_window)
+      const check = Bun.spawnSync(['tmux', 'has-session', '-t', tmuxWindow], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      return check.exitCode === 0
+    } catch {
+      // Error checking tmux session - treat as dead (safe fallback)
+      return false
+    }
+  })
+}
+
+// ─── Cron Manager Tables (WU-001) ────────────────────────────────────────────
+
+export interface CronJobPrefs {
+  jobId: string
+  tags: string[]
+  isManaged: boolean
+  linkedSessionId: string | null
+  lastSeenAt: string
+  autoTagsDismissed: boolean
+}
+
+export function initCronTables(db: SQLiteDatabase): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS cron_job_prefs (
+      job_id TEXT PRIMARY KEY,
+      tags TEXT NOT NULL DEFAULT '[]',
+      is_managed INTEGER NOT NULL DEFAULT 0,
+      linked_session_id TEXT,
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      auto_tags_dismissed INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS cron_run_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      end_timestamp TEXT,
+      duration INTEGER,
+      exit_code INTEGER,
+      trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+      log_snippet TEXT,
+      FOREIGN KEY (job_id) REFERENCES cron_job_prefs(job_id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cron_run_history_job_id ON cron_run_history(job_id);
+    CREATE INDEX IF NOT EXISTS idx_cron_run_history_timestamp ON cron_run_history(timestamp);
+  `)
+}
+
+function migrateCronJobPrefsLastSeenAt(db: SQLiteDatabase): void {
+  const columns = getColumnNames(db, 'cron_job_prefs')
+  if (columns.length === 0 || columns.includes('last_seen_at')) {
+    return
+  }
+  db.exec("ALTER TABLE cron_job_prefs ADD COLUMN last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))")
+}
+
+export function upsertJobPrefs(
+  db: SQLiteDatabase,
+  jobId: string,
+  prefs: Partial<Omit<CronJobPrefs, 'jobId'>>
+): void {
+  // Fetch existing prefs to merge
+  const existing = getJobPrefs(db, jobId)
+  const merged = {
+    tags: prefs.tags ?? existing?.tags ?? [],
+    isManaged: prefs.isManaged ?? existing?.isManaged ?? false,
+    linkedSessionId: prefs.linkedSessionId !== undefined ? prefs.linkedSessionId : (existing?.linkedSessionId ?? null),
+    autoTagsDismissed: prefs.autoTagsDismissed ?? existing?.autoTagsDismissed ?? false,
+  }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO cron_job_prefs
+      (job_id, tags, is_managed, linked_session_id, last_seen_at, auto_tags_dismissed)
+    VALUES
+      ($jobId, $tags, $isManaged, $linkedSessionId, datetime('now'), $autoTagsDismissed)
+  `).run({
+    $jobId: jobId,
+    $tags: JSON.stringify(merged.tags),
+    $isManaged: merged.isManaged ? 1 : 0,
+    $linkedSessionId: merged.linkedSessionId,
+    $autoTagsDismissed: merged.autoTagsDismissed ? 1 : 0,
+  })
+}
+
+export function getJobPrefs(db: SQLiteDatabase, jobId: string): CronJobPrefs | null {
+  const row = db.prepare(
+    'SELECT * FROM cron_job_prefs WHERE job_id = $jobId'
+  ).get({ $jobId: jobId }) as Record<string, unknown> | undefined
+  if (!row) return null
+  return mapCronJobPrefsRow(row)
+}
+
+export function getAllJobPrefs(db: SQLiteDatabase): CronJobPrefs[] {
+  const rows = db.prepare('SELECT * FROM cron_job_prefs').all() as Record<string, unknown>[]
+  return rows.map(mapCronJobPrefsRow)
+}
+
+export function insertRunHistory(
+  db: SQLiteDatabase,
+  record: {
+    jobId: string
+    timestamp: string
+    endTimestamp?: string
+    duration?: number
+    exitCode?: number
+    trigger: 'manual' | 'scheduled'
+    logSnippet?: string
+  }
+): void {
+  // FK safety: ensure prefs row exists before inserting history
+  db.prepare(`
+    INSERT OR IGNORE INTO cron_job_prefs (job_id, last_seen_at)
+    VALUES ($jobId, datetime('now'))
+  `).run({ $jobId: record.jobId })
+
+  db.prepare(`
+    INSERT INTO cron_run_history
+      (job_id, timestamp, end_timestamp, duration, exit_code, trigger_type, log_snippet)
+    VALUES
+      ($jobId, $timestamp, $endTimestamp, $duration, $exitCode, $triggerType, $logSnippet)
+  `).run({
+    $jobId: record.jobId,
+    $timestamp: record.timestamp,
+    $endTimestamp: record.endTimestamp ?? null,
+    $duration: record.duration ?? null,
+    $exitCode: record.exitCode ?? null,
+    $triggerType: record.trigger,
+    $logSnippet: record.logSnippet ?? null,
+  })
+}
+
+export function getRunHistory(
+  db: SQLiteDatabase,
+  jobId: string,
+  limit: number,
+  before?: string
+): JobRunRecord[] {
+  let sql = 'SELECT * FROM cron_run_history WHERE job_id = $jobId'
+  const params: Record<string, string | number | null> = { $jobId: jobId }
+
+  if (before) {
+    sql += ' AND timestamp < $before'
+    params.$before = before
+  }
+
+  sql += ' ORDER BY timestamp DESC LIMIT $limit'
+  params.$limit = limit
+
+  const rows = db.prepare(sql).all(params) as Record<string, unknown>[]
+  return rows.map(mapRunHistoryRow)
+}
+
+export function pruneRunHistory(db: SQLiteDatabase): void {
+  // Delete records older than 90 days
+  db.prepare(`
+    DELETE FROM cron_run_history
+    WHERE timestamp < datetime('now', '-90 days')
+  `).run()
+
+  // For each job, keep only the 500 most recent records
+  db.prepare(`
+    DELETE FROM cron_run_history
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY timestamp DESC) AS rn
+        FROM cron_run_history
+      ) ranked
+      WHERE rn > 500
+    )
+  `).run()
+}
+
+export function deleteOrphanedPrefs(db: SQLiteDatabase, activeJobIds: string[]): void {
+  if (activeJobIds.length === 0) {
+    // Delete all stale prefs when no active jobs provided
+    db.prepare(`
+      DELETE FROM cron_job_prefs
+      WHERE last_seen_at < datetime('now', '-24 hours')
+    `).run()
+    return
+  }
+
+  const placeholders = activeJobIds.map((_, i) => `$id${i}`).join(', ')
+  const params: Record<string, string> = {}
+  for (let i = 0; i < activeJobIds.length; i++) {
+    params[`$id${i}`] = activeJobIds[i]
+  }
+
+  db.prepare(`
+    DELETE FROM cron_job_prefs
+    WHERE job_id NOT IN (${placeholders})
+      AND last_seen_at < datetime('now', '-24 hours')
+  `).run(params)
+}
+
+function mapCronJobPrefsRow(row: Record<string, unknown>): CronJobPrefs {
+  return {
+    jobId: String(row.job_id ?? ''),
+    tags: (() => {
+      try {
+        return JSON.parse(String(row.tags ?? '[]')) as string[]
+      } catch {
+        return []
+      }
+    })(),
+    isManaged: Number(row.is_managed) === 1,
+    linkedSessionId:
+      row.linked_session_id === null || row.linked_session_id === undefined
+        ? null
+        : String(row.linked_session_id),
+    lastSeenAt: String(row.last_seen_at ?? ''),
+    autoTagsDismissed: Number(row.auto_tags_dismissed) === 1,
+  }
+}
+
+function mapRunHistoryRow(row: Record<string, unknown>): JobRunRecord {
+  return {
+    timestamp: String(row.timestamp ?? ''),
+    endTimestamp:
+      row.end_timestamp === null || row.end_timestamp === undefined
+        ? null
+        : String(row.end_timestamp),
+    duration:
+      row.duration === null || row.duration === undefined ? null : Number(row.duration),
+    exitCode:
+      row.exit_code === null || row.exit_code === undefined ? null : Number(row.exit_code),
+    trigger: (row.trigger_type === 'manual' ? 'manual' : 'scheduled') as 'manual' | 'scheduled',
+    logSnippet:
+      row.log_snippet === null || row.log_snippet === undefined
+        ? null
+        : String(row.log_snippet),
+  }
 }

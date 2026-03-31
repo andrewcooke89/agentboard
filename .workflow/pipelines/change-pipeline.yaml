@@ -1,0 +1,688 @@
+# change-pipeline.yaml — First executable pipeline (Phase 9)
+#
+# End-to-end feature development pipeline: validate spec → review → decompose
+# → generate → implement → conformance → acceptance-test.
+#
+# Engine: DAG (auto-detected from parallel_group + depends_on)
+
+name: change-pipeline
+description: "End-to-end feature change pipeline with spec validation, decomposition, and implementation"
+
+system:
+  engine: dag
+  session_pool: true
+  tier_filter: true
+
+defaults:
+  tier: 1
+  timeoutSeconds: 3600
+  maxRetries: 1
+  constitution_sections:
+    - security
+    - architecture
+    - quality
+  signal_protocol: true
+  signal_dir: "{{ run_dir }}/signals"
+  working_dir: "{{ project_path }}"
+  env:
+    SPEC_PATH: "{{ spec_path }}"
+    OUTPUT_DIR: "{{ output_dir }}"
+    PROJECT_PATH: "{{ project_path }}"
+  amendment_budget:
+    max_amendments: 3
+    scope: spec_only
+  reviewers:
+    default_agent: spec-reviewer
+
+variables:
+  - name: spec_path
+    type: path
+    description: "Path to the feature specification YAML"
+    required: true
+  - name: project_path
+    type: path
+    description: "Root path of the target project"
+    required: true
+  - name: output_dir
+    type: path
+    description: "Directory for pipeline outputs"
+    required: true
+  - name: language
+    type: string
+    description: "Primary language of the project"
+    required: false
+    default: "typescript"
+  - name: framework
+    type: string
+    description: "Primary framework of the project"
+    required: false
+    default: ""
+  - name: tier
+    type: string
+    description: "Run tier level (1=default, 2=TDD+acceptance, 3=full)"
+    required: false
+    default: "1"
+
+steps:
+  # Stage 1: Validate the feature spec against schema and constitution
+  - name: validate-spec
+    type: spec_validate
+    model: glm
+    spec_path: "{{ spec_path }}"
+    schema_path: "{{ project_path }}/.workflow/schemas/feature_spec_v1.yaml"
+    constitution_path: "{{ project_path }}/.workflow/constitution.yaml"
+    constitution_sections:
+      - security
+      - architecture
+      - quality
+    strict: false
+
+  # Stage 2: Review loop for spec refinement
+  - name: spec-review-loop
+    type: review_loop
+    tier_min: 2
+    model: claude
+    depends_on:
+      - validate-spec
+    tier_override:
+      "2":
+        max_iterations: 5
+      "3":
+        max_iterations: 7
+    max_iterations: 3
+    on_max_iterations: escalate
+    on_concern:
+      timeout_minutes: 30
+      default_action: accept
+    producer:
+      name: spec-planner
+      type: spawn_session
+      projectPath: "{{ project_path }}"
+      prompt: |
+        You are the spec planner. Read the feature specification at {{ spec_path }}
+        and the validation report. Refine the spec based on reviewer feedback.
+
+        Use the orchestrator template at .claude/orchestrator-templates/spec-planning.md
+        for structured self-interrogation.
+
+        Output: Updated spec at {{ output_dir }}/refined-spec.yaml
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      result_file: "{{ output_dir }}/refined-spec.yaml"
+    reviewer:
+      name: spec-reviewer
+      type: spawn_session
+      projectPath: "{{ project_path }}"
+      prompt: |
+        Review the feature specification at {{ output_dir }}/refined-spec.yaml
+        against the constitution sections: security, architecture, quality.
+
+        Write your verdict as a YAML file to: {{ output_dir }}/spec-review-verdict.yaml
+        The file MUST contain a 'verdict' field (PASS, FAIL, or NEEDS_FIX) and a 'feedback' field.
+      signal_protocol: true
+      signal_dir: "{{ run_dir }}/signals"
+      verdict_field: verdict
+      feedback_field: feedback
+      result_file: "{{ output_dir }}/spec-review-verdict.yaml"
+
+  # Stage 3: Decompose spec into work units
+  - name: decompose
+    type: spawn_session
+    model: claude
+    depends_on:
+      - spec-review-loop
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Decompose the approved feature spec into work units.
+
+      Use the orchestrator template at .claude/orchestrator-templates/decomposition.md
+
+      Inputs:
+        - Spec: {{ output_dir }}/refined-spec.yaml
+        - Project: {{ project_path }}
+
+      Output: {{ output_dir }}/decomposition/manifest.yaml + WU-*.yaml files
+
+      IMPORTANT: For each work unit, include structured test_specs to guide the
+      test-writer. The test-writer is a less capable model (GLM) that needs explicit
+      guidance on what to test and how to mock dependencies.
+
+      For each work unit YAML, include:
+        test_specs:
+          - file: "path/to/__tests__/filename.test.ts"
+            type: unit
+            mock_modules: ["../db", "../externalApi"]
+            scenarios:
+              - "description of specific test case"
+              - "another specific test case"
+
+      Be specific about:
+      - Which modules need mocking (database, external APIs, file system)
+      - What scenarios to test (happy path, error cases, edge cases)
+      - Where test files should be placed
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+    result_file: "{{ output_dir }}/decomposition/manifest.yaml"
+    timeoutSeconds: 1800
+
+  # Stage 4: Generation (parallel scaffold + consistency check)
+  - name: generation
+    type: parallel_group
+    depends_on:
+      - decompose
+    on_failure: fail_fast
+    steps:
+      - name: generate-scaffold
+        type: spawn_session
+        tier_min: 2
+        model: glm
+        projectPath: "{{ project_path }}"
+        prompt: |
+          Generate code scaffold from the decomposition manifest.
+
+          Input: {{ output_dir }}/decomposition/manifest.yaml
+          Output: {{ output_dir }}/generation/scaffold-report.yaml
+        signal_protocol: true
+        signal_dir: "{{ run_dir }}/signals"
+        result_file: "{{ output_dir }}/generation/scaffold-report.yaml"
+        timeoutSeconds: 1800
+
+      - name: spec-traceability-check
+        type: native_step
+        tier_min: 2
+        command: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          SPEC="{{ output_dir }}/refined-spec.yaml"
+          DECOMP_DIR="{{ output_dir }}/decomposition"
+
+          if [ ! -f "$SPEC" ]; then
+            echo "FAIL: refined-spec.yaml not found at $SPEC"
+            exit 1
+          fi
+          if ! ls "$DECOMP_DIR"/WU-*.yaml >/dev/null 2>&1; then
+            echo "FAIL: No WU-*.yaml files found in $DECOMP_DIR"
+            exit 1
+          fi
+
+          echo "=== Spec-to-WU Traceability Check ==="
+          echo "Spec: $SPEC"
+          echo "Decomposition: $DECOMP_DIR"
+          echo ""
+
+          # 1. Extract acceptance criterion IDs from spec
+          SPEC_IDS=$(yq -r '.acceptance[].id // empty' "$SPEC" 2>/dev/null | sort -u || true)
+          # Also extract non-functional requirement IDs
+          NF_IDS=$(yq -r '.non_functional | .. | .id? // empty' "$SPEC" 2>/dev/null | grep -v '^$' | sort -u || true)
+          ALL_SPEC_IDS=$(printf '%s\n%s\n' "$SPEC_IDS" "$NF_IDS" | grep -v '^$' | sort -u)
+          SPEC_COUNT=$(echo "$ALL_SPEC_IDS" | grep -c . || true)
+          echo "Spec defines $SPEC_COUNT requirement IDs"
+
+          if [ "$SPEC_COUNT" -eq 0 ]; then
+            echo "SKIP: No requirement IDs found in spec (acceptance[].id)"
+            exit 0
+          fi
+
+          # 2. Extract all req references from WU files
+          WU_REFS=$(yq -r '.acceptance_criteria[].req // empty' "$DECOMP_DIR"/WU-*.yaml 2>/dev/null | sort -u || true)
+          WU_REF_COUNT=$(echo "$WU_REFS" | grep -c . || true)
+          echo "WU files reference $WU_REF_COUNT requirement IDs"
+          echo ""
+
+          # 3. Find UNCOVERED spec IDs (in spec but not in any WU)
+          echo "--- Uncovered Requirements ---"
+          UNCOVERED=0
+          while IFS= read -r id; do
+            [ -z "$id" ] && continue
+            if ! echo "$WU_REFS" | grep -qxF "$id"; then
+              echo "  UNCOVERED: $id"
+              UNCOVERED=$((UNCOVERED + 1))
+            fi
+          done <<< "$ALL_SPEC_IDS"
+          [ "$UNCOVERED" -eq 0 ] && echo "  PASS: All spec requirements traced to work units"
+          echo ""
+
+          # 4. Find PHANTOM refs (in WUs but not in spec)
+          echo "--- Phantom References ---"
+          PHANTOMS=0
+          while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            if ! echo "$ALL_SPEC_IDS" | grep -qxF "$ref"; then
+              echo "  PHANTOM: $ref (referenced in WU but not in spec)"
+              PHANTOMS=$((PHANTOMS + 1))
+            fi
+          done <<< "$WU_REFS"
+          [ "$PHANTOMS" -eq 0 ] && echo "  PASS: No phantom requirement references"
+          echo ""
+
+          # Summary
+          echo "=== Summary ==="
+          echo "Spec IDs: $SPEC_COUNT | WU refs: $WU_REF_COUNT | Uncovered: $UNCOVERED | Phantom: $PHANTOMS"
+          echo ""
+          if [ "$UNCOVERED" -gt 0 ]; then
+            echo "WARN: $UNCOVERED requirement(s) not traced to any work unit"
+            exit 1
+          fi
+          if [ "$PHANTOMS" -gt 0 ]; then
+            echo "WARN: $PHANTOMS phantom reference(s) in work units"
+          fi
+          echo "PASS: All spec requirements are traced to work units"
+        working_dir: "{{ project_path }}"
+        on_step_failure: completed_with_warnings
+        timeoutSeconds: 300
+
+      - name: generation-consistency-check
+        type: native_step
+        tier_min: 2
+        depends_on:
+          - generate-scaffold
+        command: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          MANIFEST="{{ output_dir }}/decomposition/manifest.yaml"
+          SCAFFOLD="{{ output_dir }}/generation/scaffold-report.yaml"
+          DECOMP_DIR="{{ output_dir }}/decomposition"
+          ERRORS=0
+
+          # ── Existence checks ──────────────────────────────────────
+          if [ ! -f "$MANIFEST" ]; then
+            echo "FAIL: manifest.yaml not found at $MANIFEST"
+            exit 1
+          fi
+          if [ ! -f "$SCAFFOLD" ]; then
+            echo "FAIL: scaffold-report.yaml not found at $SCAFFOLD"
+            exit 1
+          fi
+
+          echo "=== Generation Consistency Check ==="
+          echo "Manifest: $MANIFEST"
+          echo "Scaffold: $SCAFFOLD"
+          echo ""
+
+          # ── 1. Extract WU IDs from manifest (yq v4 syntax) ────────
+          MANIFEST_WUS=$(yq -r '.work_units[].id' "$MANIFEST" | sort -u)
+          MANIFEST_COUNT=$(echo "$MANIFEST_WUS" | grep -c . || true)
+          echo "Manifest declares $MANIFEST_COUNT work units"
+
+          if [ "$MANIFEST_COUNT" -eq 0 ]; then
+            echo "FAIL: No work units found in manifest"
+            exit 1
+          fi
+
+          # ── 2. Extract WU IDs covered by scaffold ─────────────────
+          # Gather from all known schema variants (v1.0 and older)
+          SCAFFOLD_WUS=$(yq -r '.work_unit_readiness[].id' "$SCAFFOLD" 2>/dev/null || true)
+          STATS_WUS=$(yq -r '.stats.work_units_covered[]' "$SCAFFOLD" 2>/dev/null || true)
+          FILE_WUS=$(yq -r '.files[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          SCAFF_FILE_WUS=$(yq -r '.scaffold_files[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          MOD_WUS=$(yq -r '.modification_points[].work_units[]' "$SCAFFOLD" 2>/dev/null || true)
+          ALL_SCAFFOLD_WUS=$(printf '%s\n%s\n%s\n%s\n%s\n' \
+            "$SCAFFOLD_WUS" "$STATS_WUS" "$FILE_WUS" "$SCAFF_FILE_WUS" "$MOD_WUS" \
+            | grep -v '^$' | grep -v '^null$' | sort -u)
+          SCAFFOLD_COUNT=$(echo "$ALL_SCAFFOLD_WUS" | grep -c . || true)
+          echo "Scaffold covers $SCAFFOLD_COUNT work units"
+          echo ""
+
+          # ── 3. Check: every manifest WU appears in scaffold ───────
+          echo "--- WU Coverage Check ---"
+          MISSING=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if echo "$ALL_SCAFFOLD_WUS" | grep -qxF "$wu"; then
+              : # found
+            else
+              echo "  MISSING: $wu not covered by scaffold"
+              MISSING=$((MISSING + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$MANIFEST_WUS"
+          [ "$MISSING" -eq 0 ] && echo "  PASS: All manifest WUs covered by scaffold"
+          echo ""
+
+          # ── 4. Check: no phantom WUs in scaffold ──────────────────
+          echo "--- Phantom WU Check ---"
+          PHANTOMS=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if echo "$MANIFEST_WUS" | grep -qxF "$wu"; then
+              : # found
+            else
+              echo "  PHANTOM: $wu in scaffold but not in manifest"
+              PHANTOMS=$((PHANTOMS + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$ALL_SCAFFOLD_WUS"
+          [ "$PHANTOMS" -eq 0 ] && echo "  PASS: No phantom WUs in scaffold"
+          echo ""
+
+          # ── 5. Check: WU YAML files exist for each manifest WU ────
+          echo "--- WU File Check ---"
+          FMISSING=0
+          while IFS= read -r wu; do
+            [ -z "$wu" ] && continue
+            if [ ! -f "$DECOMP_DIR/${wu}.yaml" ]; then
+              echo "  MISSING: $DECOMP_DIR/${wu}.yaml not found"
+              FMISSING=$((FMISSING + 1))
+              ERRORS=$((ERRORS + 1))
+            fi
+          done <<< "$MANIFEST_WUS"
+          [ "$FMISSING" -eq 0 ] && echo "  PASS: All WU YAML files exist"
+          echo ""
+
+          # ── 6. Check scaffold verdict/blockers (v1.0 format) ──────
+          echo "--- Scaffold Verdict Check ---"
+          VERDICT=$(yq -r '.verdict.status // "NONE"' "$SCAFFOLD" 2>/dev/null || echo "NONE")
+          if [ "$VERDICT" = "FAIL" ]; then
+            echo "  FAIL: Scaffold verdict is FAIL"
+            ERRORS=$((ERRORS + 1))
+          elif [ "$VERDICT" = "NONE" ] || [ "$VERDICT" = "null" ]; then
+            echo "  SKIP: No verdict field (older schema)"
+          else
+            echo "  PASS: Scaffold verdict is $VERDICT"
+          fi
+          echo ""
+
+          # ── 7. Check scaffold readiness per WU (v1.0 format) ──────
+          echo "--- WU Readiness Check ---"
+          NOT_READY=$(yq -r '.work_unit_readiness[] | select(.scaffold_ready != true) | .id' "$SCAFFOLD" 2>/dev/null || true)
+          NOT_READY=$(echo "$NOT_READY" | grep -v '^$' || true)
+          if [ -n "$NOT_READY" ]; then
+            echo "  WARNING: Not scaffold-ready:"
+            echo "$NOT_READY" | while read -r w; do echo "    - $w"; done
+          else
+            READINESS_COUNT=$(yq -r '.work_unit_readiness | length' "$SCAFFOLD" 2>/dev/null || echo "0")
+            if [ "${READINESS_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+              echo "  PASS: All $READINESS_COUNT WUs are scaffold-ready"
+            else
+              echo "  SKIP: No work_unit_readiness field (older schema)"
+            fi
+          fi
+          echo ""
+
+          # ── Summary ───────────────────────────────────────────────
+          echo "=== Summary ==="
+          echo "Manifest WUs: $MANIFEST_COUNT | Scaffold WUs: $SCAFFOLD_COUNT | Errors: $ERRORS"
+          echo ""
+          if [ "$ERRORS" -gt 0 ]; then
+            echo "FAIL: $ERRORS consistency error(s) found"
+            exit 1
+          fi
+          echo "PASS: Scaffold is consistent with decomposition manifest"
+        working_dir: "{{ project_path }}"
+        on_step_failure: completed_with_warnings
+        timeoutSeconds: 300
+
+      # Capture test baseline BEFORE red-phase (REQ-63 prerequisite)
+      - name: capture-test-baseline
+        type: native_step
+        tier_min: 2
+        depends_on:
+          - generation-consistency-check
+        command: |
+          BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+          mkdir -p "$(dirname "$BASELINE_FILE")"
+
+          set +e
+          if [ -f "package.json" ]; then
+            TEST_OUTPUT=$(bun test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "Cargo.toml" ]; then
+            TEST_OUTPUT=$(cargo test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "pyproject.toml" ]; then
+            TEST_OUTPUT=$(pytest 2>&1)
+            TEST_EXIT=$?
+          else
+            echo "Unknown test framework"
+            exit 1
+          fi
+          set -e
+
+          # Parse bun test output: "X pass, Y fail, Z skip"
+          PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ pass' | grep -oP '\d+' || echo "0")
+          FAIL_COUNT=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | grep -oP '\d+' || echo "0")
+          TOTAL_TESTS=$(echo "$TEST_OUTPUT" | grep -oP 'Ran \d+ tests' | grep -oP '\d+' || echo "0")
+
+          echo "{\"pass\": ${PASS_COUNT:-0}, \"fail\": ${FAIL_COUNT:-0}, \"total\": ${TOTAL_TESTS:-0}, \"exit_code\": $TEST_EXIT}" > "$BASELINE_FILE"
+          echo "Baseline captured: pass=${PASS_COUNT:-0} fail=${FAIL_COUNT:-0} total=${TOTAL_TESTS:-0} exit=$TEST_EXIT"
+          cat "$BASELINE_FILE"
+        working_dir: "{{ project_path }}"
+        timeoutSeconds: 300
+
+      # TDD red-phase verification (REQ-63, REQ-64)
+      - name: tdd-verify-red
+        type: native_step
+        tier_min: 2
+        depends_on:
+          - capture-test-baseline
+          # - generate-tests  # Uncomment when test-writer available
+        command: |
+          BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+          if [ ! -f "$BASELINE_FILE" ]; then
+            echo "ERROR: No baseline file at $BASELINE_FILE"
+            exit 1
+          fi
+          BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+          echo "Baseline failures: $BASELINE_FAIL"
+
+          # Run tests
+          set +e
+          if [ -f "package.json" ]; then
+            TEST_OUTPUT=$(bun test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "Cargo.toml" ]; then
+            TEST_OUTPUT=$(cargo test 2>&1)
+            TEST_EXIT=$?
+          elif [ -f "pyproject.toml" ]; then
+            TEST_OUTPUT=$(pytest 2>&1)
+            TEST_EXIT=$?
+          else
+            echo "Unknown test framework"
+            exit 1
+          fi
+          set -e
+
+          CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+          NEW_FAILURES=$(( ${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0} ))
+          echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+          # Tests SHOULD fail in red phase (new feature tests not yet implemented)
+          if [ "$NEW_FAILURES" -gt 0 ]; then
+            echo "PASS: RED phase verified — $NEW_FAILURES new test failures from scaffold"
+            exit 0
+          else
+            echo "ERROR: No new test failures — tests are trivially passing before implementation"
+            echo "Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
+            exit 1
+          fi
+        working_dir: "{{ project_path }}"
+        timeoutSeconds: 600
+
+  # Stage 5: Per-WU TDD Implementation (deterministic orchestrator)
+  - name: implement
+    type: spawn_session
+    depends_on:
+      - generation
+    projectPath: "{{ project_path }}"
+    command: "cd /home/andrew-cooke/tools/agentboard && bun run src/server/scripts/wu-orchestrator.ts --manifest '{{ output_dir }}/decomposition/manifest.yaml' --spec '{{ output_dir }}/refined-spec.yaml' --project-path '{{ project_path }}' --output-dir '{{ output_dir }}' --api-url 'http://localhost:4040' --tier '{{ tier }}' --language '{{ language }}' --framework '{{ framework }}' --run-id '{{ run_id }}'"
+    prompt: "Per-WU TDD orchestrator — deterministic implementation pipeline"
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+    result_file: "{{ output_dir }}/implementation/implementation-report.yaml"
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+        - needs_human
+      fail_message: "Implementation verdict was '{{ verdict }}', expected 'pass' or 'needs_human'"
+    timeoutSeconds: 14400
+
+  # Stage 5a-gate: Human review gate (triggers when WUs need human intervention)
+  - name: human-review
+    type: human_gate
+    depends_on:
+      - implement
+    condition: "steps.implement.verdict == 'needs_human'"
+    prompt: |
+      Work units requiring human intervention detected.
+      Review human_action_required.yaml in the implementation output directory
+      for details on which WUs failed and what was attempted.
+    timeoutSeconds: 86400
+
+  # Stage 5b: Amendment verification (resolves any amendment signals from implement)
+  - name: verify-amendments
+    type: amendment_check
+    depends_on:
+      - implement
+    signal_dir: "{{ run_dir }}/signals"
+    signal_types:
+      - amendment_required
+    on_amendment:
+      handler: amendment-handler
+      resume_from_checkpoint: true
+    on_human_required:
+      action: escalate
+    on_exploration_required:
+      action: escalate
+      resume_step: implement
+    timeoutSeconds: 600
+
+  # TDD green-phase verification (REQ-65)
+  # Confirm no NEW failures vs baseline (pre-existing failures are OK)
+  - name: tdd-verify-green
+    type: native_step
+    tier_min: 2
+    depends_on:
+      - verify-amendments
+    command: |
+      BASELINE_FILE="{{ output_dir }}/test-baseline.json"
+      if [ ! -f "$BASELINE_FILE" ]; then
+        echo "ERROR: No baseline file at $BASELINE_FILE"
+        exit 1
+      fi
+      BASELINE_FAIL=$(cat "$BASELINE_FILE" | grep -oP '"fail":\s*\K\d+')
+      echo "Baseline failures: $BASELINE_FAIL"
+
+      # Run tests
+      set +e
+      if [ -f "package.json" ]; then
+        TEST_OUTPUT=$(bun test 2>&1)
+        TEST_EXIT=$?
+      elif [ -f "Cargo.toml" ]; then
+        TEST_OUTPUT=$(cargo test 2>&1)
+        TEST_EXIT=$?
+      elif [ -f "pyproject.toml" ]; then
+        TEST_OUTPUT=$(pytest 2>&1)
+        TEST_EXIT=$?
+      else
+        echo "Unknown test framework"
+        exit 1
+      fi
+      set -e
+
+      CURRENT_FAIL=$(echo "$TEST_OUTPUT" | grep -oP '\d+ fail' | tail -1 | grep -oP '\d+' || echo "0")
+      NEW_FAILURES=$(( ${CURRENT_FAIL:-0} - ${BASELINE_FAIL:-0} ))
+      echo "Current failures: ${CURRENT_FAIL:-0}, New failures: $NEW_FAILURES"
+
+      if [ "$NEW_FAILURES" -le 0 ]; then
+        echo "PASS: GREEN phase verified — no new failures vs baseline"
+        echo "  Pre-existing: $BASELINE_FAIL, Current: ${CURRENT_FAIL:-0}"
+        exit 0
+      else
+        echo "FAIL: $NEW_FAILURES new test failures after implementation"
+        echo "  Baseline: $BASELINE_FAIL failures, Current: ${CURRENT_FAIL:-0} failures"
+        exit 1
+      fi
+    working_dir: "{{ project_path }}"
+    timeoutSeconds: 600
+
+  # Stage 5c: Edge contract verification (deterministic, no AI)
+  - name: verify-edges
+    type: native_step
+    tier_min: 2
+    depends_on:
+      - tdd-verify-green
+    command: |
+      PLAN_ID=$(grep -oP 'plan_id:\s*\K\S+' "{{ output_dir }}/refined-spec.yaml" 2>/dev/null || grep -oP 'plan_id:\s*\K\S+' "{{ spec_path }}" 2>/dev/null || true)
+      if [ -z "$PLAN_ID" ]; then
+        echo "SKIP: No plan_id in spec — edge verification not applicable"
+        exit 0
+      fi
+      RESULT=$(curl -sf "http://localhost:3847/api/verify/${PLAN_ID}?project_path={{ project_path }}" 2>/dev/null || true)
+      if [ -z "$RESULT" ]; then
+        echo "SKIP: Planner HTTP server not reachable — edge verification skipped"
+        exit 0
+      fi
+      PASSED=$(echo "$RESULT" | jq -r '.passed')
+      echo "$RESULT" | jq .
+      if [ "$PASSED" = "true" ]; then
+        echo "PASS: All edge contracts verified"
+        exit 0
+      else
+        echo "FAIL: Edge contract verification failed"
+        exit 1
+      fi
+    working_dir: "{{ project_path }}"
+    on_step_failure: completed_with_warnings
+    timeoutSeconds: 300
+
+  # Stage 6: Conformance verification
+  - name: conformance
+    type: spawn_session
+    model: claude
+    depends_on:
+      - verify-edges
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Verify implementation conformance against the approved spec.
+
+      Use the orchestrator template at .claude/orchestrator-templates/verification.md
+
+      Inputs:
+        - Spec: {{ output_dir }}/refined-spec.yaml
+        - Implementation: {{ output_dir }}/implementation/
+      Output: {{ output_dir }}/conformance/verification-report.yaml
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+    result_file: "{{ output_dir }}/conformance/verification-report.yaml"
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+      fail_message: "Conformance verdict was '{{ verdict }}', expected 'pass'"
+    timeoutSeconds: 3600
+
+  # Stage 7: Acceptance testing (tier 2+)
+  - name: acceptance-test
+    type: spawn_session
+    model: glm
+    depends_on:
+      - conformance
+    tier_min: 2
+    projectPath: "{{ project_path }}"
+    prompt: |
+      Run acceptance tests for the implemented feature.
+
+      Input: {{ output_dir }}/conformance/verification-report.yaml
+      Output: {{ output_dir }}/acceptance/test-results.yaml
+    signal_protocol: true
+    signal_dir: "{{ run_dir }}/signals"
+    result_file: "{{ output_dir }}/acceptance/test-results.yaml"
+    enforce_verdict:
+      field: overall_verdict
+      allowed:
+        - pass
+      fail_message: "Acceptance verdict was '{{ verdict }}', expected 'pass'"
+    timeoutSeconds: 3600
+
+  # Stage 8: Observe and learn (Phase 13 forward ref — commented out)
+  # - name: observe-and-learn
+  #   type: spawn_session
+  #   depends_on:
+  #     - acceptance-test
+  #   projectPath: "{{ project_path }}"
+  #   prompt: "Observe pipeline execution patterns and record learnings"
+  #   signal_protocol: true
+  #   signal_dir: "{{ run_dir }}/signals"

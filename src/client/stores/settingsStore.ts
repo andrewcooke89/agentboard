@@ -35,6 +35,7 @@ export function getFontFamily(fontOption: FontOption, customFontFamily: string):
   return option?.family || FONT_OPTIONS[0].family
 }
 
+export type SessionGroupMode = 'none' | 'project'
 export type SessionSortMode = 'status' | 'created' | 'manual'
 export type SessionSortDirection = 'asc' | 'desc'
 export type ShortcutModifier = 'ctrl-option' | 'ctrl-shift' | 'cmd-option' | 'cmd-shift'
@@ -159,6 +160,59 @@ interface SettingsState {
   updatePresetModifiers: (presetId: string, modifiers: string) => void
   addPreset: (preset: Omit<CommandPreset, 'id' | 'isBuiltIn'>) => void
   removePreset: (presetId: string) => void
+  // Project path presets (favorite project directories)
+  projectPathPresets: string[]
+  addProjectPathPreset: (path: string) => void
+  removeProjectPathPreset: (path: string) => void
+  reorderProjectPathPresets: (presets: string[]) => void
+  // Browser notifications
+  notifyOnPermission: boolean
+  setNotifyOnPermission: (enabled: boolean) => void
+  notifyOnIdle: boolean
+  setNotifyOnIdle: (enabled: boolean) => void
+  // Session grouping
+  sessionGroupMode: SessionGroupMode
+  setSessionGroupMode: (mode: SessionGroupMode) => void
+  collapsedProjects: string[]
+  toggleProjectCollapsed: (projectPath: string) => void
+  // Cron Manager settings (WU-002)
+  cronPollInterval: number
+  setCronPollInterval: (v: number) => void
+  cronAvatarStyle: string
+  setCronAvatarStyle: (v: string) => void
+  cronSudoGracePeriod: number
+  setCronSudoGracePeriod: (v: number) => void
+  cronShowSystemJobs: boolean
+  setCronShowSystemJobs: (v: boolean) => void
+  cronShowUserJobs: boolean
+  setCronShowUserJobs: (v: boolean) => void
+  cronDefaultTimelineVisible: boolean
+  setCronDefaultTimelineVisible: (v: boolean) => void
+  cronDefaultTimelineRange: string
+  setCronDefaultTimelineRange: (v: string) => void
+  cronNotifyFailure: boolean
+  setCronNotifyFailure: (v: boolean) => void
+  cronNotifyMissedRun: boolean
+  setCronNotifyMissedRun: (v: boolean) => void
+  cronNotifyManualRun: boolean
+  setCronNotifyManualRun: (v: boolean) => void
+  cronDesktopNotifications: boolean
+  setCronDesktopNotifications: (v: boolean) => void
+  cronAutoTagSuggestions: boolean
+  setCronAutoTagSuggestions: (v: boolean) => void
+  cronMaxHistoryDays: number
+  setCronMaxHistoryDays: (v: number) => void
+  cronMaxHistoryPerJob: number
+  setCronMaxHistoryPerJob: (v: number) => void
+  // Cron AI settings (WU-002)
+  cronAiEnabled: boolean
+  setCronAiEnabled: (v: boolean) => void
+  cronAiDrawerWidth: number
+  setCronAiDrawerWidth: (v: number) => void
+  cronAiAutoGreet: boolean
+  setCronAiAutoGreet: (v: boolean) => void
+  cronAiProposalTimeout: number
+  setCronAiProposalTimeout: (v: number) => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -211,7 +265,7 @@ export const useSettingsStore = create<SettingsState>()(
       projectFilters: [],
       setProjectFilters: (filters) => set({ projectFilters: filters }),
       // Sound notifications
-      soundOnPermission: false,
+      soundOnPermission: true,
       setSoundOnPermission: (enabled) => set({ soundOnPermission: enabled }),
       soundOnIdle: false,
       setSoundOnIdle: (enabled) => set({ soundOnIdle: enabled }),
@@ -251,6 +305,74 @@ export const useSettingsStore = create<SettingsState>()(
           : defaultPresetId
         set({ commandPresets: filtered, defaultPresetId: newDefault })
       },
+      // Project path presets
+      projectPathPresets: [],
+      addProjectPathPreset: (path) => {
+        const { projectPathPresets } = get()
+        const trimmed = path.trim()
+        if (!trimmed || projectPathPresets.includes(trimmed)) return
+        set({ projectPathPresets: [...projectPathPresets, trimmed] })
+      },
+      removeProjectPathPreset: (path) => {
+        const { projectPathPresets } = get()
+        set({ projectPathPresets: projectPathPresets.filter(p => p !== path) })
+      },
+      reorderProjectPathPresets: (presets) => {
+        set({ projectPathPresets: presets })
+      },
+      // Browser notifications
+      notifyOnPermission: true,
+      setNotifyOnPermission: (enabled) => set({ notifyOnPermission: enabled }),
+      notifyOnIdle: false,
+      setNotifyOnIdle: (enabled) => set({ notifyOnIdle: enabled }),
+      // Session grouping
+      sessionGroupMode: 'none' as SessionGroupMode,
+      setSessionGroupMode: (mode) => set({ sessionGroupMode: mode }),
+      collapsedProjects: [],
+      toggleProjectCollapsed: (projectPath) => set((state) => {
+        const collapsed = state.collapsedProjects.includes(projectPath)
+          ? state.collapsedProjects.filter(p => p !== projectPath)
+          : [...state.collapsedProjects, projectPath]
+        return { collapsedProjects: collapsed }
+      }),
+      // Cron Manager settings (WU-002)
+      cronPollInterval: 5,
+      setCronPollInterval: (v) => set({ cronPollInterval: v }),
+      cronAvatarStyle: 'bottts',
+      setCronAvatarStyle: (v) => set({ cronAvatarStyle: v }),
+      cronSudoGracePeriod: 300,
+      setCronSudoGracePeriod: (v) => set({ cronSudoGracePeriod: v }),
+      cronShowSystemJobs: true,
+      setCronShowSystemJobs: (v) => set({ cronShowSystemJobs: v }),
+      cronShowUserJobs: true,
+      setCronShowUserJobs: (v) => set({ cronShowUserJobs: v }),
+      cronDefaultTimelineVisible: false,
+      setCronDefaultTimelineVisible: (v) => set({ cronDefaultTimelineVisible: v }),
+      cronDefaultTimelineRange: '24h',
+      setCronDefaultTimelineRange: (v) => set({ cronDefaultTimelineRange: v }),
+      cronNotifyFailure: true,
+      setCronNotifyFailure: (v) => set({ cronNotifyFailure: v }),
+      cronNotifyMissedRun: true,
+      setCronNotifyMissedRun: (v) => set({ cronNotifyMissedRun: v }),
+      cronNotifyManualRun: true,
+      setCronNotifyManualRun: (v) => set({ cronNotifyManualRun: v }),
+      cronDesktopNotifications: false,
+      setCronDesktopNotifications: (v) => set({ cronDesktopNotifications: v }),
+      cronAutoTagSuggestions: true,
+      setCronAutoTagSuggestions: (v) => set({ cronAutoTagSuggestions: v }),
+      cronMaxHistoryDays: 90,
+      setCronMaxHistoryDays: (v) => set({ cronMaxHistoryDays: v }),
+      cronMaxHistoryPerJob: 500,
+      setCronMaxHistoryPerJob: (v) => set({ cronMaxHistoryPerJob: v }),
+      // Cron AI settings (WU-002)
+      cronAiEnabled: true,
+      setCronAiEnabled: (v) => set({ cronAiEnabled: v }),
+      cronAiDrawerWidth: 480,
+      setCronAiDrawerWidth: (v) => set({ cronAiDrawerWidth: v }),
+      cronAiAutoGreet: true,
+      setCronAiAutoGreet: (v) => set({ cronAiAutoGreet: v }),
+      cronAiProposalTimeout: 300000,
+      setCronAiProposalTimeout: (v) => set({ cronAiProposalTimeout: v }),
     }),
     {
       name: 'agentboard-settings',

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import AlertTriangleIcon from '@untitledui-icons/react/line/esm/AlertTriangleIcon'
 import Pin02Icon from '@untitledui-icons/react/line/esm/Pin02Icon'
+import Trash01Icon from '@untitledui-icons/react/line/esm/Trash01Icon'
 import type { AgentSession } from '@shared/types'
 import { getPathLeaf } from '../utils/sessionLabel'
 import { getSessionIdShort } from '../utils/sessionId'
@@ -16,6 +17,7 @@ interface InactiveSessionItemProps {
   onResume: (sessionId: string) => void
   onPreview: (session: AgentSession) => void
   onSetPinned?: (sessionId: string, isPinned: boolean) => void
+  onDelete?: (sessionId: string) => void
 }
 
 export default memo(function InactiveSessionItem({
@@ -26,6 +28,7 @@ export default memo(function InactiveSessionItem({
   onResume,
   onPreview,
   onSetPinned,
+  onDelete,
 }: InactiveSessionItemProps) {
   const lastActivity = formatRelativeTime(session.lastActivityAt)
   const directoryLeaf = getPathLeaf(session.projectPath)
@@ -174,6 +177,21 @@ export default memo(function InactiveSessionItem({
             >
               <Pin02Icon width={14} height={14} />
               {session.isPinned ? 'Unpin' : 'Pin'}
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setContextMenu(null)
+                onDelete(session.sessionId)
+              }}
+              className="w-full px-3 py-2 text-left text-sm text-secondary hover:bg-hover hover:text-primary flex items-center gap-2"
+              role="menuitem"
+              title="Delete session from database"
+            >
+              <Trash01Icon width={14} height={14} />
+              Delete
             </button>
           )}
         </div>

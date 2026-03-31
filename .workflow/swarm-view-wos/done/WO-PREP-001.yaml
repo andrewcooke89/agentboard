@@ -1,0 +1,209 @@
+# Codex prep: Create shared TypeScript types for the Swarm View feature.
+# All other WOs implement against these types.
+
+id: WO-PREP-001
+group_id: swarm-view
+title: "Create shared swarm TypeScript types and interfaces"
+description: |
+  Create a new file `src/shared/swarmTypes.ts` that exports all TypeScript types
+  needed for the Swarm View feature. These types define the contract between the
+  backend (event ingestion) and frontend (visualization).
+
+  Export the following types:
+
+  1. `SwarmEventType` — string literal union:
+     ```typescript
+     export type SwarmEventType =
+       | 'group_started'
+       | 'wo_status_changed'
+       | 'wo_completed'
+       | 'wo_failed'
+       | 'wo_escalated'
+       | 'group_completed'
+     ```
+
+  2. `SwarmEvent` — base event with discriminated union:
+     ```typescript
+     export interface SwarmEventBase {
+       type: SwarmEventType
+       groupId: string
+       timestamp: string  // ISO datetime
+     }
+
+     export interface GroupStartedEvent extends SwarmEventBase {
+       type: 'group_started'
+       totalWos: number
+       woIds: string[]
+       edges: Array<{ from: string; to: string }>  // dependency edges
+     }
+
+     export interface WoStatusChangedEvent extends SwarmEventBase {
+       type: 'wo_status_changed'
+       woId: string
+       oldStatus: WoStatus
+       newStatus: WoStatus
+       model: string
+       attempt: number
+       tier: number
+     }
+
+     export interface WoCompletedEvent extends SwarmEventBase {
+       type: 'wo_completed'
+       woId: string
+       tokenUsage: { inputTokens: number; outputTokens: number }
+       gateResults: GateResultSummary | null
+       filesChanged: string[]
+       durationSeconds: number
+     }
+
+     export interface WoFailedEvent extends SwarmEventBase {
+       type: 'wo_failed'
+       woId: string
+       error: string
+       gateDetail: string | null
+       model: string
+       attempt: number
+       tier: number
+     }
+
+     export interface WoEscalatedEvent extends SwarmEventBase {
+       type: 'wo_escalated'
+       woId: string
+       fromTier: number
+       toTier: number
+       toModel: string
+       errorHistory: ErrorHistoryEntry[]
+     }
+
+     export interface GroupCompletedEvent extends SwarmEventBase {
+       type: 'group_completed'
+       status: GroupStatus
+       totalDurationSeconds: number
+       completedWos: number
+       failedWos: number
+       totalTokens: { inputTokens: number; outputTokens: number }
+     }
+
+     export type SwarmEvent =
+       | GroupStartedEvent
+       | WoStatusChangedEvent
+       | WoCompletedEvent
+       | WoFailedEvent
+       | WoEscalatedEvent
+       | GroupCompletedEvent
+     ```
+
+  3. State types for the frontend store:
+     ```typescript
+     export type WoStatus = 'pending' | 'ready' | 'running' | 'completed' | 'failed' | 'escalated'
+     export type GroupStatus = 'pending' | 'running' | 'completed' | 'failed' | 'aborted'
+
+     export interface GateResultSummary {
+       allPassed: boolean
+       gates: Array<{ name: string; passed: boolean; output?: string }>
+     }
+
+     export interface ErrorHistoryEntry {
+       tier: number
+       model: string
+       attempt: number
+       error: string
+       gateDetail: string | null
+     }
+
+     export interface SwarmWoState {
+       woId: string
+       title: string
+       status: WoStatus
+       model: string
+       attempt: number
+       maxRetries: number
+       escalationTier: number
+       escalationChain: Array<{ model: string; maxRetries: number }>
+       dependsOn: string[]
+       tokenUsage: { inputTokens: number; outputTokens: number }
+       gateResults: GateResultSummary | null
+       errorHistory: ErrorHistoryEntry[]
+       filesChanged: string[]
+       startedAt: string | null
+       completedAt: string | null
+       durationSeconds: number | null
+     }
+
+     export interface SwarmGroupState {
+       groupId: string
+       status: GroupStatus
+       totalWos: number
+       completedWos: number
+       failedWos: number
+       edges: Array<{ from: string; to: string }>
+       wos: Record<string, SwarmWoState>
+       startedAt: string | null
+       totalDurationSeconds: number | null
+       totalTokens: { inputTokens: number; outputTokens: number }
+     }
+     ```
+
+  4. WebSocket message types (to be added to the existing message system):
+     ```typescript
+     export interface SwarmUpdateMessage {
+       type: 'swarm-update'
+       event: SwarmEvent
+     }
+
+     export interface SwarmStateMessage {
+       type: 'swarm-state'
+       groups: SwarmGroupState[]
+     }
+     ```
+
+  Make sure all types are properly exported with consistent naming conventions
+  matching the existing codebase style (camelCase properties, PascalCase types).
+
+task: implement
+scope: src/shared/
+
+interface_files: []
+reference_files:
+  - src/shared/types.ts
+input_files: []
+
+intern_context:
+  enabled: false
+  search_depth: 1
+  tools:
+    - file_dependencies
+
+depends_on: []
+prefer_after: []
+
+gates:
+  compile: false
+  lint: false
+  typecheck: true
+  tests:
+    run: false
+    scope: relevant
+    specific: []
+    expect: pass
+
+execution:
+  mode: unattended
+  model: codex
+  max_retries: 1
+  timeout_minutes: 5
+
+escalation:
+  enabled: false
+  after_retries: 2
+  to: opus
+  mode: attended
+  include_error_context: true
+
+isolation:
+  type: none
+  base: HEAD
+
+output:
+  commit: true
+  commit_prefix: "feat"

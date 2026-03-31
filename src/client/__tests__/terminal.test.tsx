@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { Session } from '@shared/types'
-import { useThemeStore } from '../stores/themeStore'
 
 const globalAny = globalThis as typeof globalThis & {
   document?: Document
@@ -98,7 +97,11 @@ mock.module('@xterm/addon-web-links', () => ({
   WebLinksAddon: class {},
 }))
 
-const { default: Terminal } = await import('../components/Terminal')
+// Import stores and components after mocks to ensure they use the mocked module context
+const [{ default: Terminal }, { useThemeStore }] = await Promise.all([
+  import('../components/Terminal'),
+  import('../stores/themeStore'),
+])
 
 const baseSession: Session = {
   id: 'session-1',
@@ -194,6 +197,10 @@ beforeEach(() => {
   } as unknown as Navigator
 
   globalAny.window = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    innerWidth: 1024,
+    innerHeight: 768,
     setTimeout: (() => 1 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout,
     clearTimeout: (() => {}) as typeof clearTimeout,
     matchMedia: () => ({
@@ -205,6 +212,13 @@ beforeEach(() => {
   } as unknown as Window & typeof globalThis
 
   globalAny.document = {
+    documentElement: {
+      setAttribute: () => {},
+      scrollLeft: 0,
+      scrollTop: 0,
+    },
+    // framer-motion's DocumentProjectionNode reads document.body.scrollLeft/scrollTop
+    body: { scrollLeft: 0, scrollTop: 0 },
     fonts: { ready: Promise.resolve() },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -248,7 +262,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={(msg) => { sentMessages.push(msg) }}
+          sendMessage={(msg) => { sentMessages.push(msg); return true }}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -340,7 +354,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -466,7 +480,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession, secondSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={(id) => selectCalls.push(id)}
@@ -535,7 +549,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={(msg) => { sentMessages.push(msg) }}
+          sendMessage={(msg) => { sentMessages.push(msg); return true }}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -590,7 +604,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="reconnecting"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}
@@ -634,7 +648,7 @@ describe('Terminal', () => {
           session={baseSession}
           sessions={[baseSession]}
           connectionStatus="connected"
-          sendMessage={() => {}}
+          sendMessage={() => true}
           subscribe={() => () => {}}
           onClose={() => {}}
           onSelectSession={() => {}}

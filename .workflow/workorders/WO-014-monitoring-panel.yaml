@@ -1,0 +1,186 @@
+work_order_id: WO-014
+title: "Phase 14: Build Monitoring Panel & Task Queue Integration"
+phase: 14
+feature_id: FEAT-005
+priority: medium
+estimated_hours: 5
+depends_on:
+  - WO-010  # Needs workflow store
+  - WO-011  # Needs pipeline diagram
+
+description: |
+  Create WorkflowPanel component (right-side panel for monitoring active runs).
+  Add workflow badge to TaskItem to show which workflow a task belongs to.
+  Panel shows active workflow runs with compact pipeline diagrams.
+
+  Features:
+  - Toggle panel with keyboard shortcut
+  - List active workflow runs
+  - Compact pipeline diagram per run
+  - Click to expand full detail
+  - Task queue shows workflow badge on workflow tasks
+
+context:
+  existing_patterns:
+    - "Right panel components: TaskQueue.tsx (lines 10-150)"
+    - "Panel toggle in App.tsx"
+    - "TaskItem.tsx for task rendering (lines 10-80)"
+  files_to_create:
+    - src/client/components/WorkflowPanel.tsx
+  files_to_modify:
+    - src/client/components/TaskItem.tsx (add workflow badge)
+    - src/client/App.tsx (add panel toggle)
+  reference_files:
+    - src/client/components/TaskQueue.tsx (panel pattern)
+    - feature_brief.md (lines 584-591 for Phase 14 spec)
+    - .workflow/blackboard.yaml (DEC-008: right panel for monitoring)
+
+subtasks:
+  - id: ST-014-01
+    title: "Create WorkflowPanel component"
+    description: |
+      Right-side panel showing active workflow runs.
+      Follow TaskQueue.tsx pattern.
+    acceptance_criteria:
+      - Component: WorkflowPanel({ isOpen, onClose })
+      - Fetch active runs: workflowStore.getActiveRuns()
+      - List runs with:
+        - Workflow name
+        - Run status badge
+        - Current step indicator
+        - Compact pipeline diagram (smaller nodes)
+        - Expand button
+      - Empty state: "No active workflow runs"
+      - Close button or click outside to close
+      - Fixed position, slides in from right
+    files_modified:
+      - src/client/components/WorkflowPanel.tsx (create)
+    estimated_hours: 2.0
+    error_handling:
+      - Empty state for no active runs
+
+  - id: ST-014-02
+    title: "Add compact pipeline diagram variant"
+    description: |
+      Smaller version of PipelineDiagram for panel view.
+    acceptance_criteria:
+      - Add size prop to PipelineDiagram: 'normal' | 'compact'
+      - Compact mode:
+        - Smaller node size (half height/width)
+        - No step names (just icons and colors)
+        - Tooltip on hover shows step name
+        - No detail panel on click (expand opens full view instead)
+      - Use in WorkflowPanel
+    files_modified:
+      - src/client/components/PipelineDiagram.tsx
+    estimated_hours: 1.0
+    error_handling:
+      - Fallback to normal size if compact breaks
+
+  - id: ST-014-03
+    title: "Add workflow badge to TaskItem"
+    description: |
+      Show workflow name badge on tasks that belong to workflows.
+    acceptance_criteria:
+      - Check if task.workflow_run_id is set
+      - If set: show badge with workflow name and step name
+      - Badge format: "🔄 {workflow_name} - {workflow_step_name}"
+      - Badge color: blue/purple to distinguish from regular tasks
+      - Tooltip: "Part of workflow run {runId}"
+      - Click badge: open workflow detail view for run
+    files_modified:
+      - src/client/components/TaskItem.tsx
+    estimated_hours: 1.0
+    error_handling:
+      - Missing workflow data doesn't crash component
+
+  - id: ST-014-04
+    title: "Add panel toggle to App.tsx"
+    description: |
+      Wire WorkflowPanel into main app with toggle.
+    acceptance_criteria:
+      - State: workflowPanelOpen (boolean)
+      - Keyboard shortcut: Shift+M to toggle (M for Monitor)
+      - Render WorkflowPanel with isOpen prop
+      - Panel overlays content (z-index higher than main content)
+      - Panel slides in/out with CSS transition
+    files_modified:
+      - src/client/App.tsx
+    estimated_hours: 0.5
+
+  - id: ST-014-05
+    title: "Add real-time updates to WorkflowPanel"
+    description: |
+      Update panel automatically when workflow runs change.
+    acceptance_criteria:
+      - Subscribe to workflow-run-update messages
+      - Re-render panel when active runs change
+      - Badge count: show number of active runs
+      - Pulse animation on status changes
+    files_modified:
+      - src/client/components/WorkflowPanel.tsx
+    estimated_hours: 0.5
+    error_handling:
+      - WebSocket disconnect doesn't crash panel
+
+  - id: ST-014-06
+    title: "Add unit tests for WorkflowPanel and TaskItem badge"
+    description: |
+      Create unit test suite for panel and badge.
+    acceptance_criteria:
+      - Test WorkflowPanel renders active runs
+      - Test WorkflowPanel empty state
+      - Test compact pipeline diagram renders
+      - Test TaskItem shows workflow badge when workflow_run_id set
+      - Test TaskItem no badge when workflow_run_id null
+      - Mock useWorkflowStore
+      - All tests pass with bun test
+    files_modified:
+      - src/client/components/WorkflowPanel.test.tsx (create)
+      - src/client/components/TaskItem.test.tsx (update)
+    estimated_hours: 1.5
+    error_handling:
+      - Tests verify edge cases (missing data, empty lists)
+
+test_criteria:
+  - test_type: compilation
+    description: "TypeScript compilation passes"
+    command: "bun run typecheck"
+    expected_output: "No TypeScript errors"
+
+  - test_type: unit
+    description: "All workflow panel unit tests pass"
+    command: "bun test src/client/components/WorkflowPanel.test.tsx"
+    expected_output: "All tests pass"
+
+acceptance_criteria:
+  - WorkflowPanel component shows active workflow runs
+  - Compact pipeline diagram variant for panel
+  - TaskItem shows workflow badge for workflow tasks
+  - Panel toggle with keyboard shortcut (Shift+M)
+  - Real-time updates when runs change
+  - Empty state for no active runs
+  - Click workflow badge opens workflow detail
+  - Unit tests achieve >90% coverage
+  - bun run typecheck passes
+  - bun run test passes
+
+rollback_procedures:
+  - "git checkout src/client/components/WorkflowPanel.tsx if issues arise"
+  - "git checkout src/client/components/TaskItem.tsx to remove badge"
+  - "git checkout src/client/App.tsx to remove panel toggle"
+  - "No server changes in this phase"
+
+notes:
+  - "Follow TaskQueue.tsx pattern for panel behavior"
+  - "Workflow badge on tasks enables tracing task -> workflow"
+  - "Right panel for monitoring (DEC-008), full view for CRUD"
+  - "Compact diagram balances information density with usability"
+  - "Real-time updates key for monitoring use case"
+
+specs_covered:
+  - UI-PANEL-001  # Workflow monitoring panel
+  - UI-PANEL-002  # Compact pipeline diagram
+  - UI-PANEL-003  # Panel toggle
+  - UI-BADGE-001  # Workflow badge on tasks
+  - UI-BADGE-002  # Badge click navigation
