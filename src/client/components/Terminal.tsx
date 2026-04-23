@@ -69,6 +69,27 @@ function triggerHaptic() {
   }
 }
 
+function MoreMenuDropdown({ onRename, onSettings }: { onRename: () => void; onSettings: () => void }) {
+  return (
+    <div className="absolute right-0 top-full mt-1 z-20 min-w-[140px] rounded-md border border-border bg-elevated shadow-lg py-1">
+      <button
+        onClick={onRename}
+        className="w-full px-3 py-2 text-left text-sm text-secondary hover:bg-hover hover:text-primary flex items-center gap-2"
+      >
+        <Edit05Icon width={14} height={14} />
+        Rename
+      </button>
+      <button
+        onClick={onSettings}
+        className="w-full px-3 py-2 text-left text-sm text-secondary hover:bg-hover hover:text-primary flex items-center gap-2"
+      >
+        <Settings01Icon width={14} height={14} />
+        Settings
+      </button>
+    </div>
+  )
+}
+
 export default function Terminal({
   session,
   sessions,
@@ -558,6 +579,36 @@ export default function Terminal({
       return scrolledUp
     }
 
+    const startMomentumAnimation = (initialVelocity: number) => {
+      let currentVelocity = initialVelocity
+      let lastFrameTime = performance.now()
+
+      const animate = () => {
+        const now = performance.now()
+        const deltaTime = now - lastFrameTime
+        lastFrameTime = now
+
+        const distance = currentVelocity * deltaTime
+        accumulatedDelta += distance
+        const threshold = Math.max(6, lineHeightPx * 0.6)
+        const scrollEvents = Math.trunc(accumulatedDelta / threshold)
+        if (scrollEvents !== 0) {
+          sendScrollToTmux(scrollEvents)
+          accumulatedDelta -= scrollEvents * threshold
+        }
+
+        currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
+
+        if (Math.abs(currentVelocity) > 0.02) {
+          momentumAnimationId = requestAnimationFrame(animate)
+        } else {
+          momentumAnimationId = null
+        }
+      }
+
+      momentumAnimationId = requestAnimationFrame(animate)
+    }
+
     const resetTouchState = () => {
       lastTouchY = null
       velocity = 0
@@ -681,19 +732,20 @@ export default function Terminal({
       // Don't preventDefault - that breaks iOS selection dismissal
       // We'll swallow the synthetic mouse event instead to protect tmux
       if (isSelectingTextRef.current || activeSelection) {
-        swallowNextMouseRef.current = inTmuxCopyModeRef.current
+        if (inTmuxCopyModeRef.current) {
+          swallowNextMouseRef.current = true
+        }
         return
       }
 
+      if (isiOS && !hasMoved && touchDuration >= LONG_PRESS_MS) return
+      if (!hasMoved && inTmuxCopyModeRef.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        swallowNextMouseRef.current = true
+        return
+      }
       if (!hasMoved) {
-        if (isiOS && touchDuration >= LONG_PRESS_MS) return
-        // If in copy-mode, prevent tap from reaching xterm.js (which would send click to tmux and exit copy-mode)
-        if (inTmuxCopyModeRef.current) {
-          e.preventDefault()
-          e.stopPropagation()
-          swallowNextMouseRef.current = true
-          return
-        }
         focusTerminalInput()
         return
       }
@@ -701,34 +753,8 @@ export default function Terminal({
       const minVelocity = 0.12 // pixels per ms
       if (Math.abs(endVelocity) <= minVelocity) return
 
-    const animateMomentum = () => {
-      const now = performance.now()
-      const deltaTime = now - lastFrameTime
-      lastFrameTime = now
-
-      const distance = currentVelocity * deltaTime
-      accumulatedDelta += distance
-      const threshold = Math.max(6, lineHeightPx * 0.6)
-      const scrollEvents = Math.trunc(accumulatedDelta / threshold)
-      if (scrollEvents !== 0) {
-        sendScrollToTmux(scrollEvents)
-        accumulatedDelta -= scrollEvents * threshold
-      }
-
-      currentVelocity *= Math.pow(0.95, deltaTime / 16.67)
-
-      if (Math.abs(currentVelocity) > 0.02) {
-        momentumAnimationId = requestAnimationFrame(animateMomentum)
-      } else {
-        momentumAnimationId = null
-      }
+      startMomentumAnimation(endVelocity)
     }
-
-    let currentVelocity = endVelocity
-    let lastFrameTime = performance.now()
-
-    momentumAnimationId = requestAnimationFrame(animateMomentum)
-  }
 
     // Swallow synthetic mouse events after iOS selection dismissal to protect tmux
     const handleMouseDown = (e: MouseEvent) => {
@@ -946,25 +972,13 @@ export default function Terminal({
               </button>
 
               {showMoreMenu && (
-                <div className="absolute right-0 top-full mt-1 z-20 min-w-[140px] rounded-md border border-border bg-elevated shadow-lg py-1">
-                  <button
-                    onClick={handleStartRename}
-                    className="w-full px-3 py-2 text-left text-sm text-secondary hover:bg-hover hover:text-primary flex items-center gap-2"
-                  >
-                    <Edit05Icon width={14} height={14} />
-                    Rename
-                  </button>
-                  <button
-                    onClick={() => {
-                      onOpenSettings()
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full px-3 py-2 text-left text-sm text-secondary hover:bg-hover hover:text-primary flex items-center gap-2"
-                  >
-                    <Settings01Icon width={14} height={14} />
-                    Settings
-                  </button>
-                </div>
+                <MoreMenuDropdown
+                  onRename={handleStartRename}
+                  onSettings={() => {
+                    onOpenSettings()
+                    setShowMoreMenu(false)
+                  }}
+                />
               )}
             </div>
           )}

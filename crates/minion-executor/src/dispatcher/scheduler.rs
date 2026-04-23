@@ -872,6 +872,8 @@ mod tests {
                 token_usage: TokenUsage {
                     input_tokens: 100,
                     output_tokens: 50,
+                    cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
                 },
                 iterations: 1,
                 retries_used: 0,
@@ -931,6 +933,8 @@ mod tests {
                 token_usage: TokenUsage {
                     input_tokens: 100,
                     output_tokens: 50,
+                    cache_read_input_tokens: 0,
+                    cache_creation_input_tokens: 0,
                 },
                 iterations: 1,
                 retries_used: 0,

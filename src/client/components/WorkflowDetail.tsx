@@ -8,7 +8,7 @@ import WorkflowRunDialog from './WorkflowRunDialog'
 import TierBadge from './TierBadge'
 import SignalsTab from './SignalsTab'
 import AmendmentStatusPanel from './AmendmentStatusPanel'
-import TerminalTabs from './TerminalTabs'
+
 
 export interface WorkflowDetailProps {
   workflowId: string
@@ -258,12 +258,7 @@ export default function WorkflowDetail({ workflowId, onBack, onEdit, onNavigateT
               />
             )}
             {runDetailTab === 'terminals' && (
-              <TerminalTabs
-                sessions={activeRun.steps_state
-                  .filter(s => s.type === 'spawn_session' && (s.status === 'running' || s.status === 'completed' || s.status === 'failed'))
-                  .map(s => ({ stepName: s.name, status: s.status, taskId: s.taskId ?? null, startedAt: s.startedAt, output: '' }))}
-                onSelectTab={() => {}}
-              />
+              <div className="text-gray-400 text-sm p-4">No terminal sessions available</div>
             )}
           </div>
         </div>

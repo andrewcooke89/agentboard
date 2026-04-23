@@ -8,6 +8,7 @@ import type { Database as SQLiteDatabase } from 'bun:sqlite'
 import { deleteOrphanedPrefs, pruneRunHistory as pruneDbRunHistory, getRunHistory } from './db'
 import type {
   CronJob,
+  CronJobDetail,
   JobRunRecord,
   CronCreateConfig,
   SystemdCreateConfig,
@@ -309,21 +310,21 @@ export class CronManager {
     // Interpreter + script argument
     const interpreters = ['bash', 'sh', 'python', 'python3', 'node', 'ruby', 'perl']
     const basename = first.split('/').pop() ?? first
-    if (!interpreters.includes(basename) || parts.length <= 1) return null
-
-    const second = parts[1]
-    if (
-      second.startsWith('/') ||
-      second.startsWith('./') ||
-      second.startsWith('~/') ||
-      second.endsWith('.py') ||
-      second.endsWith('.sh') ||
-      second.endsWith('.rb') ||
-      second.endsWith('.pl') ||
-      second.endsWith('.js') ||
-      second.endsWith('.ts')
-    ) {
-      return second
+    if (interpreters.includes(basename) && parts.length > 1) {
+      const second = parts[1]
+      if (
+        second.startsWith('/') ||
+        second.startsWith('./') ||
+        second.startsWith('~/') ||
+        second.endsWith('.py') ||
+        second.endsWith('.sh') ||
+        second.endsWith('.rb') ||
+        second.endsWith('.pl') ||
+        second.endsWith('.js') ||
+        second.endsWith('.ts')
+      ) {
+        return second
+      }
     }
 
     return null
@@ -990,7 +991,7 @@ export class CronManager {
     if (isSystemd) {
       const scopeArgs = job.source === 'user-systemd' ? ['--user'] : []
       const timerUnit = `${job.name}.timer`
-      const _serviceUnit = `${job.name}.service`
+      const serviceUnit = `${job.name}.service`
 
       if (job.requiresSudo) {
         await this.runWithSudo(['systemctl', ...scopeArgs, 'stop', timerUnit], sudoCredential)
@@ -1232,8 +1233,7 @@ export class CronManager {
 
   /** Reject commands with newlines and null bytes */
   private validateCronCommand(command: string): void {
-    // eslint-disable-next-line no-control-regex
-    if (/[\n\r\x00]/.test(command)) {
+    if (/[\n\r\0]/.test(command)) {
       throw new Error('Command contains invalid characters (newline/carriage return/null byte)')
     }
     if (!command.trim()) {

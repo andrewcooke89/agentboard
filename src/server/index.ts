@@ -384,10 +384,10 @@ function getStats(): DashboardStats {
   const activeSessions = Array.isArray(sessions) ? sessions.length : 0
   const tasks = taskStore.listTasks({ limit: 1000 })
   const totalTasks = tasks.length
-  const runningTasks = tasks.filter((t: { status: string }) => t.status === 'running').length
+  const runningTasks = tasks.filter((t) => t.status === 'running').length
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const completedTasksToday = tasks.filter((t: { status: string; completedAt?: string }) => {
+  const completedTasksToday = tasks.filter((t) => {
     if (t.status !== 'completed' || !t.completedAt) return false
     return new Date(t.completedAt).getTime() >= today.getTime()
   }).length
@@ -558,7 +558,7 @@ const wsHandlers = {
 }
 
 // --- Server ---
-const serverOptions: Parameters<typeof Bun.serve<WSData>>[0] = {
+const serverOptions = {
   port: config.port,
   hostname: config.hostname,
   ...(tlsEnabled && {
@@ -567,7 +567,7 @@ const serverOptions: Parameters<typeof Bun.serve<WSData>>[0] = {
       key: Bun.file(config.tlsKey!),
     },
   }),
-  fetch(req, server) {
+  fetch(req: Request, server: any) {
     const url = new URL(req.url)
     if (url.pathname === '/ws') {
       if (

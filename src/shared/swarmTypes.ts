@@ -11,25 +11,28 @@ export type SwarmEventType =
 export interface GroupStartedEvent {
   type: 'group_started'
   groupId: string
-  timestamp: number
+  timestamp: string
   totalWos: number
+  woIds: string[]
+  edges: Array<{ from: string; to: string }>
 }
 
 export interface WoStatusChangedEvent {
   type: 'wo_status_changed'
   groupId: string
-  timestamp: number
+  timestamp: string
   woId: string
   model: string
   tier: number
-  newStatus: string
+  oldStatus: WoStatus
+  newStatus: WoStatus
   attempt: number
 }
 
 export interface WoCompletedEvent {
   type: 'wo_completed'
   groupId: string
-  timestamp: number
+  timestamp: string
   woId: string
   durationSeconds: number
   tokenUsage: {
@@ -44,7 +47,7 @@ export interface WoCompletedEvent {
 export interface WoFailedEvent {
   type: 'wo_failed'
   groupId: string
-  timestamp: number
+  timestamp: string
   woId: string
   model: string
   tier: number
@@ -56,7 +59,7 @@ export interface WoFailedEvent {
 export interface WoEscalatedEvent {
   type: 'wo_escalated'
   groupId: string
-  timestamp: number
+  timestamp: string
   woId: string
   fromTier: number
   toTier: number
@@ -67,11 +70,12 @@ export interface WoEscalatedEvent {
 export interface GroupCompletedEvent {
   type: 'group_completed'
   groupId: string
-  timestamp: number
+  timestamp: string
   status: 'completed' | 'failed' | 'partial'
   completedWos: number
   failedWos: number
   totalDurationSeconds: number
+  totalTokens: { inputTokens: number; outputTokens: number }
 }
 
 export type SwarmEvent =

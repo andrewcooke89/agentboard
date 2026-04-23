@@ -76,14 +76,6 @@ function getStatusDotLabel(status: TabStatus): string {
   }
 }
 
-function NoSelectionMessage() {
-  return (
-    <div className="flex items-center justify-center h-full text-gray-500 text-sm">
-      Select a tab to view output
-    </div>
-  )
-}
-
 export default function TerminalTabs({
   sessions,
   activeTabId,
@@ -353,7 +345,9 @@ export default function TerminalTabs({
             {selectedSession.output || '(no output yet)'}
           </pre>
         ) : (
-          <NoSelectionMessage />
+          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+            Select a tab to view output
+          </div>
         )}
       </div>
     </div>

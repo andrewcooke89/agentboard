@@ -17,6 +17,7 @@ use tracing::{debug, info, warn};
 use crate::api_client::{ApiClient, ContentBlock, Message, MessagesRequest, RateLimitError};
 use crate::config::Config;
 use crate::context::{self, AssembledContext};
+use crate::damage_guard::{self, DamageThresholds};
 use crate::diff::StructuredDiff;
 use crate::gates::{self, GateBaseline, GateResults};
 use crate::mcp_client::McpClient;
@@ -90,6 +91,12 @@ pub struct TokenUsage {
 
     /// Total output tokens.
     pub output_tokens: u32,
+
+    /// Input tokens served from provider prefix cache.
+    pub cache_read_input_tokens: u32,
+
+    /// Input tokens written to provider prefix cache.
+    pub cache_creation_input_tokens: u32,
 }
 
 /// Execute a work order through the three-phase pipeline.
@@ -187,6 +194,8 @@ pub async fn execute(
         all_tool_calls.extend(agent_result.tool_calls);
         total_token_usage.input_tokens += agent_result.token_usage.input_tokens;
         total_token_usage.output_tokens += agent_result.token_usage.output_tokens;
+        total_token_usage.cache_read_input_tokens += agent_result.token_usage.cache_read_input_tokens;
+        total_token_usage.cache_creation_input_tokens += agent_result.token_usage.cache_creation_input_tokens;
         total_iterations += agent_result.iterations;
         last_diffs = agent_result.diffs.clone();
 
@@ -337,6 +346,9 @@ async fn run_agent_loop(
     let mut token_usage = TokenUsage::default();
     let mut iterations: u32 = 0;
 
+    // Cache tool definitions once — they're identical across iterations
+    let tool_defs = registry.tool_definitions();
+
     let timeout_duration = std::time::Duration::from_secs(config.timeout_seconds);
 
     let loop_result = tokio::time::timeout(timeout_duration, async {
@@ -348,7 +360,7 @@ async fn run_agent_loop(
                 max_tokens: 4096,
                 system: Some(system_prompt.clone()),
                 messages: messages.clone(),
-                tools: registry.tool_definitions(),
+                tools: tool_defs.clone(),
             };
 
             // Call API with rate-limit retry
@@ -366,6 +378,8 @@ async fn run_agent_loop(
 
             token_usage.input_tokens += response.usage.input_tokens;
             token_usage.output_tokens += response.usage.output_tokens;
+            token_usage.cache_read_input_tokens += response.usage.cache_read_input_tokens;
+            token_usage.cache_creation_input_tokens += response.usage.cache_creation_input_tokens;
 
             let assistant_message = Message {
                 role: "assistant".to_string(),
@@ -491,7 +505,7 @@ fn build_system_prompt(work_order: &WorkOrder) -> String {
 ## Tools
 
 - **write_file** — Produce file changes (see format below). This is your primary tool.
-- **read_file** — Read a file's contents. Use if you need to see a file not already provided in context.
+- **read_file** — Read a file's contents with line numbers. Use if you need to see a file not already provided in context. Supports `offset` (1-based start line) and `limit` (max lines) to read specific ranges of large files.
 - **done** — Signal completion. Call this when all changes are written.
 - **search** — Search the codebase if you need additional context not provided. Use sparingly.
 
@@ -642,6 +656,7 @@ depends_on:
             agent_brief: None,
             file_contents: vec![],
             dependencies: None,
+            reference_hits: None,
         }
     }
 
@@ -654,6 +669,7 @@ depends_on:
                 source: context::FileContextSource::InternReadFile,
             }],
             dependencies: Some("types.ts -> utils.ts".into()),
+            reference_hits: None,
         }
     }
 
@@ -843,6 +859,32 @@ pub fn auto_commit_files(
     }
 
     info!(wo_id = %work_order.id, files = ?changed_files, "Staged files");
+
+    // Damage guard: inspect the staged diff for the stub/gutting pattern that
+    // caused the 2026-04-23 recovery cascade. If detected, unstage the files
+    // and bail — the minion must retry with feedback.
+    let thresholds = DamageThresholds::default();
+    let report = damage_guard::check_damage(changed_files, working_dir, &thresholds)
+        .context("damage_guard check failed")?;
+    if !report.is_clean() {
+        warn!(
+            wo_id = %work_order.id,
+            findings = report.findings.len(),
+            "damage_guard blocked commit"
+        );
+        // Unstage so the tree isn't left in a half-committed state.
+        let mut reset_cmd = Command::new("git");
+        reset_cmd.arg("reset").arg("HEAD").arg("--").current_dir(working_dir);
+        for f in changed_files {
+            reset_cmd.arg(f);
+        }
+        let _ = reset_cmd.output();
+        anyhow::bail!(
+            "damage_guard blocked commit for {}: {}",
+            work_order.id,
+            report.summary()
+        );
+    }
 
     // git commit
     let scope_short = scope.trim_end_matches('/');

@@ -7,6 +7,7 @@ pub mod cc_executor;
 pub mod codex_executor;
 pub mod config;
 pub mod context;
+pub mod damage_guard;
 pub mod diff;
 pub mod dispatcher;
 pub mod event_reporter;

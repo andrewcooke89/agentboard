@@ -188,7 +188,7 @@ export class SwarmManager {
       model: event.model,
       attempt: event.attempt,
       escalationTier: event.tier,
-      startedAt: current.startedAt ?? (event.newStatus === 'running' ? String(event.timestamp) : null),
+      startedAt: current.startedAt ?? (event.newStatus === 'running' ? event.timestamp : null),
     }
   }
 
@@ -210,8 +210,8 @@ export class SwarmManager {
         : null,
       filesChanged: [...event.filesChanged],
       durationSeconds: event.durationSeconds,
-      completedAt: String(event.timestamp),
-      startedAt: current.startedAt ?? String(event.timestamp),
+      completedAt: event.timestamp,
+      startedAt: current.startedAt ?? event.timestamp,
       unifiedDiff: event.unifiedDiff ?? null,
     }
 
@@ -226,7 +226,7 @@ export class SwarmManager {
           woId: event.woId,
           action: 'completed',
           model: group.wos[event.woId]?.model || undefined,
-          durationSeconds: event.durationSeconds ?? undefined,
+          durationSeconds: event.durationSeconds,
           inputTokens: event.tokenUsage?.inputTokens ?? 0,
           outputTokens: event.tokenUsage?.outputTokens ?? 0,
           source: 'swarm-ui',
@@ -257,8 +257,8 @@ export class SwarmManager {
           gateDetail: event.gateDetail,
         },
       ],
-      completedAt: String(event.timestamp),
-      startedAt: current.startedAt ?? String(event.timestamp),
+      completedAt: event.timestamp,
+      startedAt: current.startedAt ?? event.timestamp,
     }
 
     if (!wasFailed) {

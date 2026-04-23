@@ -1,0 +1,15 @@
+62337c1b0627a743034f12cc2eab66010bf827dc	2026-04-13 15:49:29 +0800	fix(src/client/components): [TS7006] Parameter 'isAtBottom' implicitly has an 'any' type. [WO-TKT-0200]
+211192cc2855896989fbfdbad1364cf2350330f6	2026-04-06 02:04:24 +0800	fix(src/server/scripts): [eslint(no-useless-catch)] eslint(no-useless-catch): Unnecessary try/catch wrapper [WO-TKT-0886]
+697aee369de7384ed7947fb7ac6112742e90fb07	2026-03-31 02:04:52 +0800	fix(.): [stale-dep-major] @xterm/xterm: current 5.5.0 → latest 6.0.0 (major version behind) [WO-TKT-0802]
+3c29d0e4a836db17094a3bbbf8377b49aebc94af	2026-03-31 02:04:21 +0800	fix(src/server/scripts): [eslint(no-useless-catch)] eslint(no-useless-catch): Unnecessary try/catch wrapper [WO-TKT-0707]
+1a672b2c91e46be5b2ec6c6a43cce2a489bbc5bf	2026-03-28 19:54:21 +0800	fix(src/shared/__tests__): [TS2322] Type '{ type: "nightly-report"; report: Record<string, unknown>; } 
+31e59fc6614357ea389ce688390c3075dc32dc7b	2026-03-28 19:54:11 +0800	fix(src/client/components/swarm): [TS2322] Type '{ type: "group_completed"; message: string; severity: "error" 
+f209e6a10563f30c6d9e440a0ad11c0f10540a2c	2026-03-28 19:52:51 +0800	fix(src/server): [TS2820] Type '"stats-update"' is not assignable to type '"auth-failed" 
+b089cec37a6f70b2c85215aeb12290253cc387fb	2026-03-28 19:51:31 +0800	fix(.): [stale-dep-major] react: current 18.3.1 → latest 19.2.4 (major version behind) [WO-TKT-0502]
+65e659544af7d000ae91d57ada61c57e862df79b	2026-03-28 18:07:40 +0800	fix(src/server): [TS2769] No overload matches this call. [WO-TKT-0492]
+41962a3b2ccf644a2b4bb894e17df45686f1da50	2026-03-28 18:06:00 +0800	fix(src/client/components/swarm): [TS2322] Type '{ type: "wo_completed"; woId: any; message: string; severity: "success"; id: string; timestamp: string... [WO-TKT-0480]
+35311be317ea9dfcaae5bfafd8702ecea5eef2e7	2026-03-28 18:05:11 +0800	fix(src/client): [TS2367] This comparison appears to be unintentional because the types '"auth-failed" 
+232c53a7005f47ce7e071afda2fe6ac49f688d5a	2026-03-28 18:05:09 +0800	fix(src/server): [TS2339] Property 'attempt' does not exist on type 'WoFailedEvent'. [WO-TKT-0489]
+18385fb73e65da1ea877ac2e5c6e427db9f4d25a	2026-03-28 16:18:56 +0800	fix(src/server): [TS2339] Property 'filesChanged' does not exist on type 'WoCompletedEvent'. [WO-TKT-0487]
+a0e1183e1681201ce45b57010e35dc5fc437467b	2026-03-28 15:55:52 +0800	fix(src/server): [TS2820] Type '"stats-update"' is not assignable to type '"auth-failed" 
+840f5517ec4733d397fd4e0df5a848bb4f5cf456	2026-03-28 15:53:49 +0800	fix(src/server): [TS2339] Property 'attempt' does not exist on type 'WoFailedEvent'. [WO-TKT-0489]

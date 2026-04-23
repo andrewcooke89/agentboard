@@ -28,6 +28,8 @@ interface ProjectConfig {
   test_cmd: string
   fix_model: string
   auto_merge_efforts?: string[]
+  // See minion-fix.ts — high-cascade tags forced out of auto-fix lane.
+  skip_auto_fix_tags?: string[]
   plan_model?: string
   impl_model?: string
 }

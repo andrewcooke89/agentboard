@@ -98,6 +98,8 @@ impl ApiClient {
             stop_reason = ?resp.stop_reason,
             input_tokens = resp.usage.input_tokens,
             output_tokens = resp.usage.output_tokens,
+            cache_read = resp.usage.cache_read_input_tokens,
+            cache_creation = resp.usage.cache_creation_input_tokens,
             "received messages API response"
         );
 
@@ -218,6 +220,14 @@ pub struct Usage {
 
     /// Output tokens generated.
     pub output_tokens: u32,
+
+    /// Input tokens read from cache (provider prefix caching).
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
+
+    /// Input tokens written to cache (first request establishing the cache).
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
 }
 
 #[cfg(test)]

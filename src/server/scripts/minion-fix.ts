@@ -37,6 +37,12 @@ interface ProjectConfig {
   fix_model: string
   fix_model_medium?: string
   auto_merge_efforts?: string[]  // efforts that get auto-merged (default: ['small'])
+  // Tags that force a ticket out of the auto-merge queue, regardless of its
+  // `effort` classification. Intended for high-cascade error classes where
+  // a minion's "fix" historically damaged working code (e.g. deep-nesting,
+  // empty-catch, TS2307 missing-module). These route to medium/plan-dispatch
+  // instead, which runs a single planned fix under human-reviewable control.
+  skip_auto_fix_tags?: string[]
 }
 
 interface MinionConfig {
@@ -355,7 +361,8 @@ function fetchTickets(
   storage: FileStorage,
   autoMergeEfforts: Set<string>,
   smallLimit: number,
-): { small: Ticket[]; medium: Ticket[]; skippedBlocked: number } {
+  skipAutoFixTags: Set<string>,
+): { small: Ticket[]; medium: Ticket[]; skippedBlocked: number; skippedHighCascade: number } {
   const listResult = storage.listTickets({
     status: 'open',
     sort_by: 'severity',
@@ -367,6 +374,7 @@ function fetchTickets(
   const small: Ticket[] = []
   const medium: Ticket[] = []
   let skippedBlocked = 0
+  let skippedHighCascade = 0
 
   for (const summary of listResult.tickets) {
     const full = storage.getTicket(summary.id)
@@ -384,17 +392,72 @@ function fetchTickets(
       continue
     }
 
-    if (autoMergeEfforts.has(full.effort)) {
+    // High-cascade guard: tickets tagged with error classes known to produce
+    // gutting/stub damage when auto-fixed are forced into the medium lane,
+    // regardless of effort, so they run under plan-dispatch with a human
+    // reviewer in the loop.
+    const ticketTags = full.tags ?? []
+    const hasHighCascadeTag = ticketTags.some((t) => skipAutoFixTags.has(t))
+
+    if (autoMergeEfforts.has(full.effort) && !hasHighCascadeTag) {
       if (small.length < smallLimit) small.push(full)
     } else {
+      if (hasHighCascadeTag && autoMergeEfforts.has(full.effort)) {
+        skippedHighCascade++
+      }
       medium.push(full)
     }
   }
 
-  return { small, medium, skippedBlocked }
+  return { small, medium, skippedBlocked, skippedHighCascade }
 }
 
 // ─── Iterative Processing Loop ──────────────────────────────────────────────
+
+
+/** Handle result of a small ticket fix */
+function handleSmallTicketResult(
+  ticket: Ticket,
+  success: boolean,
+  storage: FileStorage,
+  notableFailures: Array<{ ticket_id: string; title: string; reason: string }>,
+): { fixed: number; failed: number } {
+  if (success) {
+    storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-fix-swarm' })
+    console.log(`[minion-fix] Resolved ${ticket.id}`)
+    return { fixed: 1, failed: 0 }
+  } else {
+    try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'swarm fix failed, skipping for tonight' }) } catch { /* already transitioned */ }
+    console.log(`[minion-fix] Failed ${ticket.id}, skipping for tonight`)
+    if (notableFailures.length < 10) {
+      notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'swarm fix failed' })
+    }
+    return { fixed: 0, failed: 1 }
+  }
+}
+
+/** Handle result of a medium ticket fix */
+function handleMediumTicketResult(
+  ticket: Ticket,
+  success: boolean,
+  storage: FileStorage,
+  prCommitMessages: string[],
+  notableFailures: Array<{ ticket_id: string; title: string; reason: string }>,
+): { fixed: number; failed: number } {
+  if (success) {
+    storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-plan-dispatch' })
+    prCommitMessages.push(`- ${ticket.id}: ${ticket.title}`)
+    console.log(`[minion-fix] Resolved ${ticket.id} via plan-dispatch`)
+    return { fixed: 1, failed: 0 }
+  } else {
+    try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'plan-dispatch failed, skipping for tonight' }) } catch { /* already transitioned */ }
+    console.log(`[minion-fix] Plan-dispatch failed for ${ticket.id}`)
+    if (notableFailures.length < 10) {
+      notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'plan-dispatch failed' })
+    }
+    return { fixed: 0, failed: 1 }
+  }
+}
 
 async function processProject(
   project: ProjectConfig,
@@ -403,6 +466,11 @@ async function processProject(
   const projectPath = project.path
   const tag = `[minion-fix][${path.basename(projectPath)}]`
   const autoMergeEfforts = new Set(project.auto_merge_efforts ?? ['small'])
+  // Default high-cascade tags, derived from the 2026-04-23 recovery post-mortem.
+  // Any project can override this list in minion-projects.yaml.
+  const skipAutoFixTags = new Set(
+    project.skip_auto_fix_tags ?? ['deep-nesting', 'empty-catch', 'TS2307']
+  )
   const storage = new FileStorage(projectPath)
   const today = new Date().toISOString().slice(0, 10)
   const originalBranch = gitCurrentBranch(projectPath)
@@ -427,8 +495,16 @@ async function processProject(
     console.log(`\n${tag} ── Cycle ${cycle} (${now}) ──`)
 
     // Re-fetch tickets each cycle (resolved ones disappear, new detections appear)
-    const { small, medium, skippedBlocked: blocked } = fetchTickets(storage, autoMergeEfforts, args.smallBatch)
+    const { small, medium, skippedBlocked: blocked, skippedHighCascade } = fetchTickets(
+      storage,
+      autoMergeEfforts,
+      args.smallBatch,
+      skipAutoFixTags,
+    )
     skippedBlocked += blocked
+    if (skippedHighCascade > 0) {
+      console.log(`${tag} Forced ${skippedHighCascade} high-cascade ticket(s) to medium (tags: ${[...skipAutoFixTags].join(', ')})`)
+    }
     const remaining = small.length + medium.length
 
     if (remaining === 0) {
@@ -459,21 +535,13 @@ async function processProject(
 
       for (const ticket of small) {
         const success = swarmResults.get(ticket.id) ?? false
+        const result = handleSmallTicketResult(ticket, success, storage, notableFailures)
+        fixed += result.fixed
+        failed += result.failed
         if (success) {
-          storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-fix-swarm' })
-          console.log(`${tag} Resolved ${ticket.id}`)
-          fixed++
           smallStats.succeeded++
         } else {
-          // Mark as in-progress so we don't retry it next cycle
-          // (it'll get swept back to open by staleness sweep if the code changes)
-          try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'swarm fix failed, skipping for tonight' }) } catch { /* already transitioned */ }
-          console.log(`${tag} Failed ${ticket.id}, skipping for tonight`)
-          failed++
           smallStats.failed++
-          if (notableFailures.length < 10) {
-            notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'swarm fix failed' })
-          }
         }
       }
     }
@@ -517,20 +585,13 @@ async function processProject(
     mediumStats.dispatched++
     const success = await fixViaPlanDispatch(ticket, project, args.apiUrl)
 
+    const result = handleMediumTicketResult(ticket, success, storage, prCommitMessages, notableFailures)
+    fixed += result.fixed
+    failed += result.failed
     if (success) {
-      storage.transitionTicket(ticket.id, 'resolved', { resolved_by: 'minion-plan-dispatch' })
-      prCommitMessages.push(`- ${ticket.id}: ${ticket.title}`)
-      console.log(`${tag} Resolved ${ticket.id} via plan-dispatch`)
-      fixed++
       mediumStats.succeeded++
     } else {
-      try { storage.transitionTicket(ticket.id, 'in-progress', { reason: 'plan-dispatch failed, skipping for tonight' }) } catch { /* already transitioned */ }
-      console.log(`${tag} Plan-dispatch failed for ${ticket.id}`)
-      failed++
       mediumStats.failed++
-      if (notableFailures.length < 10) {
-        notableFailures.push({ ticket_id: ticket.id, title: ticket.title, reason: 'plan-dispatch failed' })
-      }
     }
 
     // Brief pause between cycles to avoid hammering the API

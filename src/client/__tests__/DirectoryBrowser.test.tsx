@@ -10,7 +10,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 // appending a query string, which bun treats as a distinct module entry.
 // @ts-expect-error bun cache-bust query string not understood by tsc
 const _realDB = await import('../components/DirectoryBrowser.tsx?real')
-mock.module('../components/DirectoryBrowser.tsx', () => _realDB)
+mock.module('../components/DirectoryBrowser', () => _realDB)
 
 const globalAny = globalThis as typeof globalThis & {
   fetch?: typeof fetch

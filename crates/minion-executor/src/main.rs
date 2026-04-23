@@ -14,6 +14,7 @@ mod cc_executor;
 mod codex_executor;
 mod config;
 mod context;
+mod damage_guard;
 mod diff;
 mod dispatcher;
 mod event_reporter;

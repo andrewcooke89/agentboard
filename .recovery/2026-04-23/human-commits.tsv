@@ -1,0 +1,92 @@
+22bda7d2fee71d26eb54ae868645e055d4b453e9|2026-04-01 21:59:55 +0800|feat(minion-executor): Improve agent context frontloading and tool capabilities
+aac0d5559c7171d81ced7891992a0e98841df07e|2026-03-28 20:49:46 +0800|feat: multi-project support with per-project gate commands
+de9ba0eed11734c181b2f0d6d43b13451c90d1fc|2026-03-28 20:34:34 +0800|fix: bump max_iterations from 20 to 40 for complex tickets
+838b7b259ea52babc9f57f146c894a9d102fb5d1|2026-03-28 20:10:35 +0800|fix: auto-inject line_hint on duplicate anchor failure
+35f39847344ec20d83912bdb1fd8cd790f7ee354|2026-03-28 19:43:35 +0800|fix: git commit serialization + line_hint anchor disambiguation
+c236cd3da90066ad624f78e62e47b74ea34ce0c2|2026-03-28 16:25:13 +0800|feat: metrics DB, file lock registry, executor robustness, ticket UI
+fded1876621cf0d9606c1f03ac5b3ebcf9b55170|2026-03-27 11:43:08 +0800|feat(minion-fix): Replace single-pass with iterative time-budgeted cycle
+a7b3d6e8c0a32a9d79e72b7adc0f0bed845ade1c|2026-03-27 11:30:21 +0800|feat(minion-detect): Add 7 Tier 0 deterministic quality detectors
+470b07e22b474a0b5252d3cc147f51939f720642|2026-03-26 15:52:56 +0800|fix(minion): pass MCP client to gates in GLM executor for verification
+90e268273cce61905eeba791485a5d7b22d1690e|2026-03-26 15:45:02 +0800|refactor(minion): move verification gate to gates.rs for all executors
+faf98d7ca55e9501fcdc1ec8d798ea92e4fe2809|2026-03-26 15:38:27 +0800|feat(minion): verification gate, full context files, scope-filtered capture
+2e8c1ad9d45b827046e70c498bcfc81816cf897b|2026-03-26 15:00:06 +0800|fix: restore types.ts, rewrite SwarmView + swarmStore, wire stats properly
+01fbffdb0253e96a2acc197e6100964dce924ce1|2026-03-26 14:55:10 +0800|fix: add missing swarm types, fix swarmStore to Zustand, wire stats API
+39aca2ec8064511d0709f208303bdd4677641a42|2026-03-25 19:46:26 +0800|feat(minion): Phases 3-6 — dispatcher, Codex/CC executors, WO API, escalation
+6f0bfab21d263fc61cb95b40b293e2db063e288c|2026-03-25 15:08:35 +0800|fix(minion): auto-commit stages only diff files, skips pre-commit hooks
+55e211397380b2069e9ed7826e03e4fdb661db92|2026-03-25 14:53:59 +0800|feat(minion): Phase 2 — configurable gates, git isolation, auto-commit
+851fe68cda140a027adf9fbfe3f5e037341fbfc0|2026-03-25 14:35:40 +0800|feat: add minion-executor Rust crate — three-phase work order executor
+1b805ebf01a0664371677c471d051657c6d45588|2026-03-16 15:05:37 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'getEnvForMo [TKT-0071]
+ac0957993ed3782b8f0d6f022dcbfe1d64ab8e5b|2026-03-16 15:04:22 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'setDbCalls' i [TKT-0066]
+edaad3fde155cd8f28264e5b7e70cb669e413b22|2026-03-16 15:03:18 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'queueNetworkE [TKT-0064]
+8c4ccbdb7e2ea6ea5fcdf2a272ff50dd0fa67fcb|2026-03-16 15:01:13 +0800|fix(minion): [eslint-plugin-unicorn(no-single-promise-in-promise-methods)] eslint-plu [TKT-0024]
+338bded716c4c72df17e0bc2f69fd43294acd317|2026-03-16 14:59:18 +0800|fix(minion): [eslint(no-control-regex)] eslint(no-control-regex): Unexpected control  [TKT-0091]
+92784fd8103384f736046ef7c295d56b8baed18a|2026-03-16 14:58:04 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'tree' is decl [TKT-0053]
+b7bdcf491325c69e0c9aa17e99bfc3ec6fd9ee45|2026-03-16 14:56:19 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun' is  [TKT-0048]
+fdb9e8f946d74dd48e15a7b28a235ce2d19d75fe|2026-03-16 14:55:05 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'gitCurrentBra [TKT-0090]
+49048eb5ff9018c6294f3224d771de23764b1c22|2026-03-16 14:53:50 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0070]
+614eb8676f793ced21f33ddf150ca853c76fe301|2026-03-16 14:52:16 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is [TKT-0094]
+79aadba3dd6e1668ef777627155ce3a74b6e374b|2026-03-16 14:51:11 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'resultConten [TKT-0056]
+4c85dbf67c45b5e246f4658dc57d1aaf7e25839e|2026-03-16 14:48:57 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is [TKT-0043]
+65e69e4bf6e44550e1baef7d728ddd6ab16bdc6b|2026-03-16 14:44:17 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'jobId' is de [TKT-0030]
+1031dbee47dd8b52a02d3ea56c31cdac6e79b8f1|2026-03-16 14:43:13 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'queueNetworkE [TKT-0069]
+934354e672f1c3c41d8df34eac43f4499982f788|2026-03-16 14:41:58 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0058]
+f08596a6451161388cdba546d297abda20ace8eb|2026-03-16 14:40:44 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'AGENTBOARD_WS [TKT-0092]
+fa9a5ee95d673036f02f2c79ab8c9e7998c2433d|2026-03-16 14:35:26 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'findAllTextCo [TKT-0060]
+608128a5603279243d2dbb985b25576bacf043a5|2026-03-16 14:34:31 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'ctx' is decla [TKT-0065]
+ef20827b23ab12f88a2f5d88444e400a4de07c0c|2026-03-16 14:31:12 +0800|fix(minion): [eslint(no-control-regex)] eslint(no-control-regex): Unexpected control  [TKT-0042]
+add1513c7d4b5f9cdfe1ff118a73c16ef2545c0b|2026-03-16 14:29:48 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0059]
+20527102b7b1c7059240fb33057c660a4d46366f|2026-03-16 14:29:03 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0061]
+8729865f2c7284407a5c83eb9db930136108f8dd|2026-03-16 14:27:28 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'result' is de [TKT-0051]
+acae4616a7ea976dedb147b73be1437555b36959|2026-03-16 14:26:34 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'makeJobDetail [TKT-0075]
+302b3b5e0f54a6080675bb6a559bff01a9a3d633|2026-03-16 14:24:59 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun' is  [TKT-0047]
+c5938b34587d939578af6ba221da00157b69b846|2026-03-16 14:22:55 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'serviceUnit'  [TKT-0044]
+6f31462f0211b6b3855d4156b5276f140010040e|2026-03-16 14:20:50 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0050]
+93e1a66655410acfe5afa207af125943543e5bda|2026-03-16 14:19:36 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'gitCheckout'  [TKT-0089]
+be5462c4678f6879e3a3778e720d39bde04f2f0b|2026-03-16 14:18:01 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'findTerminalC [TKT-0054]
+893b3086bcaa9d5d756a5587a84f994700426fc7|2026-03-16 14:15:47 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'getToolSche [TKT-0062]
+b5f4f3e0d9abad9cd1fe73d0acd8465228a97f22|2026-03-16 14:14:32 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'DRAWER_MAX_ [TKT-0067]
+6918e87eaef9b33323c52d23796c119449b55668|2026-03-16 14:13:18 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'prefersReduce [TKT-0068]
+c545e3fdf841b35053c2c5527108c6404f38000a|2026-03-16 14:12:23 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'query' is de [TKT-0052]
+679f998b6ac6e2f8bea44ec122aad9316e5ddf0a|2026-03-16 14:11:29 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'jest' is im [TKT-0057]
+7fdf6876e66557ae012a62062305a25762c0f5c1|2026-03-16 14:10:14 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'spyOn' is i [TKT-0072]
+924020cee6dcc2c307c336f4e38bc379ce6c8fdb|2026-03-16 14:09:20 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'AGENTBOARD_UR [TKT-0063]
+28e4398a2cee32a1b14f03546db24aa0efc7dfdf|2026-03-16 14:05:29 +0800|chore: update tickets from minion-detect test run
+0252d9440314352ae1772791d6268f1fc77b7d49|2026-03-16 14:05:20 +0800|feat: add test detection, workflow routing, and nightly cron fixes
+d54a12effd9a29f51a7bfa3413af5e0273e6b2b4|2026-03-16 12:19:19 +0800|feat: add minion-workflow TDD pipeline and nightly runner
+5c609fff65b16eba010f376a32b0f0c0da2ce168|2026-03-16 12:19:10 +0800|feat: add health check endpoint with uptime, timestamp, and tmux status
+f4a6cb7dcefcd2fb0ca167347e7228830a5764f5|2026-03-13 15:53:07 +0800|feat: staleness sweep in detect + auto-merge PRs in fix
+a122920fb1a2cfecfd2034d04831f84b98db1598|2026-03-13 15:45:43 +0800|fix: use git add -u instead of -A in minion-fix
+0813e9aa4afa51b464319168ed12a12387df6a56|2026-03-13 15:34:36 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'wf' is declar [TKT-0049]
+5fe520a5f718a8f7bb4f9a73ffe46f64791465b9|2026-03-13 15:33:42 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'fetchFromAg [TKT-0046]
+14ad72006393e2e21a2c7ae01487a9987fd2c084|2026-03-13 15:32:09 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'jobId' is de [TKT-0031]
+8cdf18aa0114c92c3fd219e80fcc8507137c18ee|2026-03-13 15:31:05 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'baseSession'  [TKT-0021]
+3df674028c0b430d9067b245efb7a204b48273d0|2026-03-13 15:30:00 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'subscribe' i [TKT-0038]
+0677a2ea98e151becf837ac303ba3f59ec123bea|2026-03-13 15:28:56 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0014]
+e8820a9d02a6422d35b0822b91066d7102328bc3|2026-03-13 15:28:02 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'DRAWER_MIN_ [TKT-0037]
+9e0d08987604b2ae3d9fd49c077a5fa4aa219f72|2026-03-13 15:23:46 +0800|feat: two-tier minion-fix — auto-merge small, PR for medium+
+a07a53a3e57753927b814b8086ece7c289916518|2026-03-13 15:12:37 +0800|fix: harden minion-fix from test run learnings
+b45f4ef75bb9a725087dba84ba6b9c6e377cb1c8|2026-03-13 14:52:29 +0800|feat: add nightly minion detect + fix scripts
+604e873325a2d4ae61b2171a797d5cb4ba9ab351|2026-03-13 12:57:58 +0800|feat: shift-left lint + typecheck in wu-orchestrator
+b2d4feb2de9ff606eaefba920adfa763f25fe985|2026-03-13 12:19:54 +0800|feat: cron manager, pipeline enhancements, and workflow engine improvements
+dac9e14d8af16932c94669f8707191528276d49e|2026-03-13 12:18:31 +0800|feat: add per-WU git commits in wu-orchestrator
+86cb9bc982922161c31dc81aed241c9e943f130a|2026-03-11 13:55:17 +0800|fix: comprehensive workflow engine reliability hardening (44 fixes)
+53189cc3a826e0221b4e45738fa7f4eb399e4d74|2026-03-09 14:07:48 +0800|Add verify-edges native_step to implementation pipelines
+063b158deb5ec25ebf95516d5a354634ff321f9e|2026-02-26 17:43:45 +0800|feat: add typed input injection for spawn_session steps
+78152646bad58fb1bec8bb97e2dae59c48a7bcaa|2026-02-26 17:28:31 +0800|feat: add label-based input substitution for gemini_offload steps
+6d5b6a222a3e4ceef3aa952280ebee5c602d76f7|2026-02-26 17:05:00 +0800|feat: route pipeline tasks to GLM for cheaper execution
+f3cd853cf4d642f9bc4f051a41908107e343da67|2026-02-25 19:44:30 +0800|fix: cron UI dark theme, delete wiring, and window.__cronWsSend
+8661384f3c82bb442728bf3aac7f08c21ff711f7|2026-02-25 19:03:15 +0800|fix: cron manager gaps + resolveOutputPath result collection bug
+d2f1eec7601976ff067e43c7da1c1dcf206ab9ce|2026-02-25 18:21:12 +0800|feat: rewrite fix-pipeline with TDD baseline and enforce_verdict parsing
+bd09a486ed9086027b091948e73b126d30ed4c48|2026-02-25 16:57:08 +0800|feat: Phase 26 cron manager + per-WU TDD pipeline infrastructure
+751df09cd4c6f8a7f395f14ddd0e0dd899914db6|2026-02-25 08:59:49 +0800|fix: tdd-verify-red/green pipeline steps — correct exit code capture and use bun test
+d69cde5c716c9ff77f879c74f962ddaf2fdf8cc8|2026-02-25 07:20:19 +0800|fix: tmuxWindowExists() exact name matching to prevent prefix-match false positives
+8262fe577063dd8fa165e8d207a2fd923cfc0b29|2026-02-25 07:19:15 +0800|Revert "feat: Phase 26 — Cron & Systemd Timer Manager (full implementation)"
+e8f56055429c771e645fedc1bdb27d60763d27e8|2026-02-25 07:08:49 +0800|feat: Phase 26 — Cron & Systemd Timer Manager (full implementation)
+9fa976aa243171a81a2d7633efe7d5d307e24c3e|2026-02-23 20:08:36 +0800|feat: wire branch isolation, output invalidation, and review router into DAG engine
+d0918e5ebdb854192ad58726fd4f19a52dfcf67e|2026-02-23 16:13:44 +0800|DAG engine runtime fixes and 10 end-to-end scenario specs
+672f7ccdc4bb7ef8c5c047825d02c390071da64e|2026-02-11 21:28:57 +0800|Phase 6 adversarial review: fix 6 failing requirements
+593663c9e816019b23d076b240bd24d5887a4527|2026-02-11 20:45:30 +0800|Phase 6: parallel_group completion and full test suite fixes
+f9de5a3d966da76c3a5a9311f9d8fc146a5fe63a|2026-02-11 16:45:39 +0800|Phase 5: DAG engine, session pool, and review loop support
+989b0cfce8ea867275c2f8c5207858af9706d201|2026-02-11 15:15:02 +0800|Phase 4: native_step type and tier-aware step activation
+ac69fbaf6c318c4497c326c7b728f9f348800352|2026-02-10 11:01:23 +0800|Sync: workflow engine, task system, UI components, tests
+07fa4a91ba4a577c9a71ff5611c79a1b3ae4b874|2026-02-04 21:18:03 +0800|docs: add JSDoc documentation to validator functions

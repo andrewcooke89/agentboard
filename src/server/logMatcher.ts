@@ -830,8 +830,7 @@ export function readLogContent(
     }
 
     return content
-  } catch (error) {
-    logger.warn('read_log_content_error', { logPath, error: String(error) })
+  } catch {
     return ''
   }
 }

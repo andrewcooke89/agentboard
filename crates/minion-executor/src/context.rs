@@ -24,6 +24,9 @@ pub struct AssembledContext {
 
     /// Dependency info for scope files.
     pub dependencies: Option<String>,
+
+    /// Pre-fetched reference analysis for the target symbol (callers/usages).
+    pub reference_hits: Option<String>,
 }
 
 /// A file's focused content from intern_read_file.
@@ -88,7 +91,10 @@ pub async fn assemble_context(
     }
 
     let all_files = collect_file_paths(work_order);
-    let use_full_read = matches!(work_order.task, crate::wo::TaskType::Refactor);
+    let use_full_read = matches!(
+        work_order.task,
+        crate::wo::TaskType::Refactor | crate::wo::TaskType::Fix
+    );
 
     for file_path in &all_files {
         // Skip files already loaded as full content (e.g. from full_context_files).
@@ -201,10 +207,28 @@ pub async fn assemble_context(
         }
     }
 
+    // 5. For fix/refactor tasks, pre-fetch references for the target symbol.
+    //    This answers "where is this function called?" upfront so the agent
+    //    doesn't need to search during the loop.
+    let reference_hits = if matches!(
+        work_order.task,
+        crate::wo::TaskType::Fix | crate::wo::TaskType::Refactor
+    ) {
+        if let Some(symbol) = extract_symbol_from_description(&work_order.description) {
+            info!(wo_id = %work_order.id, symbol = %symbol, "Pre-fetching references for target symbol");
+            call_find_references(mcp, &symbol).await.ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let ctx = AssembledContext {
         agent_brief,
         file_contents,
         dependencies,
+        reference_hits,
     };
 
     info!(
@@ -229,8 +253,19 @@ pub fn format_context(ctx: &AssembledContext) -> String {
     if !ctx.file_contents.is_empty() {
         parts.push("## File Contents\n".to_string());
         for fc in &ctx.file_contents {
-            parts.push(format!("### `{}`\n\n```\n{}\n```\n", fc.path, fc.content));
+            let numbered: String = fc
+                .content
+                .lines()
+                .enumerate()
+                .map(|(i, line)| format!("{:>6}\t{}", i + 1, line))
+                .collect::<Vec<_>>()
+                .join("\n");
+            parts.push(format!("### `{}`\n\n```\n{}\n```\n", fc.path, numbered));
         }
+    }
+
+    if let Some(refs) = &ctx.reference_hits {
+        parts.push(format!("## Reference Analysis\n\nThe following shows where the target symbol is used across the codebase:\n\n{refs}"));
     }
 
     if let Some(deps) = &ctx.dependencies {
@@ -339,6 +374,71 @@ async fn call_file_dependencies(mcp: &McpClient, path: &str, direction: &str) ->
     }
 
     Ok(extract_text(&result))
+}
+
+/// Call find_references for a symbol to get all callers/usages.
+async fn call_find_references(mcp: &McpClient, symbol: &str) -> Result<String> {
+    let args = serde_json::json!({
+        "symbol": symbol,
+    });
+
+    let call = crate::mcp_client::McpToolCall {
+        name: "find_references".to_string(),
+        arguments: args,
+    };
+
+    let result = mcp
+        .call_tool(&call)
+        .await
+        .with_context(|| format!("find_references failed for '{symbol}'"))?;
+
+    if result.is_error {
+        anyhow::bail!("find_references error: {}", extract_text(&result));
+    }
+
+    Ok(extract_text(&result))
+}
+
+/// Extract the target symbol name from a WO description.
+///
+/// Detector titles follow patterns like:
+///   - `Function 'processProject' is 178 lines`
+///   - `Nesting depth is 6 in 'handleRequest'`
+///
+/// Extracts the first single-quoted identifier.
+fn extract_symbol_from_description(description: &str) -> Option<String> {
+    // Find first 'identifier' pattern without regex dependency
+    let bytes = description.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            let start = i + 1;
+            if start >= bytes.len() {
+                break;
+            }
+            // First char must be letter or underscore
+            let first = bytes[start];
+            if !(first.is_ascii_alphabetic() || first == b'_') {
+                i = start;
+                continue;
+            }
+            // Scan identifier chars
+            let mut end = start + 1;
+            while end < bytes.len()
+                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+            {
+                end += 1;
+            }
+            // Must end with closing quote
+            if end < bytes.len() && bytes[end] == b'\'' && end > start {
+                return Some(description[start..end].to_string());
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -486,6 +586,7 @@ mod tests {
             agent_brief: None,
             file_contents: vec![],
             dependencies: None,
+            reference_hits: None,
         };
         let formatted = format_context(&ctx);
         assert!(formatted.is_empty());
@@ -501,12 +602,72 @@ mod tests {
                 source: FileContextSource::InternReadFile,
             }],
             dependencies: None,
+            reference_hits: None,
         };
         let formatted = format_context(&ctx);
         assert!(formatted.contains("Agent Brief"));
         assert!(formatted.contains("Do the thing"));
         assert!(formatted.contains("src/main.ts"));
         assert!(formatted.contains("const x = 1;"));
+    }
+
+    #[test]
+    fn test_extract_symbol_long_function() {
+        let desc = "Function 'processProject' is 178 lines (threshold: 150)";
+        assert_eq!(extract_symbol_from_description(desc), Some("processProject".into()));
+    }
+
+    #[test]
+    fn test_extract_symbol_deep_nesting() {
+        let desc = "Nesting depth is 6 in 'handleRequest'";
+        assert_eq!(extract_symbol_from_description(desc), Some("handleRequest".into()));
+    }
+
+    #[test]
+    fn test_extract_symbol_none() {
+        assert_eq!(extract_symbol_from_description("No quoted symbols here"), None);
+    }
+
+    #[test]
+    fn test_extract_symbol_empty_quotes() {
+        assert_eq!(extract_symbol_from_description("Empty '' quotes"), None);
+    }
+
+    #[test]
+    fn test_extract_symbol_with_underscores() {
+        let desc = "Fix '_internal_helper' function";
+        assert_eq!(extract_symbol_from_description(desc), Some("_internal_helper".into()));
+    }
+
+    #[test]
+    fn test_format_context_has_line_numbers() {
+        let ctx = AssembledContext {
+            agent_brief: None,
+            file_contents: vec![FileContext {
+                path: "src/main.ts".into(),
+                content: "line one\nline two\nline three".into(),
+                source: FileContextSource::InternReadFile,
+            }],
+            dependencies: None,
+            reference_hits: None,
+        };
+        let formatted = format_context(&ctx);
+        assert!(formatted.contains("     1\tline one"));
+        assert!(formatted.contains("     2\tline two"));
+        assert!(formatted.contains("     3\tline three"));
+    }
+
+    #[test]
+    fn test_format_context_includes_reference_hits() {
+        let ctx = AssembledContext {
+            agent_brief: None,
+            file_contents: vec![],
+            dependencies: None,
+            reference_hits: Some("processProject called from main.ts:42".into()),
+        };
+        let formatted = format_context(&ctx);
+        assert!(formatted.contains("Reference Analysis"));
+        assert!(formatted.contains("processProject called from main.ts:42"));
     }
 
     fn default_wo() -> crate::wo::WorkOrder {

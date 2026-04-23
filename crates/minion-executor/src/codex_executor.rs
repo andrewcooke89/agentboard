@@ -75,6 +75,7 @@ impl Executor for CodexExecutor {
                             agent_brief: None,
                             file_contents: vec![],
                             dependencies: None,
+                            reference_hits: None,
                         }
                     }
                 };
@@ -87,6 +88,7 @@ impl Executor for CodexExecutor {
                         agent_brief: None,
                         file_contents: vec![],
                         dependencies: None,
+                        reference_hits: None,
                     },
                     None,
                 )
@@ -670,6 +672,7 @@ output:
             agent_brief: None,
             file_contents: vec![],
             dependencies: None,
+            reference_hits: None,
         }
     }
 
@@ -682,6 +685,7 @@ output:
                 source: FileContextSource::InternReadFile,
             }],
             dependencies: Some("index.ts -> health.ts".into()),
+            reference_hits: None,
         }
     }
 

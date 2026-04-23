@@ -94,7 +94,15 @@ const _useWorkflowStore = Object.assign(
     typeof selector === 'function' ? selector(_workflowState) : _workflowState,
   { getState: () => _workflowState }
 )
-mock.module('../stores/workflowStore', () => ({ useWorkflowStore: _useWorkflowStore }))
+mock.module('../stores/workflowStore', () => ({
+  useWorkflowStore: _useWorkflowStore,
+  useActiveRuns: () => [],
+  useRunsByWorkflow: () => [],
+  useValidWorkflows: () => [],
+  getActiveRuns: () => [],
+  getRunsByWorkflow: () => [],
+  getValidWorkflows: () => [],
+}))
 
 mock.module('@xterm/xterm', () => ({ Terminal: TerminalMock }))
 mock.module('@xterm/addon-fit', () => ({ FitAddon: class { fit() {} } }))

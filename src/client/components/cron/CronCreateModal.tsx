@@ -4,177 +4,6 @@ import { useState } from 'react'
 import { useCronStore } from '../../stores/cronStore'
 import type { CronCreateConfig, SystemdCreateConfig } from '@shared/types'
 
-// ─── Module-level CSS class constants ─────────────────────────────────────────
-
-const inputCls =
-  'w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)]'
-const labelCls = 'block'
-const labelTextCls = 'text-xs text-[var(--text-muted)]'
-
-// ─── CronFormFields ───────────────────────────────────────────────────────────
-
-interface CronFormFieldsProps {
-  command: string
-  setCommand: (v: string) => void
-  schedule: string
-  setSchedule: (v: string) => void
-  comment: string
-  setComment: (v: string) => void
-  tags: string
-  setTags: (v: string) => void
-  setError: (e: string | null) => void
-}
-
-function CronFormFields({
-  command, setCommand, schedule, setSchedule,
-  comment, setComment, tags, setTags, setError,
-}: CronFormFieldsProps) {
-  return (
-    <>
-      <label className={labelCls}>
-        <span className={labelTextCls}>Command</span>
-        <input
-          value={command}
-          onChange={(e) => { setCommand(e.target.value); setError(null) }}
-          className={inputCls}
-          placeholder="/usr/bin/my-script.sh"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Schedule (cron expression)</span>
-        <input
-          value={schedule}
-          onChange={(e) => { setSchedule(e.target.value); setError(null) }}
-          className={`${inputCls} font-mono`}
-          placeholder="*/5 * * * *"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Comment (optional)</span>
-        <input
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          className={inputCls}
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Tags (comma-separated)</span>
-        <input
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          className={inputCls}
-          placeholder="backup, daily"
-        />
-      </label>
-    </>
-  )
-}
-
-// ─── SystemdFormFields ────────────────────────────────────────────────────────
-
-interface SystemdFormFieldsProps {
-  serviceName: string
-  setServiceName: (v: string) => void
-  command: string
-  setCommand: (v: string) => void
-  schedule: string
-  setSchedule: (v: string) => void
-  description: string
-  setDescription: (v: string) => void
-  workingDir: string
-  setWorkingDir: (v: string) => void
-  scope: 'user' | 'system'
-  setScope: (v: 'user' | 'system') => void
-  tags: string
-  setTags: (v: string) => void
-  setError: (e: string | null) => void
-}
-
-function SystemdFormFields({
-  serviceName, setServiceName, command, setCommand,
-  schedule, setSchedule, description, setDescription,
-  workingDir, setWorkingDir, scope, setScope,
-  tags, setTags, setError,
-}: SystemdFormFieldsProps) {
-  return (
-    <>
-      <label className={labelCls}>
-        <span className={labelTextCls}>Service Name</span>
-        <input
-          value={serviceName}
-          onChange={(e) => { setServiceName(e.target.value); setError(null) }}
-          className={inputCls}
-          placeholder="my-timer"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Command</span>
-        <input
-          value={command}
-          onChange={(e) => { setCommand(e.target.value); setError(null) }}
-          className={inputCls}
-          placeholder="/usr/bin/my-script.sh"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Schedule (OnCalendar)</span>
-        <input
-          value={schedule}
-          onChange={(e) => { setSchedule(e.target.value); setError(null) }}
-          className={`${inputCls} font-mono`}
-          placeholder="*-*-* 00:00:00"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Description</span>
-        <input
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className={inputCls}
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Working Directory</span>
-        <input
-          value={workingDir}
-          onChange={(e) => setWorkingDir(e.target.value)}
-          className={inputCls}
-          placeholder="/home/user"
-        />
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Scope</span>
-        <select
-          value={scope}
-          onChange={(e) => setScope(e.target.value as 'user' | 'system')}
-          className={inputCls}
-        >
-          <option value="user">User</option>
-          <option value="system">System</option>
-        </select>
-      </label>
-
-      <label className={labelCls}>
-        <span className={labelTextCls}>Tags (comma-separated)</span>
-        <input
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          className={inputCls}
-          placeholder="backup, daily"
-        />
-      </label>
-    </>
-  )
-}
-
 // ─── CronCreateModal ──────────────────────────────────────────────────────────
 // Modal with Quick (cron) and Advanced (systemd) tabs.
 // Advanced tab hidden if !systemdAvailable (from cronStore).
@@ -194,6 +23,7 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
   const [schedule, setSchedule] = useState('')
   const [comment, setComment] = useState('')
   const [tags, setTags] = useState('')
+  // Systemd-only fields
   const [serviceName, setServiceName] = useState('')
   const [description, setDescription] = useState('')
   const [workingDir, setWorkingDir] = useState('')
@@ -210,7 +40,10 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
   }
 
   const parseTags = (raw: string): string[] =>
-    raw.split(',').map((t) => t.trim()).filter(Boolean)
+    raw
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
 
   const handleSubmit = () => {
     const cmdErr = validateCommand(command)
@@ -226,12 +59,22 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
         return
       }
       onCreate('systemd', {
-        serviceName, command, schedule, description,
-        workingDirectory: workingDir, scope, tags: parseTags(tags),
+        serviceName,
+        command,
+        schedule,
+        description,
+        workingDirectory: workingDir,
+        scope,
+        tags: parseTags(tags),
       })
     }
     onClose()
   }
+
+  const inputCls =
+    'w-full mt-1 px-2 py-1.5 text-sm bg-[var(--bg-surface)] border border-[var(--border)] rounded text-[var(--text-primary)]'
+  const labelCls = 'block'
+  const labelTextCls = 'text-xs text-[var(--text-muted)]'
 
   return (
     <div
@@ -285,26 +128,91 @@ export function CronCreateModal({ isOpen, onClose, onCreate }: CronCreateModalPr
             <div className="text-sm text-red-500 p-2 bg-red-500/10 rounded">{error}</div>
           )}
 
-          {mode === 'cron' ? (
-            <CronFormFields
-              command={command} setCommand={setCommand}
-              schedule={schedule} setSchedule={setSchedule}
-              comment={comment} setComment={setComment}
-              tags={tags} setTags={setTags}
-              setError={setError}
-            />
-          ) : (
-            <SystemdFormFields
-              serviceName={serviceName} setServiceName={setServiceName}
-              command={command} setCommand={setCommand}
-              schedule={schedule} setSchedule={setSchedule}
-              description={description} setDescription={setDescription}
-              workingDir={workingDir} setWorkingDir={setWorkingDir}
-              scope={scope} setScope={setScope}
-              tags={tags} setTags={setTags}
-              setError={setError}
-            />
+          {mode === 'systemd' && (
+            <label className={labelCls}>
+              <span className={labelTextCls}>Service Name</span>
+              <input
+                value={serviceName}
+                onChange={(e) => { setServiceName(e.target.value); setError(null) }}
+                className={inputCls}
+                placeholder="my-timer"
+              />
+            </label>
           )}
+
+          <label className={labelCls}>
+            <span className={labelTextCls}>Command</span>
+            <input
+              value={command}
+              onChange={(e) => { setCommand(e.target.value); setError(null) }}
+              className={inputCls}
+              placeholder="/usr/bin/my-script.sh"
+            />
+          </label>
+
+          <label className={labelCls}>
+            <span className={labelTextCls}>
+              Schedule {mode === 'systemd' ? '(OnCalendar)' : '(cron expression)'}
+            </span>
+            <input
+              value={schedule}
+              onChange={(e) => { setSchedule(e.target.value); setError(null) }}
+              className={`${inputCls} font-mono`}
+              placeholder={mode === 'cron' ? '*/5 * * * *' : '*-*-* 00:00:00'}
+            />
+          </label>
+
+          {mode === 'cron' ? (
+            <label className={labelCls}>
+              <span className={labelTextCls}>Comment (optional)</span>
+              <input
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          ) : (
+            <>
+              <label className={labelCls}>
+                <span className={labelTextCls}>Description</span>
+                <input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className={inputCls}
+                />
+              </label>
+              <label className={labelCls}>
+                <span className={labelTextCls}>Working Directory</span>
+                <input
+                  value={workingDir}
+                  onChange={(e) => setWorkingDir(e.target.value)}
+                  className={inputCls}
+                  placeholder="/home/user"
+                />
+              </label>
+              <label className={labelCls}>
+                <span className={labelTextCls}>Scope</span>
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value as 'user' | 'system')}
+                  className={inputCls}
+                >
+                  <option value="user">User</option>
+                  <option value="system">System</option>
+                </select>
+              </label>
+            </>
+          )}
+
+          <label className={labelCls}>
+            <span className={labelTextCls}>Tags (comma-separated)</span>
+            <input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              className={inputCls}
+              placeholder="backup, daily"
+            />
+          </label>
         </div>
 
         {/* Footer */}

@@ -22,9 +22,29 @@ function normalizePath(filePath: string): string {
 
 class FileLockRegistry {
   private locks = new Map<string, LockEntry>()
+  private readonly LOCK_TTL_MS = 30 * 60 * 1000 // 30 minutes
+
+  /** Remove locks that have expired (older than LOCK_TTL_MS). */
+  private cleanupStale(): void {
+    const now = Date.now()
+    const expired: string[] = []
+    const keysToDelete: string[] = []
+    this.locks.forEach((entry, file) => {
+      const lockAgeMs = now - new Date(entry.lockedAt).getTime()
+      if (lockAgeMs > this.LOCK_TTL_MS) {
+        expired.push(file)
+        keysToDelete.push(file)
+      }
+    })
+    keysToDelete.forEach(file => this.locks.delete(file))
+    if (expired.length > 0) {
+      console.warn(`[fileLockRegistry] Cleaned up ${expired.length} stale locks (age > 30min): ${expired.slice(0, 3).join(', ')}${expired.length > 3 ? '...' : ''}`)
+    }
+  }
 
   /** Try to lock a file for a dispatch. Returns true if lock acquired, false if already locked. */
   tryLock(file: string, dispatchId: string, meta?: { woId?: string; ticketId?: string }): boolean {
+    this.cleanupStale()
     const key = normalizePath(file)
     if (this.locks.has(key)) return false
     this.locks.set(key, {

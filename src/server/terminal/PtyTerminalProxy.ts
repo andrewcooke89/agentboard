@@ -26,8 +26,8 @@ class PtyTerminalProxy extends TerminalProxyBase {
 
     try {
       this.process?.terminal?.resize(cols, rows)
-    } catch (error) {
-      console.error('Resize error:', error)
+    } catch {
+      // Ignore resize errors
     }
   }
 
@@ -84,8 +84,30 @@ class PtyTerminalProxy extends TerminalProxyBase {
         this.options.sessionName,
       ])
     } catch (error) {
+      // Handle stale grouped session: kill it and retry once
       const msg = error instanceof Error ? error.message : ''
-      if (!msg.includes('duplicate session')) {
+      if (msg.includes('duplicate session')) {
+        try {
+          this.runTmux(['kill-session', '-t', this.options.sessionName])
+          this.runTmux([
+            'new-session',
+            '-d',
+            '-t',
+            this.options.baseSession,
+            '-s',
+            this.options.sessionName,
+          ])
+        } catch (retryError) {
+          this.state = TerminalState.DEAD
+          throw new TerminalProxyError(
+            'ERR_SESSION_CREATE_FAILED',
+            retryError instanceof Error
+              ? retryError.message
+              : 'Failed to create grouped session',
+            true
+          )
+        }
+      } else {
         this.state = TerminalState.DEAD
         throw new TerminalProxyError(
           'ERR_SESSION_CREATE_FAILED',
@@ -93,16 +115,6 @@ class PtyTerminalProxy extends TerminalProxyBase {
           true
         )
       }
-      
-      this.runTmux(['kill-session', '-t', this.options.sessionName])
-      this.runTmux([
-        'new-session',
-        '-d',
-        '-t',
-        this.options.baseSession,
-        '-s',
-        this.options.sessionName,
-      ])
     }
 
     let proc: ReturnType<typeof Bun.spawn>
@@ -195,16 +207,16 @@ class PtyTerminalProxy extends TerminalProxyBase {
       if (onReady) {
         try {
           onReady()
-        } catch (error) {
-          console.error('onReady error:', error)
+        } catch {
+          // Ignore onReady failures
         }
       }
       this.outputSuppressed = false
       this.setCurrentWindow(target)
       try {
         this.runTmux(['refresh-client', '-t', this.clientTty])
-      } catch (error) {
-        console.error('Refresh error:', error)
+      } catch {
+        // Ignore refresh failures
       }
       const durationMs = this.now() - startedAt
       this.logEvent('terminal_switch_success', {

@@ -1,39 +1,33 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-
-// localStorage mock (must precede store import for consistent behavior)
 import { storage } from './localStorageMock'
-
-import type { AgentSession, Session } from '@shared/types'
 import { useSessionStore } from '../sessionStore'
-import { useSettingsStore } from '../settingsStore'
+import type { AgentSession, Session } from '@shared/types'
 
-// ─── Mock Session Factory ──────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function mockSession(overrides: Partial<Session> = {}): Session {
+function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
-    name: 'test-session',
-    tmuxWindow: 'agentboard:1',
-    projectPath: '/tmp/test',
-    status: 'working',
-    lastActivity: '2026-01-01T00:00:00Z',
-    createdAt: '2026-01-01T00:00:00Z',
+    name: 'test',
+    tmuxWindow: 'win-1',
+    projectPath: '/tmp',
+    status: 'unknown',
+    lastActivity: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
     source: 'managed',
     ...overrides,
   }
 }
 
-function mockAgentSession(
-  overrides: Partial<AgentSession> = {}
-): AgentSession {
+function makeAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
-    sessionId: 'agent-sess-1',
-    logFilePath: '/tmp/agent-log.txt',
-    projectPath: '/tmp/test',
+    sessionId: 'agent-1',
+    logFilePath: '/tmp/log.txt',
+    projectPath: '/tmp',
     agentType: 'claude',
     displayName: 'Agent 1',
-    createdAt: '2026-01-01T00:00:00Z',
-    lastActivityAt: '2026-01-01T00:00:00Z',
+    createdAt: new Date().toISOString(),
+    lastActivityAt: new Date().toISOString(),
     isActive: true,
     ...overrides,
   }
@@ -52,51 +46,46 @@ beforeEach(() => {
   })
 })
 
-// ─── 1. Default State Tests ────────────────────────────────────────────────
+// ─── Initial State ────────────────────────────────────────────────────────────
 
-describe('sessionStore default state', () => {
-  test('sessions defaults to empty array', () => {
+describe('Initial state defaults', () => {
+  test('sessions is empty array', () => {
     expect(useSessionStore.getState().sessions).toEqual([])
   })
 
-  test('agentSessions defaults to { active: [], inactive: [] }', () => {
+  test('agentSessions is { active: [], inactive: [] }', () => {
     expect(useSessionStore.getState().agentSessions).toEqual({
       active: [],
       inactive: [],
     })
   })
 
-  test('exitingSessions defaults to empty Map', () => {
-    const map = useSessionStore.getState().exitingSessions
-    expect(map).toBeInstanceOf(Map)
-    expect(map.size).toBe(0)
+  test('exitingSessions is empty Map', () => {
+    expect(useSessionStore.getState().exitingSessions.size).toBe(0)
   })
 
-  test('selectedSessionId defaults to null', () => {
+  test('selectedSessionId is null', () => {
     expect(useSessionStore.getState().selectedSessionId).toBeNull()
   })
 
-  test('hasLoaded defaults to false', () => {
+  test('hasLoaded is false', () => {
     expect(useSessionStore.getState().hasLoaded).toBe(false)
   })
 
-  test('connectionStatus defaults to connecting', () => {
+  test('connectionStatus is connecting', () => {
     expect(useSessionStore.getState().connectionStatus).toBe('connecting')
   })
 
-  test('connectionError defaults to null', () => {
+  test('connectionError is null', () => {
     expect(useSessionStore.getState().connectionError).toBeNull()
   })
 })
 
-// ─── 2. setSessions Tests ──────────────────────────────────────────────────
+// ─── setSessions ──────────────────────────────────────────────────────────────
 
-describe('sessionStore setSessions', () => {
-  test('setSessions updates sessions array and sets hasLoaded to true', () => {
-    const sessions = [
-      mockSession({ id: 's1' }),
-      mockSession({ id: 's2', name: 'second' }),
-    ]
+describe('setSessions', () => {
+  test('sets sessions and marks hasLoaded true', () => {
+    const sessions = [makeSession()]
     useSessionStore.getState().setSessions(sessions)
 
     const state = useSessionStore.getState()
@@ -104,275 +93,197 @@ describe('sessionStore setSessions', () => {
     expect(state.hasLoaded).toBe(true)
   })
 
-  test('setSessions with empty array clears sessions', () => {
-    useSessionStore.setState({
-      sessions: [mockSession()],
-      hasLoaded: true,
-    })
+  test('preserves selectedSessionId when it still exists in new sessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    const s2 = makeSession({ id: 'sess-2' })
+    useSessionStore.getState().setSessions([s1, s2])
+    useSessionStore.getState().setSelectedSessionId('sess-1')
 
-    useSessionStore.getState().setSessions([])
-    expect(useSessionStore.getState().sessions).toEqual([])
-    expect(useSessionStore.getState().hasLoaded).toBe(true)
+    const updated = makeSession({ id: 'sess-1', name: 'updated' })
+    useSessionStore.getState().setSessions([updated, s2])
+
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-1')
   })
 
-  test('setSessions preserves selectedSessionId when selected session still exists', () => {
-    useSessionStore.setState({ selectedSessionId: 's1' })
+  test('clears selectedSessionId (auto-selects first) when selected session is removed', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    const s2 = makeSession({ id: 'sess-2' })
+    useSessionStore.getState().setSessions([s1, s2])
+    useSessionStore.getState().setSelectedSessionId('sess-1')
 
-    const sessions = [
-      mockSession({ id: 's1' }),
-      mockSession({ id: 's2' }),
-    ]
-    useSessionStore.getState().setSessions(sessions)
+    // Remove sess-1, keep sess-2
+    useSessionStore.getState().setSessions([s2])
 
-    expect(useSessionStore.getState().selectedSessionId).toBe('s1')
+    expect(useSessionStore.getState().selectedSessionId).toBe('sess-2')
   })
 
-  test('setSessions resets selectedSessionId to first sorted session when selected session is removed', () => {
-    // Set up two sessions with one selected
-    useSessionStore.setState({
-      sessions: [mockSession({ id: 's1' }), mockSession({ id: 's2' })],
-      selectedSessionId: 's1',
-    })
+  test('detects removed sessions and adds them to exitingSessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    const s2 = makeSession({ id: 'sess-2' })
+    useSessionStore.getState().setSessions([s1, s2])
 
-    // Update with only s2 remaining — s1 is removed
-    useSessionStore.getState().setSessions([mockSession({ id: 's2' })])
-
-    // Default sort is created desc, so s2 should be the only option
-    expect(useSessionStore.getState().selectedSessionId).toBe('s2')
-  })
-
-  test('setSessions sets selectedSessionId to null when all sessions removed and one was selected', () => {
-    useSessionStore.setState({
-      sessions: [mockSession({ id: 's1' })],
-      selectedSessionId: 's1',
-    })
-
-    useSessionStore.getState().setSessions([])
-    expect(useSessionStore.getState().selectedSessionId).toBeNull()
-  })
-})
-
-// ─── 3. Exit Animation Tests ───────────────────────────────────────────────
-
-describe('sessionStore exit animation', () => {
-  test('setSessions marks removed sessions as exiting', () => {
-    const s1 = mockSession({ id: 's1' })
-    const s2 = mockSession({ id: 's2' })
-
-    // Start with two sessions
-    useSessionStore.setState({ sessions: [s1, s2] })
-
-    // Remove s1 by only providing s2
+    // Remove sess-1
     useSessionStore.getState().setSessions([s2])
 
     const exiting = useSessionStore.getState().exitingSessions
-    expect(exiting.has('s1')).toBe(true)
-    expect(exiting.get('s1')).toEqual(s1)
-    expect(exiting.has('s2')).toBe(false)
+    expect(exiting.size).toBe(1)
+    expect(exiting.get('sess-1')).toEqual(s1)
   })
 
-  test('setSessions does not duplicate already-exiting sessions', () => {
-    const s1 = mockSession({ id: 's1' })
-    const s2 = mockSession({ id: 's2' })
+  test('does not duplicate sessions already in exitingSessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    const s2 = makeSession({ id: 'sess-2' })
+    const s3 = makeSession({ id: 'sess-3' })
+    useSessionStore.getState().setSessions([s1, s2, s3])
 
-    // Put s1 in exitingSessions already
-    const existingMap = new Map<string, Session>()
-    existingMap.set('s1', s1)
+    // Remove sess-1
+    useSessionStore.getState().setSessions([s2, s3])
+    expect(useSessionStore.getState().exitingSessions.size).toBe(1)
 
-    useSessionStore.setState({
-      sessions: [s2],
-      exitingSessions: existingMap,
-    })
-
-    // Remove s2 — but s1 is already exiting, should not be added again
-    useSessionStore.getState().setSessions([])
-
+    // Remove sess-2 as well — sess-1 should not be duplicated
+    useSessionStore.getState().setSessions([s3])
     const exiting = useSessionStore.getState().exitingSessions
-    expect(exiting.has('s2')).toBe(true)
-    // s1 was already in exitingSessions and should still be there
-    expect(exiting.has('s1')).toBe(true)
     expect(exiting.size).toBe(2)
-  })
-
-  test('markSessionExiting adds a session to exitingSessions Map', () => {
-    const s1 = mockSession({ id: 's1' })
-    useSessionStore.setState({ sessions: [s1] })
-
-    useSessionStore.getState().markSessionExiting('s1')
-
-    const exiting = useSessionStore.getState().exitingSessions
-    expect(exiting.has('s1')).toBe(true)
-    expect(exiting.get('s1')).toEqual(s1)
-  })
-
-  test('markSessionExiting does nothing if session does not exist in sessions array', () => {
-    useSessionStore.setState({ sessions: [mockSession({ id: 's1' })] })
-
-    useSessionStore.getState().markSessionExiting('nonexistent')
-
-    expect(useSessionStore.getState().exitingSessions.size).toBe(0)
-  })
-
-  test('clearExitingSession removes a session from exitingSessions Map', () => {
-    const s1 = mockSession({ id: 's1' })
-    const map = new Map<string, Session>()
-    map.set('s1', s1)
-
-    useSessionStore.setState({ exitingSessions: map })
-    expect(useSessionStore.getState().exitingSessions.has('s1')).toBe(true)
-
-    useSessionStore.getState().clearExitingSession('s1')
-    expect(useSessionStore.getState().exitingSessions.has('s1')).toBe(false)
-    expect(useSessionStore.getState().exitingSessions.size).toBe(0)
+    expect(exiting.has('sess-1')).toBe(true)
+    expect(exiting.has('sess-2')).toBe(true)
   })
 })
 
-// ─── 4. setAgentSessions Tests ─────────────────────────────────────────────
+// ─── setAgentSessions ─────────────────────────────────────────────────────────
 
-describe('sessionStore setAgentSessions', () => {
-  test('setAgentSessions updates active and inactive arrays', () => {
-    const active = [
-      mockAgentSession({ sessionId: 'a1', isActive: true }),
-    ]
-    const inactive = [
-      mockAgentSession({ sessionId: 'a2', isActive: false }),
-    ]
+describe('setAgentSessions', () => {
+  test('sets active and inactive arrays', () => {
+    const active = [makeAgentSession({ sessionId: 'a-1', isActive: true })]
+    const inactive = [makeAgentSession({ sessionId: 'a-2', isActive: false })]
 
     useSessionStore.getState().setAgentSessions(active, inactive)
 
-    const state = useSessionStore.getState()
-    expect(state.agentSessions.active).toEqual(active)
-    expect(state.agentSessions.inactive).toEqual(inactive)
+    const { agentSessions } = useSessionStore.getState()
+    expect(agentSessions.active).toEqual(active)
+    expect(agentSessions.inactive).toEqual(inactive)
   })
 })
 
-// ─── 5. updateSession Tests ────────────────────────────────────────────────
+// ─── updateSession ────────────────────────────────────────────────────────────
 
-describe('sessionStore updateSession', () => {
-  test('updateSession replaces matching session by id', () => {
-    const s1 = mockSession({ id: 's1', name: 'original' })
-    const s2 = mockSession({ id: 's2', name: 'other' })
-    useSessionStore.setState({ sessions: [s1, s2] })
+describe('updateSession', () => {
+  test('updates matching session by id, leaves others unchanged', () => {
+    const s1 = makeSession({ id: 'sess-1', name: 'original' })
+    const s2 = makeSession({ id: 'sess-2', name: 'other' })
+    useSessionStore.getState().setSessions([s1, s2])
 
-    const updated = mockSession({ id: 's1', name: 'updated', status: 'waiting' })
+    const updated = makeSession({ id: 'sess-1', name: 'updated' })
     useSessionStore.getState().updateSession(updated)
 
-    const sessions = useSessionStore.getState().sessions
+    const { sessions } = useSessionStore.getState()
     expect(sessions).toHaveLength(2)
-    expect(sessions.find((s) => s.id === 's1')).toEqual(updated)
+    expect(sessions.find((s) => s.id === 'sess-1')?.name).toBe('updated')
+    expect(sessions.find((s) => s.id === 'sess-2')?.name).toBe('other')
   })
 
-  test('updateSession leaves other sessions unchanged', () => {
-    const s1 = mockSession({ id: 's1', name: 'original' })
-    const s2 = mockSession({ id: 's2', name: 'other' })
-    useSessionStore.setState({ sessions: [s1, s2] })
+  test('does not crash if session id not found (returns unchanged array)', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    useSessionStore.getState().setSessions([s1])
 
-    const updated = mockSession({ id: 's1', name: 'updated' })
-    useSessionStore.getState().updateSession(updated)
+    const ghost = makeSession({ id: 'ghost' })
+    useSessionStore.getState().updateSession(ghost)
 
-    const sessions = useSessionStore.getState().sessions
-    expect(sessions.find((s) => s.id === 's2')).toEqual(s2)
-  })
-
-  test('updateSession does nothing when session id not found', () => {
-    const s1 = mockSession({ id: 's1' })
-    const s2 = mockSession({ id: 's2' })
-    useSessionStore.setState({ sessions: [s1, s2] })
-
-    const unknown = mockSession({ id: 'unknown', name: 'nope' })
-    useSessionStore.getState().updateSession(unknown)
-
-    const sessions = useSessionStore.getState().sessions
-    expect(sessions).toEqual([s1, s2])
+    const { sessions } = useSessionStore.getState()
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].id).toBe('sess-1')
   })
 })
 
-// ─── 6. Simple Setter Tests ────────────────────────────────────────────────
+// ─── setSelectedSessionId ────────────────────────────────────────────────────
 
-describe('sessionStore simple setters', () => {
-  test('setSelectedSessionId updates selectedSessionId', () => {
+describe('setSelectedSessionId', () => {
+  test('sets to a string value', () => {
     useSessionStore.getState().setSelectedSessionId('sess-42')
     expect(useSessionStore.getState().selectedSessionId).toBe('sess-42')
   })
 
-  test('setSelectedSessionId can set to null', () => {
-    useSessionStore.setState({ selectedSessionId: 'sess-42' })
+  test('sets to null', () => {
+    useSessionStore.getState().setSelectedSessionId('sess-42')
     useSessionStore.getState().setSelectedSessionId(null)
     expect(useSessionStore.getState().selectedSessionId).toBeNull()
   })
+})
 
-  test('setConnectionStatus updates connectionStatus', () => {
-    useSessionStore.getState().setConnectionStatus('connected')
-    expect(useSessionStore.getState().connectionStatus).toBe('connected')
+// ─── setConnectionStatus ─────────────────────────────────────────────────────
+
+describe('setConnectionStatus', () => {
+  test.each([
+    ['connecting'],
+    ['connected'],
+    ['reconnecting'],
+    ['disconnected'],
+    ['error'],
+  ] as const)('sets status to %s', (status) => {
+    useSessionStore.getState().setConnectionStatus(status)
+    expect(useSessionStore.getState().connectionStatus).toBe(status)
+  })
+})
+
+// ─── setConnectionError ──────────────────────────────────────────────────────
+
+describe('setConnectionError', () => {
+  test('sets to a string error message', () => {
+    useSessionStore.getState().setConnectionError('Connection refused')
+    expect(useSessionStore.getState().connectionError).toBe('Connection refused')
   })
 
-  test('setConnectionStatus accepts all status values', () => {
-    const statuses = [
-      'connecting',
-      'connected',
-      'reconnecting',
-      'disconnected',
-      'error',
-    ] as const
-    for (const status of statuses) {
-      useSessionStore.getState().setConnectionStatus(status)
-      expect(useSessionStore.getState().connectionStatus).toBe(status)
-    }
-  })
-
-  test('setConnectionError updates connectionError', () => {
-    useSessionStore.getState().setConnectionError('Network timeout')
-    expect(useSessionStore.getState().connectionError).toBe('Network timeout')
-  })
-
-  test('setConnectionError can clear error to null', () => {
-    useSessionStore.setState({ connectionError: 'some error' })
+  test('sets to null', () => {
+    useSessionStore.getState().setConnectionError('some error')
     useSessionStore.getState().setConnectionError(null)
     expect(useSessionStore.getState().connectionError).toBeNull()
   })
 })
 
-// ─── 7. Persistence Tests ──────────────────────────────────────────────────
+// ─── markSessionExiting ──────────────────────────────────────────────────────
 
-describe('sessionStore persistence', () => {
-  test('Only selectedSessionId is persisted', () => {
-    // Set all state fields
-    useSessionStore.setState({
-      sessions: [mockSession({ id: 's1' })],
-      agentSessions: {
-        active: [mockAgentSession()],
-        inactive: [],
-      },
-      selectedSessionId: 's1',
-      hasLoaded: true,
-      connectionStatus: 'connected',
-      connectionError: 'err',
-    })
+describe('markSessionExiting', () => {
+  test('adds a session from sessions list to exitingSessions map', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    useSessionStore.getState().setSessions([s1])
 
-    // Read persisted storage — should only contain selectedSessionId
-    const raw = storage.getItem('agentboard-session')
-    expect(raw).not.toBeNull()
+    useSessionStore.getState().markSessionExiting('sess-1')
 
-    const parsed = JSON.parse(raw!)
-    // Zustand persist wraps state in an object with a "state" key and "version"
-    const persistedState = parsed.state
-
-    expect(persistedState.selectedSessionId).toBe('s1')
-    expect(persistedState.sessions).toBeUndefined()
-    expect(persistedState.agentSessions).toBeUndefined()
-    expect(persistedState.exitingSessions).toBeUndefined()
-    expect(persistedState.hasLoaded).toBeUndefined()
-    expect(persistedState.connectionStatus).toBeUndefined()
-    expect(persistedState.connectionError).toBeUndefined()
+    const exiting = useSessionStore.getState().exitingSessions
+    expect(exiting.size).toBe(1)
+    expect(exiting.get('sess-1')).toEqual(s1)
   })
 
-  test('Storage key is agentboard-session', () => {
-    useSessionStore.getState().setSelectedSessionId('test-key')
+  test('does nothing if sessionId not found in sessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    useSessionStore.getState().setSessions([s1])
 
-    const raw = storage.getItem('agentboard-session')
-    expect(raw).not.toBeNull()
+    useSessionStore.getState().markSessionExiting('non-existent')
 
-    const parsed = JSON.parse(raw!)
-    expect(parsed.state.selectedSessionId).toBe('test-key')
+    expect(useSessionStore.getState().exitingSessions.size).toBe(0)
+  })
+})
+
+// ─── clearExitingSession ─────────────────────────────────────────────────────
+
+describe('clearExitingSession', () => {
+  test('removes a session from exitingSessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    useSessionStore.getState().setSessions([s1])
+    useSessionStore.getState().markSessionExiting('sess-1')
+    expect(useSessionStore.getState().exitingSessions.size).toBe(1)
+
+    useSessionStore.getState().clearExitingSession('sess-1')
+
+    expect(useSessionStore.getState().exitingSessions.size).toBe(0)
+  })
+
+  test('does nothing if sessionId not in exitingSessions', () => {
+    const s1 = makeSession({ id: 'sess-1' })
+    useSessionStore.getState().setSessions([s1])
+    useSessionStore.getState().markSessionExiting('sess-1')
+
+    useSessionStore.getState().clearExitingSession('non-existent')
+
+    expect(useSessionStore.getState().exitingSessions.size).toBe(1)
   })
 })

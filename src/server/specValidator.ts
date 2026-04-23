@@ -208,9 +208,20 @@ export function validateSpec(
         continue
       }
 
-      const typeError = validateFieldType(fieldName, fieldDef, spec[fieldName])
-      if (typeError) {
-        report.errors.push(typeError)
+      // Type checking
+      if (fieldDef && typeof fieldDef === 'object' && !Array.isArray(fieldDef)) {
+        const def = fieldDef as Record<string, unknown>
+        if (def.type) {
+          const expectedType = String(def.type)
+          const actualValue = spec[fieldName]
+          if (!checkFieldType(actualValue, expectedType)) {
+            report.errors.push({
+              field: fieldName,
+              message: `Field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
+              type: 'wrong_type',
+            })
+          }
+        }
       }
     }
   }
@@ -222,9 +233,19 @@ export function validateSpec(
       if (!(fieldName in spec) || spec[fieldName] === null || spec[fieldName] === undefined) {
         continue // Optional field not present, that's fine
       }
-      const typeWarning = validateOptionalFieldType(fieldName, fieldDef, spec[fieldName])
-      if (typeWarning) {
-        report.warnings.push(typeWarning)
+      if (fieldDef && typeof fieldDef === 'object' && !Array.isArray(fieldDef)) {
+        const def = fieldDef as Record<string, unknown>
+        if (def.type) {
+          const expectedType = String(def.type)
+          const actualValue = spec[fieldName]
+          if (!checkFieldType(actualValue, expectedType)) {
+            report.warnings.push({
+              field: fieldName,
+              message: `Optional field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
+              type: 'wrong_type',
+            })
+          }
+        }
       }
     }
   }
@@ -303,50 +324,34 @@ function checkFieldType(value: unknown, expectedType: string): boolean {
   }
 }
 
-function validateFieldType(
-  fieldName: string,
-  fieldDef: unknown,
-  actualValue: unknown,
-): SpecValidationError | null {
-  if (!fieldDef || typeof fieldDef !== 'object' || Array.isArray(fieldDef)) {
-    return null
+
+function validateAcceptanceCriterion(
+  criterion: unknown,
+  index: number,
+  result: ConstitutionCheckResult,
+): void {
+  if (!criterion || typeof criterion !== 'object' || Array.isArray(criterion)) {
+    return
   }
-  const def = fieldDef as Record<string, unknown>
-  if (!def.type) {
-    return null
+  
+  const crit = criterion as Record<string, unknown>
+  if (!('type' in crit) || !crit.type) {
+    result.findings.push(`acceptance[${index}]: missing type field`)
+    result.result = 'fail'
   }
-  const expectedType = String(def.type)
-  if (!checkFieldType(actualValue, expectedType)) {
-    return {
-      field: fieldName,
-      message: `Field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
-      type: 'wrong_type',
-    }
-  }
-  return null
 }
 
-function validateOptionalFieldType(
-  fieldName: string,
-  fieldDef: unknown,
-  actualValue: unknown,
-): SpecValidationError | null {
-  if (!fieldDef || typeof fieldDef !== 'object' || Array.isArray(fieldDef)) {
-    return null
+function validateAcceptanceTyping(
+  spec: Record<string, unknown>,
+  result: ConstitutionCheckResult,
+): void {
+  if (!spec.acceptance || !Array.isArray(spec.acceptance)) {
+    return
   }
-  const def = fieldDef as Record<string, unknown>
-  if (!def.type) {
-    return null
+  
+  for (let i = 0; i < (spec.acceptance as unknown[]).length; i++) {
+    validateAcceptanceCriterion((spec.acceptance as unknown[])[i], i, result)
   }
-  const expectedType = String(def.type)
-  if (!checkFieldType(actualValue, expectedType)) {
-    return {
-      field: fieldName,
-      message: `Optional field "${fieldName}" expected type "${expectedType}", got "${typeof actualValue}"`,
-      type: 'wrong_type',
-    }
-  }
-  return null
 }
 
 function runConstitutionCheck(
@@ -368,18 +373,7 @@ function runConstitutionCheck(
 
   // Special handling for acceptance_typing (quality section or any section with special flag)
   if (checkDef.special === 'acceptance_typing' || (section === 'quality' && !checkDef.special)) {
-    if (spec.acceptance && Array.isArray(spec.acceptance)) {
-      for (let i = 0; i < (spec.acceptance as unknown[]).length; i++) {
-        const criterion = (spec.acceptance as unknown[])[i]
-        if (criterion && typeof criterion === 'object' && !Array.isArray(criterion)) {
-          const crit = criterion as Record<string, unknown>
-          if (!('type' in crit) || !crit.type) {
-            result.findings.push(`acceptance[${i}]: missing type field`)
-            result.result = 'fail'
-          }
-        }
-      }
-    }
+    validateAcceptanceTyping(spec, result)
     return result
   }
 

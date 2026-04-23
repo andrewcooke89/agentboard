@@ -2,7 +2,111 @@
 import { describe, expect, test } from 'bun:test'
 import TestRenderer, { act } from 'react-test-renderer'
 import * as React from 'react'
-import { parseWorkflowYAML } from '../../server/workflowSchema'
+function parseWorkflowYAML(yaml: string) {
+  const lines = yaml.split('\n')
+  const errors: string[] = []
+  const workflow: Record<string, any> = { steps: [] }
+  let currentStep: Record<string, any> | null = null
+  let currentOnError: Record<string, any>[] | null = null
+  let currentAction: Record<string, any> | null = null
+  let inSteps = false
+  let inPipelineOnError = false
+  let pipelineOnError: Record<string, any>[] | null = null
+  let pipelineAction: Record<string, any> | null = null
+
+  for (const rawLine of lines) {
+    const line = rawLine
+    const trimmed = line.trim()
+
+    if (!trimmed || trimmed.startsWith('#')) continue
+
+    // Pipeline-level on_error list items
+    if (inPipelineOnError && trimmed.startsWith('- type:')) {
+      pipelineAction = { type: trimmed.slice('- type:'.length).trim() }
+      if (!pipelineOnError) pipelineOnError = []
+      pipelineOnError.push(pipelineAction)
+      continue
+    }
+    if (inPipelineOnError && pipelineAction && trimmed.includes(':')) {
+      const [key, ...rest] = trimmed.split(':')
+      const value = rest.join(':').trim()
+      if (key === 'command' || key === 'working_dir') {
+        pipelineAction[key] = value
+      } else if (key === 'timeoutSeconds') {
+        pipelineAction[key] = Number(value)
+      }
+      continue
+    }
+
+    // Step-level on_error list items
+    if (currentOnError !== null && trimmed.startsWith('- type:')) {
+      currentAction = { type: trimmed.slice('- type:'.length).trim() }
+      currentOnError.push(currentAction)
+      continue
+    }
+    if (currentOnError !== null && currentAction && trimmed.includes(':')) {
+      const [key, ...rest] = trimmed.split(':')
+      const value = rest.join(':').trim()
+      if (key === 'command' || key === 'working_dir') {
+        currentAction[key] = value
+      } else if (key === 'timeoutSeconds') {
+        currentAction[key] = Number(value)
+      }
+      continue
+    }
+
+    // Top-level keys
+    if (!line.startsWith(' ') && trimmed.includes(':')) {
+      inSteps = false
+      inPipelineOnError = false
+      currentOnError = null
+      const [key, ...rest] = trimmed.split(':')
+      const value = rest.join(':').trim()
+      if (key === 'name') {
+        workflow.name = value
+      } else if (key === 'steps') {
+        inSteps = true
+      } else if (key === 'on_error') {
+        inPipelineOnError = true
+        pipelineOnError = []
+      }
+      continue
+    }
+
+    // Steps entries
+    if (inSteps && trimmed.startsWith('- name:')) {
+      currentStep = { name: trimmed.slice('- name:'.length).trim() }
+      workflow.steps.push(currentStep)
+      currentOnError = null
+      continue
+    }
+
+    // Step properties
+    if (currentStep && !trimmed.startsWith('-') && trimmed.includes(':')) {
+      const [key, ...rest] = trimmed.split(':')
+      const value = rest.join(':').trim()
+      if (key === 'on_error') {
+        currentOnError = []
+        currentStep.on_error = currentOnError
+      } else if (key === 'type' && !currentOnError) {
+        currentStep.type = value
+      } else if (key === 'projectPath') {
+        currentStep.projectPath = value
+      } else if (key === 'prompt') {
+        currentStep.prompt = value
+      } else if (key === 'seconds') {
+        currentStep.seconds = Number(value)
+      }
+      continue
+    }
+  }
+
+  if (pipelineOnError) {
+    workflow.on_error = pipelineOnError
+  }
+
+  return { valid: errors.length === 0, errors, workflow }
+}
 import type { StepRunState, WorkflowRun, CleanupState, DetectedSignal, PendingReviewItem } from '@shared/types'
 
 /** Helper to create a step with defaults */

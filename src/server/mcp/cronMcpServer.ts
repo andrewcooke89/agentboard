@@ -7,7 +7,7 @@
 
 const _AGENTBOARD_URL = process.env.AGENTBOARD_URL || 'http://localhost:4040'
 const _AGENTBOARD_WS = process.env.AGENTBOARD_WS || 'ws://localhost:4040/ws'
-const _AGENTBOARD_AUTH_TOKEN = process.env.AGENTBOARD_AUTH_TOKEN || ''
+const AGENTBOARD_AUTH_TOKEN = process.env.AGENTBOARD_AUTH_TOKEN || ''
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -237,7 +237,20 @@ async function createMcpServer(): Promise<void> {
             jsonrpc: '2.0',
             id,
             result: {
-              resources: MCP_RESOURCES,
+              resources: [
+                {
+                  uri: 'cron://ui/context',
+                  name: 'UI Context',
+                  description: 'Current UI context snapshot including selected job and active tab.',
+                  mimeType: 'application/json',
+                },
+                {
+                  uri: 'cron://skill/guidelines',
+                  name: 'Skill Guidelines',
+                  description: 'Guidelines for using the Cron AI assistant.',
+                  mimeType: 'text/markdown',
+                },
+              ],
             },
           })
           break
@@ -668,22 +681,6 @@ async function filterJobs(filter: Record<string, unknown>): Promise<{ success: b
 
 // ─── WU-008: Resources ──────────────────────────────────────────────────────
 
-/** MCP resource definitions */
-const MCP_RESOURCES = [
-  {
-    uri: 'cron://ui/context',
-    name: 'UI Context',
-    description: 'Current UI context snapshot including selected job and active tab.',
-    mimeType: 'application/json',
-  },
-  {
-    uri: 'cron://skill/guidelines',
-    name: 'Skill Guidelines',
-    description: 'Guidelines for using the Cron AI assistant.',
-    mimeType: 'text/markdown',
-  },
-]
-
 /** Local context cache, updated via WS push from agentboard */
 let localContextCache: UiContext | null = null
 let contextStale = false
@@ -883,7 +880,6 @@ export {
   showTimeline,
   filterJobs,
   // WU-008: Resources & WS
-  MCP_RESOURCES,
   getContextResource,
   getSkillGuidelinesResource,
   connectWebSocket,

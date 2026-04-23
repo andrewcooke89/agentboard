@@ -50,7 +50,13 @@ export class SessionRefreshWorkerClient {
 
       this.pending.set(id, {
         resolve: (response) => {
-          this.handleRefreshResponse(response, resolve, reject)
+          if (response.type === 'result' && response.kind === 'refresh') {
+            resolve(response.sessions)
+          } else {
+            const message =
+              response.type === 'error' ? response.error : 'Session refresh failed'
+            reject(new Error(message))
+          }
         },
         reject,
         timeoutId,
@@ -86,15 +92,15 @@ export class SessionRefreshWorkerClient {
 
       this.pending.set(id, {
         resolve: (response) => {
-          if (response.type === 'error') {
-            reject(new Error(response.error))
-            return
+          if (response.type === 'result' && response.kind === 'last-user-message') {
+            resolve(response.message ?? null)
+          } else {
+            const message =
+              response.type === 'error'
+                ? response.error
+                : 'Last user message refresh failed'
+            reject(new Error(message))
           }
-          if (response.type !== 'result' || response.kind !== 'last-user-message') {
-            reject(new Error('Last user message refresh failed'))
-            return
-          }
-          resolve(response.message ?? null)
         },
         reject,
         timeoutId,
@@ -151,20 +157,6 @@ export class SessionRefreshWorkerClient {
     }
     this.pending.delete(response.id)
     pending.resolve(response)
-  }
-
-  private handleRefreshResponse(
-    response: RefreshWorkerResponse,
-    resolve: (sessions: Session[]) => void,
-    reject: (error: Error) => void
-  ): void {
-    if (response.type === 'result' && response.kind === 'refresh') {
-      resolve(response.sessions)
-    } else {
-      const message =
-        response.type === 'error' ? response.error : 'Session refresh failed'
-      reject(new Error(message))
-    }
   }
 
   private failAll(error: Error): void {

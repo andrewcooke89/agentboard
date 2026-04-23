@@ -103,6 +103,7 @@ impl Executor for CcExecutor {
                             agent_brief: None,
                             file_contents: vec![],
                             dependencies: None,
+                            reference_hits: None,
                         }
                     }
                 }
@@ -113,6 +114,7 @@ impl Executor for CcExecutor {
                     agent_brief: None,
                     file_contents: vec![],
                     dependencies: None,
+                    reference_hits: None,
                 }
             }
         };
@@ -521,6 +523,7 @@ output:
             agent_brief: None,
             file_contents: vec![],
             dependencies: None,
+            reference_hits: None,
         }
     }
 
@@ -556,6 +559,7 @@ output:
             agent_brief: Some("The handler module exports...".to_string()),
             file_contents: vec![],
             dependencies: None,
+            reference_hits: None,
         };
         let prompt = build_escalation_prompt(&wo, &ctx, &default_gates(), None);
         assert!(prompt.contains("handler module exports"));

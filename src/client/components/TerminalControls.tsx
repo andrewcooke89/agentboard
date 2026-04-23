@@ -264,61 +264,65 @@ export default function TerminalControls({
     onSendKey(output)
   }
 
-  const handleClipboardItem = async (
-    item: ClipboardItem,
-    sendAndRefocus: (content: string) => void
-  ): Promise<boolean> => {
-    const imageType = item.types.find((t) => t.startsWith('image/'))
-    if (imageType) {
-      const blob = await item.getType(imageType)
-      const formData = new FormData()
-      formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
-      const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
-      if (res.ok) {
-        const { path } = await res.json()
-        sendAndRefocus(path)
-        return true
-      }
-      return false
-    }
-
-    if (!item.types.includes('text/plain')) return false
-
-    const blob = await item.getType('text/plain')
-    const text = await blob.text()
-    if (!text) return false
-
-    sendAndRefocus(text)
-    return true
-  }
-
   const handlePasteButtonClick = async () => {
     if (disabled) return
+    // Check if keyboard was visible before we do anything
     const wasKeyboardVisible = isKeyboardVisible?.() ?? false
     triggerHaptic()
 
-    const sendAndRefocus = (content: string) => {
-      onSendKey(content)
-      if (wasKeyboardVisible) onRefocus?.()
-    }
-
+    // Try Clipboard API with image support
     try {
       const items = await navigator.clipboard.read()
       for (const item of items) {
-        if (await handleClipboardItem(item, sendAndRefocus)) return
+        // Check for image first
+        const imageType = item.types.find((t) => t.startsWith('image/'))
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          // Upload image to server
+          const formData = new FormData()
+          formData.append('image', blob, `paste.${imageType.split('/')[1] || 'png'}`)
+          const res = await authFetch('/api/paste-image', { method: 'POST', body: formData })
+          if (res.ok) {
+            const { path } = await res.json()
+            // Send file path - Claude Code can reference images by path
+            onSendKey(path)
+            if (wasKeyboardVisible) {
+              onRefocus?.()
+            }
+            return
+          }
+        }
+
+        // Check for text
+        if (item.types.includes('text/plain')) {
+          const blob = await item.getType('text/plain')
+          const text = await blob.text()
+          if (text) {
+            onSendKey(text)
+            if (wasKeyboardVisible) {
+              onRefocus?.()
+            }
+            return
+          }
+        }
       }
     } catch {
+      // Clipboard API not available - try text fallback
       try {
         const text = await navigator.clipboard.readText()
         if (text) {
-          sendAndRefocus(text)
+          onSendKey(text)
+          if (wasKeyboardVisible) {
+            onRefocus?.()
+          }
           return
         }
-      } catch (err) {
-        console.error('Failed to read clipboard text:', err)
+      } catch {
+        // Fall through to manual paste input
       }
     }
 
+    // Show paste input for manual paste on iOS
     setShowPasteInput(true)
     setPasteValue('')
   }

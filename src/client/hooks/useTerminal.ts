@@ -60,8 +60,7 @@ class SafeClipboardProvider implements IClipboardProvider {
     if (selection !== 'c') return ''
     try {
       return await navigator.clipboard.readText()
-    } catch (error) {
-      console.error('Clipboard read failed:', error)
+    } catch {
       return ''
     }
   }
@@ -72,8 +71,8 @@ class SafeClipboardProvider implements IClipboardProvider {
     if (selection !== 'c' || !text?.trim()) return
     try {
       await navigator.clipboard.writeText(text)
-    } catch (error) {
-      console.error('Clipboard write failed:', error)
+    } catch {
+      // Clipboard write failed (permissions, etc.)
     }
   }
 }
@@ -504,23 +503,23 @@ export function useTerminal({
       if (webLinksAddonRef.current) {
         try {
           webLinksAddonRef.current.dispose()
-        } catch (error) {
-          console.error('WebLinksAddon disposal failed:', error)
+        } catch {
+          // Ignore
         }
         webLinksAddonRef.current = null
       }
       if (webglAddonRef.current) {
         try {
           webglAddonRef.current.dispose()
-        } catch (error) {
-          console.error('WebGL addon disposal failed:', error)
+        } catch {
+          // Ignore
         }
         webglAddonRef.current = null
       }
       try {
         terminal.dispose()
-      } catch (error) {
-        console.error('Terminal disposal failed:', error)
+      } catch {
+        // Ignore
       }
       if (container) {
         container.innerHTML = ''

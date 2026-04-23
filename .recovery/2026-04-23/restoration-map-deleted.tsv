@@ -1,0 +1,19 @@
+src/client/__tests__/SessionPreviewModal.test.tsx	05ab49b04f80f911d88350522a8d9e4306a9a314	refactor: add coverage tests (#12)
+src/client/components/TerminalControls.tsx	ac69fbaf6c318c4497c326c7b728f9f348800352	Sync: workflow engine, task system, UI components, tests
+src/client/components/TerminalTabs.tsx	d0918e5ebdb854192ad58726fd4f19a52dfcf67e	DAG engine runtime fixes and 10 end-to-end scenario specs
+src/client/components/cron/CronTagInput.tsx	f3cd853cf4d642f9bc4f051a41908107e343da67	fix: cron UI dark theme, delete wiring, and window.__cronWsSend
+src/client/hooks/useTerminal.ts	adf3a6b4a12dc09f00607efbbaf65f528f2963dd	refactor: extract shared logic and reusable hooks
+src/client/stores/swarmStore.ts	01fbffdb0253e96a2acc197e6100964dce924ce1	fix: add missing swarm types, fix swarmStore to Zustand, wire stats API
+src/client/utils/sound.ts	522cdc6609bfaaa5fd5fdd0e2aca22b0b71a95bc	feat: add sound notifications for session status changes
+src/server/LogMetadataExtractor.ts	ac69fbaf6c318c4497c326c7b728f9f348800352	Sync: workflow engine, task system, UI components, tests
+src/server/SwarmManager.ts	c236cd3da90066ad624f78e62e47b74ea34ce0c2	feat: metrics DB, file lock registry, executor robustness, ticket UI
+src/server/__tests__/index.test.ts	9953322f6ef56454e964e6781f6e149b8f6ddf9f	fix: session tracking and stability improvements (#15)
+src/server/cronLogService.ts	bd09a486ed9086027b091948e73b126d30ed4c48	feat: Phase 26 cron manager + per-WU TDD pipeline infrastructure
+src/server/cronManager.ts	86cb9bc982922161c31dc81aed241c9e943f130a	fix: comprehensive workflow engine reliability hardening (44 fixes)
+src/server/handlers/sessionHandlers.ts	ac69fbaf6c318c4497c326c7b728f9f348800352	Sync: workflow engine, task system, UI components, tests
+src/server/handlers/terminalHandlers.ts	ac69fbaf6c318c4497c326c7b728f9f348800352	Sync: workflow engine, task system, UI components, tests
+src/server/scripts/minion-plan-dispatch.ts	764f35aa74767cf1a5242357ce320e827e744230	fix(src/server/scripts/minion-plan-dispatch): Increase timeout to 2 hours for planning tasks [nightly-fix]
+src/server/sessionPool.ts	d0918e5ebdb854192ad58726fd4f19a52dfcf67e	DAG engine runtime fixes and 10 end-to-end scenario specs
+src/server/sessionRefreshWorkerClient.ts	40646920b71b520dd8b91275855c1eb18f5cea8e	fix: improve log-session mapping and add lastUserMessage tracking (#17)
+src/server/taskWorker.ts	bd09a486ed9086027b091948e73b126d30ed4c48	feat: Phase 26 cron manager + per-WU TDD pipeline infrastructure
+src/server/terminal/PtyTerminalProxy.ts	ac69fbaf6c318c4497c326c7b728f9f348800352	Sync: workflow engine, task system, UI components, tests

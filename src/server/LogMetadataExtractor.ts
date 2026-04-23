@@ -49,20 +49,19 @@ export async function extractLogMetadata(
         }
 
         // Extract first user message
-        if (firstUserMessage) continue
-        
-        if (entry.type === 'human' && typeof entry.message === 'string') {
-          firstUserMessage = entry.message.slice(0, 200)
-        } else if (entry.role === 'user' && typeof entry.content === 'string') {
-          firstUserMessage = entry.content.slice(0, 200)
-        } else if (entry.type === 'human' && entry.message?.content) {
-          const content = entry.message.content
-          const text = typeof content === 'string' 
-            ? content 
-            : Array.isArray(content) 
-              ? content.find((b: any) => b.type === 'text')?.text ?? '' 
-              : ''
-          if (text) firstUserMessage = text.slice(0, 200)
+        if (!firstUserMessage) {
+          if (entry.type === 'human' && typeof entry.message === 'string') {
+            firstUserMessage = entry.message.slice(0, 200)
+          } else if (entry.role === 'user' && typeof entry.content === 'string') {
+            firstUserMessage = entry.content.slice(0, 200)
+          } else if (entry.type === 'human' && entry.message?.content) {
+            const text = typeof entry.message.content === 'string'
+              ? entry.message.content
+              : Array.isArray(entry.message.content)
+                ? entry.message.content.find((b: any) => b.type === 'text')?.text ?? ''
+                : ''
+            if (text) firstUserMessage = text.slice(0, 200)
+          }
         }
 
         // Detect session type
@@ -77,15 +76,13 @@ export async function extractLogMetadata(
         }
       } catch {
         // Skip unparseable lines
-        console.error('Failed to parse log line:', trimmed)
       }
     }
 
     result.messageCount = messageCount
     if (firstUserMessage) result.firstMessage = firstUserMessage
-  } catch (error) {
+  } catch {
     // Return defaults on read error
-    console.error('Failed to read log file:', error)
   } finally {
     if (fileHandle) {
       try { await fileHandle.close() } catch { /* ignore */ }

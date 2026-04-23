@@ -51,6 +51,88 @@ function getReportDir(): string {
 }
 
 
+function isEasyMediumTicket(ticket: any): boolean {
+  const title = ticket.title || ''
+  // long-function: extract line count from title like "Function 'foo' is 175 lines"
+  const funcMatch = title.match(/is (\d+) lines/)
+  if (funcMatch && parseInt(funcMatch[1], 10) <= 350) return true
+  // deep-nesting: depth <= 8
+  const nestMatch = title.match(/nesting depth is (\d+)/)
+  if (nestMatch && parseInt(nestMatch[1], 10) <= 8) return true
+  return false
+}
+
+
+async function dispatchSmallTicket(
+  ticket: any,
+  ticketId: string,
+  projectPath: string,
+  project: ProjectConfig,
+  effort: string,
+  baseUrl: string,
+  broadcastFn: (message: Record<string, unknown>) => void,
+  metricsStore?: MetricsStore,
+): Promise<Response> {
+  const relPath = ticket.source?.file ? path.relative(projectPath, ticket.source.file) : ''
+  const ticketScope = relPath ? path.dirname(relPath) : ''
+
+  // Check file lock before doing anything irreversible
+  if (relPath && fileLockRegistry.isLocked(relPath)) {
+    const lock = fileLockRegistry.getLock(relPath)
+    return new Response(JSON.stringify({ ok: false, skipped: true, reason: 'File is locked by another dispatch', locked_by: lock }), { status: 409, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  const groupId = `ondemand-${ticketId}-${Date.now()}`
+  const woId = `WO-${ticketId}`
+
+  const wo = {
+    id: woId,
+    group_id: groupId,
+    title: ticket.title,
+    description: `Fix the following issue in ${ticket.source.file}:${ticket.source.line_start}\n\n**Issue:** ${ticket.title}\n**Details:** ${ticket.description}\n**Suggested fix:** ${ticket.suggestion ?? 'No suggestion'}\n\nRules:\n- Make the minimal change needed\n- Do not refactor surrounding code\n- Do not add comments or documentation`,
+    task: 'fix',
+    scope: ticketScope || undefined,
+    full_context_files: relPath ? [relPath] : [],
+    gates: { compile: true, lint: true, typecheck: true, tests: { run: false } },
+    execution: { model: (effort === 'small' ? project.fix_model : project.fix_model_medium) || project.fix_model || 'glm-5', max_retries: 2, timeout_minutes: effort === 'small' ? 5 : 10 },
+    isolation: { type: 'none' },
+    output: { commit: true, commit_prefix: 'fix' },
+  }
+
+  const woResp = await fetch(`${baseUrl}/api/wo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(wo),
+  })
+  if (!woResp.ok) return new Response(JSON.stringify({ error: `Failed to create WO: ${woResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+
+  const dispResp = await fetch(`${baseUrl}/api/wo/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      group_id: groupId,
+      working_dir: projectPath,
+      concurrency: 1,
+      max_failures: 1,
+      gate_typecheck: project.typecheck_cmd,
+      gate_lint: project.lint_cmd,
+      gate_test: project.test_cmd,
+    }),
+  })
+  if (!dispResp.ok) return new Response(JSON.stringify({ error: `Failed to dispatch: ${dispResp.status}` }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+
+  const { dispatch_id } = await dispResp.json() as { dispatch_id: string }
+  broadcastFn({ type: 'ticket-update', ticket: { id: ticketId, status: 'in-progress' }, action: 'fix-dispatched' })
+  try {
+    metricsStore?.recordTicketEvent({
+      ticketId,
+      action: 'fix-dispatched',
+      source: 'on-demand',
+      metadata: { group_id: groupId, wo_id: woId, effort: 'small' },
+    })
+  } catch { /* non-fatal */ }
+  return new Response(JSON.stringify({ ok: true, dispatch_id, group_id: groupId, effort: 'small' }), { status: 202, headers: { 'Content-Type': 'application/json' } })
+}
 
 
 // ─── Route Registration ─────────────────────────────────────────────────────
@@ -201,16 +283,7 @@ export function registerTicketRoutes(
 
     // Determine if this ticket can use direct dispatch (single-agent, no planning step)
     // "Easy medium" tickets: long-function 150-350 LOC, deep-nesting with moderate depth
-    const isEasyMedium = effort === 'medium' && (() => {
-      const title = ticket.title || ''
-      // long-function: extract line count from title like "Function 'foo' is 175 lines"
-      const funcMatch = title.match(/is (\d+) lines/)
-      if (funcMatch && parseInt(funcMatch[1], 10) <= 350) return true
-      // deep-nesting: depth <= 8
-      const nestMatch = title.match(/nesting depth is (\d+)/)
-      if (nestMatch && parseInt(nestMatch[1], 10) <= 8) return true
-      return false
-    })()
+    const isEasyMedium = effort === 'medium' && isEasyMediumTicket(ticket)
 
     const useDirectDispatch = effort === 'small'
       || (project.auto_merge_efforts ?? ['small']).includes(effort)
@@ -226,7 +299,7 @@ export function registerTicketRoutes(
         id: woId,
         group_id: groupId,
         title: ticket.title,
-        description: `Fix the following issue in ${ticket.source.file}:${ticket.source.line_start}\n\n**Issue:** ${ticket.title}\n**Details:** ${ticket.description}\n**Suggested fix:** ${ticket.suggestion ?? 'No suggestion'}\n\nRules:\n- Make the minimal change needed\n- Do not refactor surrounding code\n- Do not add comments or documentation`,
+        description: `Fix the following issue in ${ticket.source.file}:${ticket.source.line_start}\n\n**Issue:** ${ticket.title}\n**Details:** ${ticket.description}${ticket.source?.code_snippet ? `\n**Code:**\n\`\`\`\n${ticket.source.code_snippet}\n\`\`\`` : ''}\n**Suggested fix:** ${ticket.suggestion ?? 'No suggestion'}\n\nRules:\n- Make the minimal change needed\n- Do not refactor surrounding code\n- Do not add comments or documentation`,
         task: 'fix',
         scope: scope || undefined,
         full_context_files: relPath ? [relPath] : [],

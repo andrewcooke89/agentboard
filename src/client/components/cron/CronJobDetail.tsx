@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useCronStore } from '../../stores/cronStore'
-import type { CronJob } from '@shared/types'
 import { CronHealthBadge } from './CronHealthBadge'
 import { CronTagInput } from './CronTagInput'
 import { CronSessionLink } from './CronSessionLink'
@@ -14,6 +13,7 @@ import CronScriptTab from './CronScriptTab'
 import { CronJobControls } from './CronJobControls'
 import { CronRunNowOutput } from './CronRunNowOutput'
 import { CronDeleteConfirm } from './CronDeleteConfirm'
+import type { CronJob } from '@shared/types'
 
 // ─── CronJobDetail ────────────────────────────────────────────────────────────
 // Persistent header (avatar 48x48, name, source/status/health badges, tag pills,
@@ -36,8 +36,14 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const TABS = ['overview', 'history', 'logs', 'script'] as const
 
-function CronJobHeader({ job }: { job: CronJob }) {
-  const { setJobManaged } = useCronStore()
+// ─── CronJobDetailHeader ──────────────────────────────────────────────────────
+
+interface CronJobDetailHeaderProps {
+  job: CronJob
+  setJobManaged: (id: string, managed: boolean) => void
+}
+
+function CronJobDetailHeader({ job, setJobManaged }: CronJobDetailHeaderProps) {
   return (
     <div className="p-4 border-b border-[var(--border)] space-y-3 shrink-0">
       <div className="flex items-center gap-3">
@@ -98,8 +104,10 @@ function CronJobHeader({ job }: { job: CronJob }) {
   )
 }
 
+// ─── CronJobDetail (main export) ──────────────────────────────────────────────
+
 export function CronJobDetail() {
-  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs } = useCronStore()
+  const { selectedJobId, jobs, activeTab, setActiveTab, runOutputs, runningJobs, setJobManaged } = useCronStore()
   const job = jobs.find((j) => j.id === selectedJobId)
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -133,7 +141,7 @@ export function CronJobDetail() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <CronJobHeader job={job} />
+      <CronJobDetailHeader job={job} setJobManaged={setJobManaged} />
 
       {/* Controls strip */}
       <CronJobControls onDelete={() => setShowDeleteConfirm(true)} />

@@ -14,9 +14,9 @@ export class CronLogService {
    *   detect log redirections in the command
    */
   async getLogs(
-    _jobId: string,
-    _lines: number,
-    _offset?: number
+    jobId: string,
+    lines: number,
+    offset?: number
   ): Promise<string[]> {
     // Log sources will be connected via WU-007
     return []
@@ -27,7 +27,7 @@ export class CronLogService {
    * - For systemd: `journalctl -u {service} -f`
    * - For cron: tail detected log files or syslog
    */
-  async *tailLogs(_jobId: string): AsyncGenerator<string> {
+  async *tailLogs(jobId: string): AsyncGenerator<string> {
     // Log sources will be connected via WU-007
   }
 }

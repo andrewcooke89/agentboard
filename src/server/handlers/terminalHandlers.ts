@@ -72,14 +72,15 @@ export function createTerminalHandlers(
         ws.data.currentTmuxTarget = null
         ws.data.terminal = null
         void terminal.dispose()
-        if (!ctx.sockets.has(ws)) return
-        sendTerminalError(
-          ws,
-          sessionId,
-          'ERR_TMUX_ATTACH_FAILED',
-          'tmux client exited',
-          true
-        )
+        if (ctx.sockets.has(ws)) {
+          sendTerminalError(
+            ws,
+            sessionId,
+            'ERR_TMUX_ATTACH_FAILED',
+            'tmux client exited',
+            true
+          )
+        }
       },
     })
 
@@ -95,30 +96,33 @@ export function createTerminalHandlers(
 
     try {
       await ws.data.terminal.start()
+      return ws.data.terminal
     } catch (error) {
       handleTerminalError(ws, ws.data.currentSessionId, error, 'ERR_TMUX_ATTACH_FAILED')
       ws.data.terminal = null
       return null
     }
-
-    return ws.data.terminal
   }
 
   function captureTmuxHistory(target: string): string | null {
-    // Capture full scrollback history (-S - means from start, -E - means to end, -J joins wrapped lines)
-    const result = Bun.spawnSync(
-      ['tmux', 'capture-pane', '-t', target, '-p', '-S', '-', '-E', '-', '-J'],
-      { stdout: 'pipe', stderr: 'pipe' }
-    )
-    if (result.exitCode !== 0) {
+    try {
+      // Capture full scrollback history (-S - means from start, -E - means to end, -J joins wrapped lines)
+      const result = Bun.spawnSync(
+        ['tmux', 'capture-pane', '-t', target, '-p', '-S', '-', '-E', '-', '-J'],
+        { stdout: 'pipe', stderr: 'pipe' }
+      )
+      if (result.exitCode !== 0) {
+        return null
+      }
+      const output = result.stdout.toString()
+      // Only return if there's actual content
+      if (output.trim().length === 0) {
+        return null
+      }
+      return output
+    } catch {
       return null
     }
-    const output = result.stdout.toString()
-    // Only return if there's actual content
-    if (output.trim().length === 0) {
-      return null
-    }
-    return output
   }
 
   function resolveCopyModeTarget(
@@ -247,8 +251,8 @@ export function createTerminalHandlers(
           stdout: 'pipe',
           stderr: 'pipe',
         })
-      } catch (error) {
-        console.error('Failed to cancel copy-mode:', error)
+      } catch {
+        // Ignore errors - copy-mode may not be active
       }
     },
 

@@ -1,0 +1,255 @@
+f2bc7192a712168ff2f9f0b198c022149afb4fe9|2026-04-14 02:04:58 +0800|fix(../../src/server): [TS2307] Cannot find module './taskWorker' or its corresponding type declarations. [WO-TKT-0298]
+e340fcbfecc65172e51666192a03bd1625995208|2026-04-14 02:04:37 +0800|fix(../../src/client/components): [TS2307] Cannot find module './DirectoryBrowser' or its corresponding type declarations. [WO-TKT-0196]
+82c176a64e162091f85fec6bd1242257c12e9f42|2026-04-13 21:15:36 +0800|fix(src/client/components/hooks): [TS2306] File '/home/andrew-cooke/tools/agentboard/src/client/hooks/useTerminal. [WO-TKT-0202]
+1e531431291919b8974915ccb480c0e7708c5ac1|2026-04-13 21:14:36 +0800|fix(src/client/components): [TS2307] Cannot find module './TerminalTabs' or its corresponding type declarati [WO-TKT-0201]
+76beac043b3375c7bdd1456077fb66a518c1cb69|2026-04-13 20:50:57 +0800|fix(src/client/__tests__): [TS2307] Cannot find module '../../server/workflowSchema' or its corresponding t [WO-TKT-0187]
+18b09eafd60fd6a2da1d4e147f62dcb747ea679f|2026-04-13 15:52:02 +0800|fix(src/client/components/settings): [TS2307] Cannot find module './useSettingsForm' or its corresponding type declar [WO-TKT-0203]
+62337c1b0627a743034f12cc2eab66010bf827dc|2026-04-13 15:49:29 +0800|fix(src/client/components): [TS7006] Parameter 'isAtBottom' implicitly has an 'any' type. [WO-TKT-0200]
+72cd4ae0e0d17a0448ce8874e2e28fe85b0be7aa|2026-04-11 02:10:25 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-1454]
+764f35aa74767cf1a5242357ce320e827e744230|2026-04-10 14:15:49 +0800|fix(src/server/scripts/minion-plan-dispatch): Increase timeout to 2 hours for planning tasks [nightly-fix]
+2d7aeb3f80153e33469946b5d8a8f82a7e7e5609|2026-04-10 14:15:31 +0800|fix(src/server/fileLockRegistry): Add 30-minute TTL to prevent stale locks [nightly-fix]
+d06398d6724385604eaa56ec52e28f641d34df3c|2026-04-06 02:05:40 +0800|fix(src/server/terminal): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0958]
+e6332dfdc725cda9879f5f901bc5382e9eb5fcdc|2026-04-06 02:04:53 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0953]
+e09291a88b690d537324b87903aa890e92a55209|2026-04-06 02:04:36 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0945]
+c82e00b8b199e36099531ed0f180704c3d3af08d|2026-04-06 02:04:29 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0946]
+211192cc2855896989fbfdbad1364cf2350330f6|2026-04-06 02:04:24 +0800|fix(src/server/scripts): [eslint(no-useless-catch)] eslint(no-useless-catch): Unnecessary try/catch wrapper [WO-TKT-0886]
+7c84d6089512471035706e33dcc30a4b824fae51|2026-04-06 02:04:18 +0800|fix(src/server): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'offset' is declared but never used. Unused parameters sho... [WO-TKT-0879]
+22bda7d2fee71d26eb54ae868645e055d4b453e9|2026-04-01 21:59:55 +0800|feat(minion-executor): Improve agent context frontloading and tool capabilities
+5cd5d14a7413bc8d6ccc432652534acef9dc30dc|2026-04-01 06:55:37 +0800|fix(src/server/__tests__): Add comprehensive test coverage for SessionRegistry [WO-nightly-TKT-0800-2026-03-31-001]
+4957cbdda84c4d5e42503f7183748cdbc5295689|2026-04-01 04:29:22 +0800|fix(src/client/components): Refactor AmendmentStatusPanel to use extracted sub-components [WO-nightly-TKT-0742-2026-03-31-003]
+25c8b30136d11a21c99f21b28d3e3f42e3d03e57|2026-04-01 04:25:40 +0800|fix(src/client/components): Extract AmendmentSubSections components from AmendmentStatusPanel [WO-nightly-TKT-0742-2026-03-31-002]
+ce40fcdf4c95c837b7a3f76def44214b463ad01f|2026-04-01 04:25:16 +0800|fix(src/client/components): Extract ExtendBudgetDialog component from AmendmentStatusPanel [WO-nightly-TKT-0742-2026-03-31-001]
+c36f59d555db396f54bd96298af4aec7e5eb1669|2026-04-01 03:38:26 +0800|fix(src/client/components/cron): Extract CronJobDetailHeader component from CronJobDetail to reduce function length [WO-nightly-TKT-0829-2026-03-31-001]
+ac2217047482ce73291567f321a11f6de549246a|2026-04-01 03:23:30 +0800|fix(src/client/components/settings): Extract CommandPresetsSection component from SettingsModal [WO-nightly-TKT-0830-2026-03-31-003]
+5b272c8e7135f198e1e8877f352db2eddbe5ee8b|2026-04-01 03:21:13 +0800|fix(src/client/components/settings): Extract TerminalSettingsSection component from SettingsModal [WO-nightly-TKT-0830-2026-03-31-005]
+b4c92c53501a72194fd1f78153a105a16b178f45|2026-04-01 03:20:09 +0800|fix(src/client/components/settings): Extract useSettingsForm custom hook from SettingsModal [WO-nightly-TKT-0830-2026-03-31-001]
+b21cd66a4a1038731ba839e01c1232ac471ba793|2026-04-01 03:19:33 +0800|fix(src/client/components/settings): Extract SessionSettingsSection component from SettingsModal [WO-nightly-TKT-0830-2026-03-31-006]
+da739d940df74e8514ab47491ec84e15f6ce7829|2026-04-01 03:18:34 +0800|fix(src/client/components/settings): Extract CronSettingsSection component from SettingsModal [WO-nightly-TKT-0830-2026-03-31-002]
+be71e1a1a93d3aa6a3b339f3a43ddfd35e055605|2026-04-01 03:17:59 +0800|fix(src/client/components/settings): Extract NotificationsSection component from SettingsModal [WO-nightly-TKT-0830-2026-03-31-004]
+aa62cdef428604c5acf46a4beb33c6a169089b25|2026-04-01 02:12:46 +0800|fix(src/client/stores/__tests__): Add unit tests for sessionStore.ts [WO-nightly-TKT-0876-2026-03-31-001]
+9d32f4f9e34705accdab2ba829bfd82e144109ae|2026-04-01 02:05:10 +0800|fix(src/server/scripts): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0850]
+52d8fbf36f6f150fa53db5e07e47b6395be5783a|2026-04-01 02:04:50 +0800|fix(src/server/terminal): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0873]
+3f67eaaf548dbf801d964fe9f26d15e37bb07c38|2026-04-01 02:04:38 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0865]
+f4a262cf0874cd99ee48ac8b43051ffede8f54bb|2026-04-01 02:04:27 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0845]
+f9dc524607a6c637c9f0b474dea445a19891b5b8|2026-04-01 02:04:25 +0800|fix(src/client/stores): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0842]
+611021985706bad328793ea3a589da20e8656e72|2026-04-01 02:04:16 +0800|fix(src/client): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'useTicketStore' is imported but never used. [WO-TKT-0809]
+6b89feb3ef15d6ba32a5b6c1bfac4129b8787b93|2026-04-01 02:04:12 +0800|fix(src/client/components/swarm): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'EventSeverity' is imported but never used. [WO-TKT-0808]
+abac732d8b69241aacc7553df9f48b07cf47a39b|2026-03-31 02:06:34 +0800|fix(src/server/mcp): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0793]
+806a0b49dca7438f341e59bce221403c31d7d98b|2026-03-31 02:05:01 +0800|fix(src/server/handlers): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0779]
+b4cef51b6eb7bac27b3b734052d22e33c00875da|2026-03-31 02:04:53 +0800|fix(src/client/hooks): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0784]
+697aee369de7384ed7947fb7ac6112742e90fb07|2026-03-31 02:04:52 +0800|fix(.): [stale-dep-major] @xterm/xterm: current 5.5.0 → latest 6.0.0 (major version behind) [WO-TKT-0802]
+4f03c64ffd3c6038f987d8bb93d7fa43b919f248|2026-03-31 02:04:31 +0800|fix(src/server): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'monitorRunningStep' is declared but never used. [WO-TKT-0713]
+6bfe6b6b3720da190d08d1eba90210f5a4c00131|2026-03-31 02:04:29 +0800|fix(src/server): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'dispatchMediumTicket' is declared but never used. [WO-TKT-0712]
+3c29d0e4a836db17094a3bbbf8377b49aebc94af|2026-03-31 02:04:21 +0800|fix(src/server/scripts): [eslint(no-useless-catch)] eslint(no-useless-catch): Unnecessary try/catch wrapper [WO-TKT-0707]
+df11ed66588904836762b3f3b41ee860967ba939|2026-03-31 02:04:18 +0800|fix(src/client/stores): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0763]
+66b4948b7316286067ab56ac194e2599f35506c5|2026-03-30 12:26:42 +0800|fix(src/server): Refactor tickInner in dagEngine.ts to reduce from 340 to under 150 lines [WO-nightly-TKT-0551-2026-03-30-001]
+51b3ade905819b3bda57f7f61f93672bc518a49e|2026-03-30 11:46:52 +0800|fix(src/client/components): [long-function] Function 'StepFormCard' is 347 lines (threshold: 150) [WO-TKT-0541]
+efae4a69b15e21963e35422538562164881ca835|2026-03-30 11:46:45 +0800|fix(src/client/components): [long-function] Function 'TaskForm' is 239 lines (threshold: 150) [WO-TKT-0540]
+18480468e7e6908c26807d8b7e6facb1c11f7675|2026-03-30 11:44:00 +0800|fix(src/client/components/settings): [long-function] Function 'CronSettingsSection' is 231 lines (threshold: 150) [WO-TKT-0651]
+143c6581a8d23b06165f6e0d812eddc5297222fb|2026-03-30 11:43:29 +0800|fix(src/client/components/settings): [long-function] Function 'TerminalSettingsSection' is 153 lines (threshold: 150) [WO-TKT-0652]
+7504c7035225eaf0080c4e747a5607e3d5344890|2026-03-30 11:43:24 +0800|fix(src/server): [long-function] Function 'createPoolStore' is 167 lines (threshold: 150) [WO-TKT-0555]
+5254346483c1fcf3d26b20d70b96e9af22c3a240|2026-03-29 02:08:13 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0581]
+8821018d90e1250a18ddc4f37f02e580f5228252|2026-03-29 02:07:09 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0596]
+cfcbc3f6e11cd7c5ccde271472b8990940cf8859|2026-03-29 02:04:59 +0800|fix(src/server/scripts): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0578]
+bfd190985dbebf26e1fe62100e3097051dd4f43d|2026-03-29 02:04:57 +0800|fix(src/server/terminal): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0602]
+55c82e4e02769c795d72f151987eab55f06bf61a|2026-03-29 02:04:29 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0566]
+d91a229dff3429f333bbe04184b3175e2ccdb0a3|2026-03-29 02:04:19 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0594]
+126afbcff77d1960ac311a82f9493c64aaf3ce3c|2026-03-28 21:19:00 +0800|fix(src/watcher): Reduce nesting depth in watcher service event processing loop [WO-nightly-TKT-0202-2026-03-28-001]
+aac0d5559c7171d81ced7891992a0e98841df07e|2026-03-28 20:49:46 +0800|feat: multi-project support with per-project gate commands
+de9ba0eed11734c181b2f0d6d43b13451c90d1fc|2026-03-28 20:34:34 +0800|fix: bump max_iterations from 20 to 40 for complex tickets
+9d5632136c1e88b4255aee65c7652698b0e0f723|2026-03-28 20:11:02 +0800|fix(src/server): [empty-catch] 8 empty catch blocks in dagEngine.ts (lines: 1403, 1563, 2857, 2899, 3567, 4895, 5496, 5574) [WO-TKT-0438]
+838b7b259ea52babc9f57f146c894a9d102fb5d1|2026-03-28 20:10:35 +0800|fix: auto-inject line_hint on duplicate anchor failure
+1a672b2c91e46be5b2ec6c6a43cce2a489bbc5bf|2026-03-28 19:54:21 +0800|fix(src/shared/__tests__): [TS2322] Type '{ type: "nightly-report"; report: Record<string, unknown>; } | { type: "ticket-update"; ticket: { id: ... [WO-TKT-0494]
+31e59fc6614357ea389ce688390c3075dc32dc7b|2026-03-28 19:54:11 +0800|fix(src/client/components/swarm): [TS2322] Type '{ type: "group_completed"; message: string; severity: "error" | "success"; id: string; timestamp: stri... [WO-TKT-0481]
+b21ed6af7f35310c2956d081b17b116833db07fc|2026-03-28 19:54:01 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0405]
+d07845c82a9721b9baedc0a91780bc869ef8a840|2026-03-28 19:54:00 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0421]
+f209e6a10563f30c6d9e440a0ad11c0f10540a2c|2026-03-28 19:52:51 +0800|fix(src/server): [TS2820] Type '"stats-update"' is not assignable to type '"auth-failed" | "auth-success" | "sessions" | "session-upda... [WO-TKT-0493]
+4f93370d928358fb2d5a7b8d31f8811f85089e9d|2026-03-28 19:52:48 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0435]
+aece1904c665bd10571f7eb974bebe1946784772|2026-03-28 19:52:44 +0800|fix(src/server): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'lines' is declared but never used. Unused parameters shou... [WO-TKT-0339]
+62de026434cccab36e5189b5e7eb02bda887dde4|2026-03-28 19:52:39 +0800|fix(src/client/hooks): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0433]
+1530aa18c7fe4981dda660c78d3219b16a3dfd0f|2026-03-28 19:52:36 +0800|fix(src/server/mcp/__tests__): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is imported but never used. [WO-TKT-0340]
+6bdfe6d800342718f8f23669f2cf5d327be70365|2026-03-28 19:52:20 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0402]
+d97aeab2d7064d6f4b431fa12c5a3c918888f833|2026-03-28 19:52:19 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0411]
+e95ff06d23a5e3b1f64c248e16e076b0a68a9dca|2026-03-28 19:52:12 +0800|fix(src/client/components/cron/__tests__): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'React' is assigned a value but never used. Unused variable... [WO-TKT-0341]
+0c10ae073d83a1537ed0c5eb90083fbd66b6f797|2026-03-28 19:52:10 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0413]
+11b64ec119c23021f61a40ce4d8bba3912e0b076|2026-03-28 19:52:06 +0800|fix(src/server/mcp): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0455]
+4efb200a639ff404ee3568b27c991f300b45794c|2026-03-28 19:51:53 +0800|fix(src/client/stores): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0408]
+4fa24a8d34b2f9ea2450412f5c3871a43d1f8f5d|2026-03-28 19:51:45 +0800|fix(src/server): [empty-catch] 3 empty catch blocks in telemetryCollector.ts (lines: 579, 599, 618) [WO-TKT-0439]
+b1b874e38ebc9980d3bdf0b1b0229868ba3ff253|2026-03-28 19:51:43 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0460]
+862ddb7183c893fd9561c417f0f149557cc8f96b|2026-03-28 19:51:42 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0456]
+013633531f0f938305b679ce5f2fc75ab6b1e73e|2026-03-28 19:51:38 +0800|fix(src/server/handlers): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0424]
+0a10f87b32296c218b2dd9090e337f002ef85bac|2026-03-28 19:51:37 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0450]
+b089cec37a6f70b2c85215aeb12290253cc387fb|2026-03-28 19:51:31 +0800|fix(.): [stale-dep-major] react: current 18.3.1 → latest 19.2.4 (major version behind) [WO-TKT-0502]
+26f343eed62e2f707c74db3eb0f403052ea3a377|2026-03-28 19:51:29 +0800|fix(src/client/components/swarm): [TS2307] Cannot find module '../../shared/swarmTypes' or its corresponding type declarations. [WO-TKT-0478]
+1b6b514c134df4ac871e71add5debefc38d704fa|2026-03-28 19:51:28 +0800|fix(src/server/terminal): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0425]
+3e6c1c61c2f5f6468324d92888b4eca60b9f4cd1|2026-03-28 19:51:22 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0415]
+8a976dc4bb9f492f4c0d62003088050737444739|2026-03-28 19:51:13 +0800|fix(src/server/scripts): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0497]
+b5b743e0b97d61fe0d4db5a144f3e706f4757d66|2026-03-28 19:51:10 +0800|fix(src/server/terminal): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0426]
+91a0df71f7d8af09506ca6d5d93d2d406e447452|2026-03-28 19:51:08 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0443]
+0661ecadf1e1dcb4df44d8cfd3cf0bb51cc64e72|2026-03-28 19:51:06 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0444]
+35f39847344ec20d83912bdb1fd8cd790f7ee354|2026-03-28 19:43:35 +0800|fix: git commit serialization + line_hint anchor disambiguation
+65e659544af7d000ae91d57ada61c57e862df79b|2026-03-28 18:07:40 +0800|fix(src/server): [TS2769] No overload matches this call. [WO-TKT-0492]
+8bb7a9706207469d43a39f0ac64a5c9d421355dc|2026-03-28 18:06:15 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0501]
+41962a3b2ccf644a2b4bb894e17df45686f1da50|2026-03-28 18:06:00 +0800|fix(src/client/components/swarm): [TS2322] Type '{ type: "wo_completed"; woId: any; message: string; severity: "success"; id: string; timestamp: string... [WO-TKT-0480]
+6f798280da115a15f2f70de7fa23d986f0bcedb7|2026-03-28 18:05:58 +0800|fix(src/client/__tests__): [test-fail] 2 failing tests in app.test.tsx [WO-TKT-0362]
+b7c987ae64afd2c34bd6dab3ea52ff283f21942c|2026-03-28 18:05:44 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0500]
+39e44730e93e53f49e1f208d9a963174deb77ca4|2026-03-28 18:05:35 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0458]
+ad78ae1a74e9c301ae5f02d505ec1450e3b3bff8|2026-03-28 18:05:26 +0800|fix(src/server/handlers): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0423]
+17124af088dd14930e4336f460ba3f3aaed2af5d|2026-03-28 18:05:13 +0800|fix(src/server): [empty-catch] 3 empty catch blocks in woRoutes.ts (lines: 282, 304, 417) [WO-TKT-0453]
+d9e5f44a4e75dd78d994ec5a3a40748116715849|2026-03-28 18:05:11 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0441]
+35311be317ea9dfcaae5bfafd8702ecea5eef2e7|2026-03-28 18:05:11 +0800|fix(src/client): [TS2367] This comparison appears to be unintentional because the types '"auth-failed" | "auth-success" | "sessions" |... [WO-TKT-0477]
+232c53a7005f47ce7e071afda2fe6ac49f688d5a|2026-03-28 18:05:09 +0800|fix(src/server): [TS2339] Property 'attempt' does not exist on type 'WoFailedEvent'. [WO-TKT-0489]
+1f30e6885082dc3ec13bf6cdc57788db6036fab8|2026-03-28 18:05:07 +0800|fix(src/client/__tests__): [test-fail] component rendering > renders app shell: TypeError: fetch() URL is invalid [WO-TKT-0360]
+0077b1ba00e8d323d304b2dfdf1dac6f9f4bbc95|2026-03-28 18:05:06 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0457]
+bb3e00c39e2faf1326b5fec4cd0086ddcbfc9a9f|2026-03-28 18:04:55 +0800|fix(src/server/mcp): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0454]
+cd8a2074f8fc1312afc34ca908639f6e5a9376c0|2026-03-28 18:04:39 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0440]
+f1e06483d8e9b8556c56a195c79b3195d3867b9f|2026-03-28 18:04:34 +0800|fix(src/client/components/cron): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0427]
+75fdce1983bb6af08e63539b4da3f11cd1a4bf99|2026-03-28 18:04:32 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0445]
+e85ebd0dfec8b2711779926683b14c69e26bef09|2026-03-28 18:04:27 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0442]
+f994f5e6eb7d3c706c5130c8b57f71179603a73d|2026-03-28 18:04:25 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0499]
+7d52fbeac5cf726eeb0c7a40ac2379c162f27546|2026-03-28 18:04:15 +0800|fix(src/client/stores): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0407]
+42ecb941ba66993898614de018cb1a3c4e229900|2026-03-28 18:04:13 +0800|fix(src/server/scripts): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0419]
+6762dafed349bc00d337c4cd3aa7f9b14a46048f|2026-03-28 18:04:10 +0800|fix(src/client/hooks): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0434]
+e6c5bf4d1af99fb957be71d4b3e8ef408161dc9d|2026-03-28 18:04:05 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0449]
+3ce0929bdd145e5fdf331fcca9a25a3cecf2aede|2026-03-28 18:04:00 +0800|fix(src/client/stores): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0429]
+bcb45170459717f4b78812eeca9be1b828c2ccbf|2026-03-28 18:03:59 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0406]
+5e13ea6602117df27ff32b0e3e7cc067a9d76ac4|2026-03-28 18:03:53 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0446]
+aa49ebe88dce02b60761a7eeb4e2434a0c6f452a|2026-03-28 18:03:52 +0800|fix(src/server/handlers): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0461]
+7e71df40dc633ee5aff84aeab22b9e4d54b7bcae|2026-03-28 18:03:45 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0422]
+7db786e317b3c07203581a36f2bdeb127743e46a|2026-03-28 18:03:34 +0800|fix(src/server/terminal): [empty-catch] 9 empty catch blocks in PipePaneTerminalProxy.ts (lines: 56, 83, 161, 200, 210, 261, 355, 363, 382) [WO-TKT-0463]
+c5af3f533df664723909aec9c4fcb8f5b51056a8|2026-03-28 18:03:31 +0800|fix(src/client/components/cron): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0403]
+875eab01830acdf60dabc610a728035225c78c63|2026-03-28 18:03:29 +0800|fix(src/client/components/tickets): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'i' is declared but never used. Unused parameters should s... [WO-TKT-0474]
+1876cb0096930849aba8e6f741e69882c227eb25|2026-03-28 18:03:12 +0800|fix(src/client/components): [deep-nesting] Maximum nesting depth is 8 (threshold: 5) [WO-TKT-0404]
+3a388dd26ebcd4601a278d6039e83e4f1a38f07c|2026-03-28 18:03:10 +0800|fix(src/client/components): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0428]
+a86a67c63a8db7d00631b76cec7ffcab71b58a0a|2026-03-28 18:03:01 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0452]
+f23b994fd69cca9f22643509fb4fced9c4d8e737|2026-03-28 18:02:58 +0800|fix(src/server/handlers): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0462]
+79374bd57238d3c136b015e426b5e1f4e8ceb767|2026-03-28 18:02:56 +0800|fix(src/server/terminal): [empty-catch] 3 empty catch blocks in PtyTerminalProxy.ts (lines: 29, 210, 218) [WO-TKT-0464]
+a0e98b0af06e2c4d64e2435a5266380e970c90d9|2026-03-28 18:02:42 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 7 (threshold: 5) [WO-TKT-0412]
+f25284243c59f4441770efc13af26ded1fc6c047|2026-03-28 18:02:42 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0416]
+2ddceac8e7313585903949e92c839b140e3ef9fe|2026-03-28 18:02:35 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0437]
+ed170405f4dd4a050359122ec666009882ba51b8|2026-03-28 18:02:31 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0498]
+cb1f175f73c645689cbc747e8da423b1f910d9d7|2026-03-28 18:02:27 +0800|fix(src/client/hooks): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0432]
+c236cd3da90066ad624f78e62e47b74ea34ce0c2|2026-03-28 16:25:13 +0800|feat: metrics DB, file lock registry, executor robustness, ticket UI
+18385fb73e65da1ea877ac2e5c6e427db9f4d25a|2026-03-28 16:18:56 +0800|fix(src/server): [TS2339] Property 'filesChanged' does not exist on type 'WoCompletedEvent'. [WO-TKT-0487]
+a0e1183e1681201ce45b57010e35dc5fc437467b|2026-03-28 15:55:52 +0800|fix(src/server): [TS2820] Type '"stats-update"' is not assignable to type '"auth-failed" | "auth-success" | "sessions" | "session-upda... [WO-TKT-0493]
+f9522d66f793fd5ffb1d707c4031a40352ac60cb|2026-03-28 15:54:01 +0800|fix(src/server): [deep-nesting] Maximum nesting depth is 6 (threshold: 5) [WO-TKT-0498]
+4beba57eb1831714b1af4f7810a3e34aeb6148f2|2026-03-28 15:53:55 +0800|fix(src/server): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0499]
+840f5517ec4733d397fd4e0df5a848bb4f5cf456|2026-03-28 15:53:49 +0800|fix(src/server): [TS2339] Property 'attempt' does not exist on type 'WoFailedEvent'. [WO-TKT-0489]
+2f8e981143fa6f732b50c79dc943b013e2e90856|2026-03-28 14:58:13 +0800|fix(src/server/scripts): [empty-catch] Empty catch block silently swallows errors [WO-TKT-0501]
+fded1876621cf0d9606c1f03ac5b3ebcf9b55170|2026-03-27 11:43:08 +0800|feat(minion-fix): Replace single-pass with iterative time-budgeted cycle
+a7b3d6e8c0a32a9d79e72b7adc0f0bed845ade1c|2026-03-27 11:30:21 +0800|feat(minion-detect): Add 7 Tier 0 deterministic quality detectors
+0a491e32cb9a5dc56e13671ce63ee7ca00cb8c38|2026-03-26 17:08:03 +0800|feat(crates/minion-executor/src): Capture unified diff after auto-commit in cc_executor [WO-DV-005]
+78fa858e0055b90a762ce7b6e594cb45ec5b7bfc|2026-03-26 17:04:50 +0800|feat(crates/minion-executor/src/dispatcher): Pass unified_diff through scheduler into WoCompleted event [WO-DV-003]
+ef137846a329cbac7ae16e27cba5e567a32c2787|2026-03-26 17:04:22 +0800|feat(crates/minion-executor/src): Capture unified diff after auto-commit in codex_executor [WO-DV-004]
+038fa7f193c4da36011ea41a12b25bcde73d7ebc|2026-03-26 17:03:58 +0800|feat(crates/minion-executor/src): Add unified_diff to WoCompleted event variant [WO-DV-002]
+18cc005f1146bf8b4648ef233662cac13b85f347|2026-03-26 17:03:06 +0800|feat(crates/minion-executor/src): Add unified_diff field to ExecutionResult [WO-DV-001]
+a06d8b1dc9d90ec425786ecea122128bc41a4424|2026-03-26 16:34:17 +0800|feat(src/client/components/swarm): Add unified diff viewer to WoDetail panel [WO-DV-009]
+9b3804470cd83696e01ecc300003143388add74d|2026-03-26 16:32:50 +0800|feat(src/client/stores): Set unifiedDiff in swarmStore from WebSocket events [WO-DV-008]
+7d1acb86b5e366894ca03e40d2ea7515e518dd27|2026-03-26 16:31:47 +0800|feat(src/server): Store unifiedDiff in SwarmManager WO state [WO-DV-007]
+329b24061bc4df2e23b74a3beb8dbb688215451f|2026-03-26 16:29:15 +0800|feat(src/shared): Add unifiedDiff to shared swarm types [WO-DV-006]
+470b07e22b474a0b5252d3cc147f51939f720642|2026-03-26 15:52:56 +0800|fix(minion): pass MCP client to gates in GLM executor for verification
+90e268273cce61905eeba791485a5d7b22d1690e|2026-03-26 15:45:02 +0800|refactor(minion): move verification gate to gates.rs for all executors
+faf98d7ca55e9501fcdc1ec8d798ea92e4fe2809|2026-03-26 15:38:27 +0800|feat(minion): verification gate, full context files, scope-filtered capture
+2e8c1ad9d45b827046e70c498bcfc81816cf897b|2026-03-26 15:00:06 +0800|fix: restore types.ts, rewrite SwarmView + swarmStore, wire stats properly
+01fbffdb0253e96a2acc197e6100964dce924ce1|2026-03-26 14:55:10 +0800|fix: add missing swarm types, fix swarmStore to Zustand, wire stats API
+11c11ced13b84317a7df1963a4423499b43cd501|2026-03-26 14:53:10 +0800|feat(src/client): Wire StatsCards into header area and connect to stats API [WO-006]
+a3b796e31ab6bc827df79bcaec22402b9ff393dc|2026-03-26 14:48:09 +0800|feat(src/server): Create backend stats API endpoint [WO-001]
+d9b4f3fdf52ded3e421f0708bf6773ec6912bdf7|2026-03-26 14:44:13 +0800|feat(src/client/components/swarm): Wire EventLog into SwarmView with event conversion [WO-005]
+7538a7dfd036472f8363b54048be4c2238226bd7|2026-03-26 14:41:17 +0800|feat(src/client/components/swarm): Create EventLog component for swarm real-time event feed [WO-002]
+aa97213e5b6c90cc60bea8fdf3ac3488fdd9fa47|2026-03-26 14:40:59 +0800|feat(src/client/components): Create StatsCards component for dashboard metrics [WO-003]
+867f7146ec237098b1c564ecabbf7e2c2273da78|2026-03-26 14:40:45 +0800|feat(src/client/stores): Create stats Zustand store with WebSocket handling [WO-004]
+65716e3ab8c3742e92d057c0b4c802331ac2b0d4|2026-03-26 14:39:43 +0800|feat(src/shared): Create shared types for event log and stats features [WO-PREP-001]
+c9600d2d454bf0d6f1cbc63ce70fd2d82959dbfd|2026-03-25 22:24:43 +0800|feat(src/client): Create SwarmView shell component and wire into App.tsx routing [WO-005]
+757e2fd3d534ddffc7b1473579021cde18e368ac|2026-03-25 22:20:31 +0800|feat(src/client/components/swarm): Create GroupProgress bar and WoDetail panel components [WO-004]
+5e349bf026575650391d3defad2924fc5bc1d1f0|2026-03-25 22:17:48 +0800|feat(src/client/components/swarm): Create DAG graph visualization component for work order dependencies [WO-003]
+3d295c2984052995672e2423ffecc422bef53c58|2026-03-25 22:14:53 +0800|feat(crates/minion-executor/src): Hook minion-executor dispatch loop to emit swarm events via EventReporter [WO-006]
+c04eb478fe82944531211a5819db874a9827cba3|2026-03-25 22:12:19 +0800|feat(src/client/stores): Create Zustand swarm store with WebSocket event handling [WO-002]
+a0b1bacc8a34678d15f92d856d71f3eca37c70f2|2026-03-25 22:09:37 +0800|feat(src/client): Create SwarmView shell component and wire into App.tsx routing [WO-005]
+e23514686d28d38e8bbb8b01555c1b427755b23e|2026-03-25 22:07:30 +0800|feat(src/client): Create SwarmView shell component and wire into App.tsx routing [WO-005]
+5bb832b48028f724bcdb6e7ad0a31d3ca820fa93|2026-03-25 22:04:49 +0800|feat(src/client/components/swarm): Create GroupProgress bar and WoDetail panel components [WO-004]
+822d19056eaded2e96ad22db5630bdfa1215821f|2026-03-25 22:02:38 +0800|feat(src/client/components/swarm): Create DAG graph visualization component for work order dependencies [WO-003]
+cd2997f7003739785a808491916d6190feba4508|2026-03-25 22:00:42 +0800|feat(src/client/components/swarm): Create DAG graph visualization component for work order dependencies [WO-003]
+6f2202ff7ba87bc284cea10bebdceeb6f3d672ab|2026-03-25 21:57:53 +0800|feat(crates/minion-executor/src): Hook minion-executor dispatch loop to emit swarm events via EventReporter [WO-006]
+b24b2285c232827eec0593f1d63db858727cbe01|2026-03-25 21:55:01 +0800|feat(src/client/stores): Create Zustand swarm store with WebSocket event handling [WO-002]
+3406dd4ba6ac712fe029abff937a3c82d76a84e3|2026-03-25 21:50:50 +0800|feat(src/server): Create SwarmManager service with event ingestion API and WebSocket broadcast [WO-001]
+4f7e77067b0f05e149e44c040ff3904098d23cd7|2026-03-25 21:41:54 +0800|feat(minion): add event reporter module for swarm dashboard [WO-PREP-002]
+6afd1b4809dabddf008c2fdf3da3ba55009dace9|2026-03-25 21:39:37 +0800|feat(src/shared): Create shared swarm TypeScript types and interfaces [WO-PREP-001]
+39aca2ec8064511d0709f208303bdd4677641a42|2026-03-25 19:46:26 +0800|feat(minion): Phases 3-6 — dispatcher, Codex/CC executors, WO API, escalation
+6f0bfab21d263fc61cb95b40b293e2db063e288c|2026-03-25 15:08:35 +0800|fix(minion): auto-commit stages only diff files, skips pre-commit hooks
+55e211397380b2069e9ed7826e03e4fdb661db92|2026-03-25 14:53:59 +0800|feat(minion): Phase 2 — configurable gates, git isolation, auto-commit
+851fe68cda140a027adf9fbfe3f5e037341fbfc0|2026-03-25 14:35:40 +0800|feat: add minion-executor Rust crate — three-phase work order executor
+1b805ebf01a0664371677c471d051657c6d45588|2026-03-16 15:05:37 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'getEnvForMo [TKT-0071]
+ac0957993ed3782b8f0d6f022dcbfe1d64ab8e5b|2026-03-16 15:04:22 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'setDbCalls' i [TKT-0066]
+edaad3fde155cd8f28264e5b7e70cb669e413b22|2026-03-16 15:03:18 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'queueNetworkE [TKT-0064]
+8c4ccbdb7e2ea6ea5fcdf2a272ff50dd0fa67fcb|2026-03-16 15:01:13 +0800|fix(minion): [eslint-plugin-unicorn(no-single-promise-in-promise-methods)] eslint-plu [TKT-0024]
+338bded716c4c72df17e0bc2f69fd43294acd317|2026-03-16 14:59:18 +0800|fix(minion): [eslint(no-control-regex)] eslint(no-control-regex): Unexpected control  [TKT-0091]
+92784fd8103384f736046ef7c295d56b8baed18a|2026-03-16 14:58:04 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'tree' is decl [TKT-0053]
+b7bdcf491325c69e0c9aa17e99bfc3ec6fd9ee45|2026-03-16 14:56:19 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun' is  [TKT-0048]
+fdb9e8f946d74dd48e15a7b28a235ce2d19d75fe|2026-03-16 14:55:05 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'gitCurrentBra [TKT-0090]
+49048eb5ff9018c6294f3224d771de23764b1c22|2026-03-16 14:53:50 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0070]
+614eb8676f793ced21f33ddf150ca853c76fe301|2026-03-16 14:52:16 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is [TKT-0094]
+79aadba3dd6e1668ef777627155ce3a74b6e374b|2026-03-16 14:51:11 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'resultConten [TKT-0056]
+4c85dbf67c45b5e246f4658dc57d1aaf7e25839e|2026-03-16 14:48:57 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Type 'CronJobDetail' is [TKT-0043]
+65e69e4bf6e44550e1baef7d728ddd6ab16bdc6b|2026-03-16 14:44:17 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'jobId' is de [TKT-0030]
+1031dbee47dd8b52a02d3ea56c31cdac6e79b8f1|2026-03-16 14:43:13 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'queueNetworkE [TKT-0069]
+934354e672f1c3c41d8df34eac43f4499982f788|2026-03-16 14:41:58 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0058]
+f08596a6451161388cdba546d297abda20ace8eb|2026-03-16 14:40:44 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'AGENTBOARD_WS [TKT-0092]
+fa9a5ee95d673036f02f2c79ab8c9e7998c2433d|2026-03-16 14:35:26 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'findAllTextCo [TKT-0060]
+608128a5603279243d2dbb985b25576bacf043a5|2026-03-16 14:34:31 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'ctx' is decla [TKT-0065]
+ef20827b23ab12f88a2f5d88444e400a4de07c0c|2026-03-16 14:31:12 +0800|fix(minion): [eslint(no-control-regex)] eslint(no-control-regex): Unexpected control  [TKT-0042]
+add1513c7d4b5f9cdfe1ff118a73c16ef2545c0b|2026-03-16 14:29:48 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0059]
+20527102b7b1c7059240fb33057c660a4d46366f|2026-03-16 14:29:03 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0061]
+8729865f2c7284407a5c83eb9db930136108f8dd|2026-03-16 14:27:28 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'result' is de [TKT-0051]
+acae4616a7ea976dedb147b73be1437555b36959|2026-03-16 14:26:34 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'makeJobDetail [TKT-0075]
+302b3b5e0f54a6080675bb6a559bff01a9a3d633|2026-03-16 14:24:59 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'freshRun' is  [TKT-0047]
+c5938b34587d939578af6ba221da00157b69b846|2026-03-16 14:22:55 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'serviceUnit'  [TKT-0044]
+6f31462f0211b6b3855d4156b5276f140010040e|2026-03-16 14:20:50 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'mock' is im [TKT-0050]
+93e1a66655410acfe5afa207af125943543e5bda|2026-03-16 14:19:36 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'gitCheckout'  [TKT-0089]
+be5462c4678f6879e3a3778e720d39bde04f2f0b|2026-03-16 14:18:01 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Function 'findTerminalC [TKT-0054]
+893b3086bcaa9d5d756a5587a84f994700426fc7|2026-03-16 14:15:47 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'getToolSche [TKT-0062]
+b5f4f3e0d9abad9cd1fe73d0acd8465228a97f22|2026-03-16 14:14:32 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'DRAWER_MAX_ [TKT-0067]
+6918e87eaef9b33323c52d23796c119449b55668|2026-03-16 14:13:18 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'prefersReduce [TKT-0068]
+c545e3fdf841b35053c2c5527108c6404f38000a|2026-03-16 14:12:23 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'query' is de [TKT-0052]
+679f998b6ac6e2f8bea44ec122aad9316e5ddf0a|2026-03-16 14:11:29 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'jest' is im [TKT-0057]
+7fdf6876e66557ae012a62062305a25762c0f5c1|2026-03-16 14:10:14 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'spyOn' is i [TKT-0072]
+924020cee6dcc2c307c336f4e38bc379ce6c8fdb|2026-03-16 14:09:20 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'AGENTBOARD_UR [TKT-0063]
+28e4398a2cee32a1b14f03546db24aa0efc7dfdf|2026-03-16 14:05:29 +0800|chore: update tickets from minion-detect test run
+0252d9440314352ae1772791d6268f1fc77b7d49|2026-03-16 14:05:20 +0800|feat: add test detection, workflow routing, and nightly cron fixes
+d54a12effd9a29f51a7bfa3413af5e0273e6b2b4|2026-03-16 12:19:19 +0800|feat: add minion-workflow TDD pipeline and nightly runner
+5c609fff65b16eba010f376a32b0f0c0da2ce168|2026-03-16 12:19:10 +0800|feat: add health check endpoint with uptime, timestamp, and tmux status
+f4a6cb7dcefcd2fb0ca167347e7228830a5764f5|2026-03-13 15:53:07 +0800|feat: staleness sweep in detect + auto-merge PRs in fix
+a122920fb1a2cfecfd2034d04831f84b98db1598|2026-03-13 15:45:43 +0800|fix: use git add -u instead of -A in minion-fix
+0813e9aa4afa51b464319168ed12a12387df6a56|2026-03-13 15:34:36 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'wf' is declar [TKT-0049]
+5fe520a5f718a8f7bb4f9a73ffe46f64791465b9|2026-03-13 15:33:42 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'fetchFromAg [TKT-0046]
+14ad72006393e2e21a2c7ae01487a9987fd2c084|2026-03-13 15:32:09 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'jobId' is de [TKT-0031]
+8cdf18aa0114c92c3fd219e80fcc8507137c18ee|2026-03-13 15:31:05 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Variable 'baseSession'  [TKT-0021]
+3df674028c0b430d9067b245efb7a204b48273d0|2026-03-13 15:30:00 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Parameter 'subscribe' i [TKT-0038]
+0677a2ea98e151becf837ac303ba3f59ec123bea|2026-03-13 15:28:56 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'beforeEach' [TKT-0014]
+e8820a9d02a6422d35b0822b91066d7102328bc3|2026-03-13 15:28:02 +0800|fix(minion): [eslint(no-unused-vars)] eslint(no-unused-vars): Identifier 'DRAWER_MIN_ [TKT-0037]
+9e0d08987604b2ae3d9fd49c077a5fa4aa219f72|2026-03-13 15:23:46 +0800|feat: two-tier minion-fix — auto-merge small, PR for medium+
+a07a53a3e57753927b814b8086ece7c289916518|2026-03-13 15:12:37 +0800|fix: harden minion-fix from test run learnings
+b45f4ef75bb9a725087dba84ba6b9c6e377cb1c8|2026-03-13 14:52:29 +0800|feat: add nightly minion detect + fix scripts
+604e873325a2d4ae61b2171a797d5cb4ba9ab351|2026-03-13 12:57:58 +0800|feat: shift-left lint + typecheck in wu-orchestrator
+b2d4feb2de9ff606eaefba920adfa763f25fe985|2026-03-13 12:19:54 +0800|feat: cron manager, pipeline enhancements, and workflow engine improvements
+dac9e14d8af16932c94669f8707191528276d49e|2026-03-13 12:18:31 +0800|feat: add per-WU git commits in wu-orchestrator
+86cb9bc982922161c31dc81aed241c9e943f130a|2026-03-11 13:55:17 +0800|fix: comprehensive workflow engine reliability hardening (44 fixes)
+53189cc3a826e0221b4e45738fa7f4eb399e4d74|2026-03-09 14:07:48 +0800|Add verify-edges native_step to implementation pipelines
+063b158deb5ec25ebf95516d5a354634ff321f9e|2026-02-26 17:43:45 +0800|feat: add typed input injection for spawn_session steps
+78152646bad58fb1bec8bb97e2dae59c48a7bcaa|2026-02-26 17:28:31 +0800|feat: add label-based input substitution for gemini_offload steps
+6d5b6a222a3e4ceef3aa952280ebee5c602d76f7|2026-02-26 17:05:00 +0800|feat: route pipeline tasks to GLM for cheaper execution
+f3cd853cf4d642f9bc4f051a41908107e343da67|2026-02-25 19:44:30 +0800|fix: cron UI dark theme, delete wiring, and window.__cronWsSend
+8661384f3c82bb442728bf3aac7f08c21ff711f7|2026-02-25 19:03:15 +0800|fix: cron manager gaps + resolveOutputPath result collection bug
+d2f1eec7601976ff067e43c7da1c1dcf206ab9ce|2026-02-25 18:21:12 +0800|feat: rewrite fix-pipeline with TDD baseline and enforce_verdict parsing
+bd09a486ed9086027b091948e73b126d30ed4c48|2026-02-25 16:57:08 +0800|feat: Phase 26 cron manager + per-WU TDD pipeline infrastructure
+751df09cd4c6f8a7f395f14ddd0e0dd899914db6|2026-02-25 08:59:49 +0800|fix: tdd-verify-red/green pipeline steps — correct exit code capture and use bun test
+d69cde5c716c9ff77f879c74f962ddaf2fdf8cc8|2026-02-25 07:20:19 +0800|fix: tmuxWindowExists() exact name matching to prevent prefix-match false positives
+8262fe577063dd8fa165e8d207a2fd923cfc0b29|2026-02-25 07:19:15 +0800|Revert "feat: Phase 26 — Cron & Systemd Timer Manager (full implementation)"
+e8f56055429c771e645fedc1bdb27d60763d27e8|2026-02-25 07:08:49 +0800|feat: Phase 26 — Cron & Systemd Timer Manager (full implementation)
+9fa976aa243171a81a2d7633efe7d5d307e24c3e|2026-02-23 20:08:36 +0800|feat: wire branch isolation, output invalidation, and review router into DAG engine
+d0918e5ebdb854192ad58726fd4f19a52dfcf67e|2026-02-23 16:13:44 +0800|DAG engine runtime fixes and 10 end-to-end scenario specs
+672f7ccdc4bb7ef8c5c047825d02c390071da64e|2026-02-11 21:28:57 +0800|Phase 6 adversarial review: fix 6 failing requirements
+593663c9e816019b23d076b240bd24d5887a4527|2026-02-11 20:45:30 +0800|Phase 6: parallel_group completion and full test suite fixes
+f9de5a3d966da76c3a5a9311f9d8fc146a5fe63a|2026-02-11 16:45:39 +0800|Phase 5: DAG engine, session pool, and review loop support
+989b0cfce8ea867275c2f8c5207858af9706d201|2026-02-11 15:15:02 +0800|Phase 4: native_step type and tier-aware step activation
+ac69fbaf6c318c4497c326c7b728f9f348800352|2026-02-10 11:01:23 +0800|Sync: workflow engine, task system, UI components, tests
+07fa4a91ba4a577c9a71ff5611c79a1b3ae4b874|2026-02-04 21:18:03 +0800|docs: add JSDoc documentation to validator functions

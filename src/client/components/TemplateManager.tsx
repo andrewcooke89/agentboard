@@ -8,102 +8,6 @@ interface TemplateManagerProps {
   onClose: () => void
 }
 
-function TemplateForm({
-  name, setName, promptTemplate, setPromptTemplate,
-  variablesJson, setVariablesJson, projectPath, setProjectPath,
-  editing, onSubmit, onCancel,
-}: {
-  name: string
-  setName: (v: string) => void
-  promptTemplate: string
-  setPromptTemplate: (v: string) => void
-  variablesJson: string
-  setVariablesJson: (v: string) => void
-  projectPath: string
-  setProjectPath: (v: string) => void
-  editing: string | null
-  onSubmit: (e: React.FormEvent) => void
-  onCancel: () => void
-}) {
-  return (
-    <form onSubmit={onSubmit} className="p-3 border-b border-white/10 flex flex-col gap-2">
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Template name"
-        className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
-        required
-      />
-      <textarea
-        value={promptTemplate}
-        onChange={(e) => setPromptTemplate(e.target.value)}
-        placeholder="Prompt template (use {{variable}} for placeholders)"
-        rows={4}
-        className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30 resize-y"
-        required
-      />
-      <input
-        value={variablesJson}
-        onChange={(e) => setVariablesJson(e.target.value)}
-        placeholder='Variables JSON: [{"name":"x","description":"..."}]'
-        className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
-      />
-      <input
-        value={projectPath}
-        onChange={(e) => setProjectPath(e.target.value)}
-        placeholder="Default project path (optional)"
-        className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
-      />
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors"
-        >
-          {editing ? 'Update' : 'Create'}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-xs px-3 py-1.5 rounded bg-white/5 text-white/60 hover:bg-white/10 transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
-  )
-}
-
-function TemplateListItem({
-  template, onEdit, onDelete,
-}: {
-  template: { id: string; name: string; promptTemplate: string }
-  onEdit: () => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 transition-colors">
-      <div className="flex-1 min-w-0">
-        <div className="text-xs text-white/70">{template.name}</div>
-        <div className="text-[10px] text-white/40 truncate">{template.promptTemplate.slice(0, 60)}...</div>
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button
-          onClick={onEdit}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50 hover:bg-white/20 transition-colors"
-        >
-          Edit
-        </button>
-        <button
-          onClick={onDelete}
-          className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
-  )
-}
-
 export default function TemplateManager({ onClose }: TemplateManagerProps) {
   const templates = useTaskStore((s) => s.templates)
   const setTemplates = useTaskStore((s) => s.setTemplates)
@@ -234,19 +138,50 @@ export default function TemplateManager({ onClose }: TemplateManagerProps) {
       <div className="flex-1 overflow-y-auto">
         {/* Add / Edit form */}
         {(showAdd || editing) && (
-          <TemplateForm
-            name={name}
-            setName={setName}
-            promptTemplate={promptTemplate}
-            setPromptTemplate={setPromptTemplate}
-            variablesJson={variablesJson}
-            setVariablesJson={setVariablesJson}
-            projectPath={projectPath}
-            setProjectPath={setProjectPath}
-            editing={editing}
-            onSubmit={editing ? (e) => { e.preventDefault(); handleUpdate(editing) } : handleCreate}
-            onCancel={() => { setShowAdd(false); setEditing(null); resetForm() }}
-          />
+          <form onSubmit={editing ? (e) => { e.preventDefault(); handleUpdate(editing) } : handleCreate} className="p-3 border-b border-white/10 flex flex-col gap-2">
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Template name"
+              className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
+              required
+            />
+            <textarea
+              value={promptTemplate}
+              onChange={(e) => setPromptTemplate(e.target.value)}
+              placeholder="Prompt template (use {{variable}} for placeholders)"
+              rows={4}
+              className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30 resize-y"
+              required
+            />
+            <input
+              value={variablesJson}
+              onChange={(e) => setVariablesJson(e.target.value)}
+              placeholder='Variables JSON: [{"name":"x","description":"..."}]'
+              className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
+            />
+            <input
+              value={projectPath}
+              onChange={(e) => setProjectPath(e.target.value)}
+              placeholder="Default project path (optional)"
+              className="w-full text-xs bg-white/5 border border-white/10 rounded px-2 py-1.5 text-white/80 focus:outline-none focus:border-white/30"
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                className="text-xs px-3 py-1.5 rounded bg-blue-600 text-white hover:bg-blue-500 transition-colors"
+              >
+                {editing ? 'Update' : 'Create'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAdd(false); setEditing(null); resetForm() }}
+                className="text-xs px-3 py-1.5 rounded bg-white/5 text-white/60 hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
         )}
 
         {/* Template list */}
@@ -257,12 +192,26 @@ export default function TemplateManager({ onClose }: TemplateManagerProps) {
         )}
 
         {templates.map((template) => (
-          <TemplateListItem
-            key={template.id}
-            template={template}
-            onEdit={() => startEdit(template.id)}
-            onDelete={() => handleDelete(template.id)}
-          />
+          <div key={template.id} className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 transition-colors">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-white/70">{template.name}</div>
+              <div className="text-[10px] text-white/40 truncate">{template.promptTemplate.slice(0, 60)}...</div>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                onClick={() => startEdit(template.id)}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50 hover:bg-white/20 transition-colors"
+              >
+                Edit
+              </button>
+              <button
+                onClick={() => handleDelete(template.id)}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         ))}
       </div>
     </div>

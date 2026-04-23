@@ -239,31 +239,7 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
 
     const stdout = proc.stdout
     if (stdout && typeof stdout !== 'number') {
-      const reader = stdout.getReader()
-      const decoder = new TextDecoder()
-      const readLoop = async () => {
-        try {
-          while (true) {
-            const { value, done } = await reader.read()
-            if (done) break
-            if (!value || sequence !== this.tailSequence) {
-              continue
-            }
-            const text = decoder.decode(value, { stream: true })
-            if (text && !this.outputSuppressed) {
-              this.options.onData(text)
-            }
-          }
-          const tail = decoder.decode()
-          if (!tail || sequence !== this.tailSequence || this.outputSuppressed) {
-            return
-          }
-          this.options.onData(tail)
-        } catch (err) {
-          console.error('tail read error:', err)
-        }
-      }
-      void readLoop()
+      this.startTailReader(stdout, sequence)
     }
 
     proc.exited.then(() => {
@@ -281,6 +257,37 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
       })
       this.options.onExit?.()
     })
+  }
+
+  private startTailReader(
+    stdout: Exclude<ReturnType<typeof Bun.spawn>['stdout'], number | undefined>,
+    sequence: number
+  ): void {
+    const reader = stdout.getReader()
+    const decoder = new TextDecoder()
+    const readLoop = async () => {
+      try {
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          if (!value || sequence !== this.tailSequence) {
+            continue
+          }
+          const text = decoder.decode(value, { stream: true })
+          if (text && !this.outputSuppressed) {
+            this.options.onData(text)
+          }
+        }
+        const tail = decoder.decode()
+        if (!tail || sequence !== this.tailSequence || this.outputSuppressed) {
+          return
+        }
+        this.options.onData(tail)
+      } catch (err) {
+        console.error('tail read error:', err)
+      }
+    }
+    void readLoop()
   }
 
   private stopTail(): void {
@@ -361,8 +368,8 @@ class PipePaneTerminalProxy extends TerminalProxyBase {
   private clearPipePane(target: string): void {
     try {
       this.runTmux(['pipe-pane', '-t', target])
-    } catch {
-      // Ignore pipe reset failures
+    } catch (err) {
+      console.error('clear pipe-pane error:', err)
     }
   }
 

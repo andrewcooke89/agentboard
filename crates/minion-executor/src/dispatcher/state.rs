@@ -542,6 +542,8 @@ mod tests {
             token_usage: crate::executor::TokenUsage {
                 input_tokens: 0,
                 output_tokens: 0,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
             },
             iterations: 1,
             retries_used: 0,

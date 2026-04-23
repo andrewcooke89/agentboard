@@ -38,19 +38,6 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
     const groupIdx = groups.findIndex(g => g.groupId === event.groupId)
 
     if (event.type === 'group_started') {
-      const wos: SwarmGroupState['wos'] = {}
-      if ('woIds' in event) {
-        for (const woId of (event as { woIds: string[] }).woIds) {
-          const woState: SwarmWoState = {
-            woId, title: woId, status: 'pending', model: '', attempt: 0,
-            maxRetries: 0, escalationTier: 0, escalationChain: [], dependsOn: [],
-            tokenUsage: { inputTokens: 0, outputTokens: 0 }, gateResults: null,
-            errorHistory: [], filesChanged: [], unifiedDiff: null, startedAt: null, completedAt: null,
-            durationSeconds: null,
-          }
-          wos[woId] = woState
-        }
-      }
       const newGroup: SwarmGroupState = {
         groupId: event.groupId,
         status: 'running',
@@ -58,10 +45,22 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
         completedWos: 0,
         failedWos: 0,
         edges: 'edges' in event ? (event as { edges: Array<{ from: string; to: string }> }).edges : [],
-        wos,
+        wos: {},
         startedAt: String(event.timestamp),
         totalDurationSeconds: null,
         totalTokens: { inputTokens: 0, outputTokens: 0 },
+      }
+      // Initialize WOs if woIds available
+      if ('woIds' in event) {
+        for (const woId of (event as { woIds: string[] }).woIds) {
+          newGroup.wos[woId] = {
+            woId, title: woId, status: 'pending', model: '', attempt: 0,
+            maxRetries: 0, escalationTier: 0, escalationChain: [], dependsOn: [],
+            tokenUsage: { inputTokens: 0, outputTokens: 0 }, gateResults: null,
+            errorHistory: [], filesChanged: [], startedAt: null, completedAt: null,
+            durationSeconds: null, unifiedDiff: null,
+          }
+        }
       }
       const newGroups = [...groups, newGroup]
       set({ groups: newGroups, eventLog: newLog, selectedGroupId: selectedGroupId || event.groupId })
@@ -82,7 +81,7 @@ export const useSwarmStore = create<SwarmStore>((set, get) => ({
     } else if (event.type === 'wo_completed') {
       const wo = group.wos[event.woId]
       if (wo) {
-        group.wos[event.woId] = { ...wo, status: 'completed', tokenUsage: event.tokenUsage, durationSeconds: event.durationSeconds, completedAt: String(event.timestamp), unifiedDiff: event.unifiedDiff ?? null }
+        group.wos[event.woId] = { ...wo, status: 'completed', tokenUsage: event.tokenUsage, durationSeconds: event.durationSeconds, completedAt: String(event.timestamp) }
       }
       group.completedWos++
     } else if (event.type === 'wo_failed') {

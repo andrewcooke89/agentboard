@@ -110,15 +110,28 @@ async function pollTask(
       const res = await fetch(`${apiUrl}/api/tasks/${taskId}`)
       if (!res.ok) { await Bun.sleep(intervalMs); continue }
       task = (await res.json()) as TaskStatus
-    } catch {
+    } catch (error) {
+      console.error('[plan-dispatch] pollTask fetch error:', error)
       await Bun.sleep(intervalMs)
       continue
     }
 
     if (['completed', 'failed', 'cancelled'].includes(task.status)) {
+      // Fetch output on terminal status
       let output: string | undefined
       if (task.status === 'completed') {
-        output = await fetchTaskOutput(apiUrl, taskId, task.outputPath ?? null)
+        try {
+          const outRes = await fetch(`${apiUrl}/api/tasks/${taskId}/output`)
+          if (outRes.ok) {
+            output = await outRes.text()
+          } else if (task.outputPath) {
+            // Fall back to reading the output file directly
+            const f = Bun.file(task.outputPath)
+            output = await f.text()
+          }
+        } catch {
+          // Output read failure is non-fatal — we'll detect missing DISPATCH_ID below
+        }
       }
       return { status: task.status, output }
     }
@@ -158,27 +171,6 @@ async function pollDispatch(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function fetchTaskOutput(
-  apiUrl: string,
-  taskId: string,
-  outputPath: string | null,
-): Promise<string | undefined> {
-  try {
-    const outRes = await fetch(`${apiUrl}/api/tasks/${taskId}/output`)
-    if (outRes.ok) {
-      const json = (await outRes.json()) as { output?: string }
-      return json.output
-    }
-    if (outputPath) {
-      const f = Bun.file(outputPath)
-      return await f.text()
-    }
-  } catch (err) {
-    log(`WARN: Failed to read task output: ${err}`)
-  }
-  return undefined
-}
 
 function formatDate(): string {
   return new Date().toISOString().slice(0, 10)
@@ -335,7 +327,9 @@ async function main(): Promise<void> {
 
   let taskId: string
   try {
-    taskId = await createTask(apiUrl, project, prompt, 'claude', 1800)
+    // Use 2-hour timeout for planning tasks. claude -p (print mode) buffers ALL output
+    // until completion. Large planning prompts (76KB spec = 120K+ tokens) take 30-60+ min.
+    taskId = await createTask(apiUrl, project, prompt, 'claude', 7200)
   } catch (err) {
     log(`ERROR: Task creation failed: ${err}`)
     storage.transitionTicket(ticketId, 'validated', { reason: 'minion-plan-dispatch: task creation failed' })
@@ -346,8 +340,8 @@ async function main(): Promise<void> {
 
   // ── 5. Poll task until complete ───────────────────────────────────────────
 
-  log(`Polling task ${taskId} (timeout: 30min)...`)
-  const taskResult = await pollTask(apiUrl, taskId, 15_000, 1_800_000)
+  log(`Polling task ${taskId} (timeout: 2hr)...`)
+  const taskResult = await pollTask(apiUrl, taskId, 15_000, 7_200_000)
 
   if (taskResult.status !== 'completed') {
     log(`ERROR: Task ${taskResult.status} — requeueing ticket`)

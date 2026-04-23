@@ -1114,7 +1114,10 @@ async function processProject(project: ProjectConfig, skipSweep: boolean): Promi
         effort: finding.effort ?? 'small',
         found_by: 'minion-detect',
         related_tickets: [],
-        tags: ['nightly', detector],
+        // Tags: ['nightly', <detector>, <finding.code>]. The code is what
+        // skip_auto_fix_tags matches against for high-cascade error classes
+        // like TS2307 (see ProjectConfig in minion-fix.ts).
+        tags: ['nightly', detector, finding.code],
         notes: [],
       })
 

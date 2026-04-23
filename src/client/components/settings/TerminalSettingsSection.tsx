@@ -1,6 +1,9 @@
 import { Switch } from '../Switch'
-import { FONT_OPTIONS, type FontOption } from '../../stores/settingsStore'
+import { FONT_OPTIONS } from '../../stores/settingsStore'
+import type { FontOption, ShortcutModifier } from '../../stores/settingsStore'
 import type { Theme } from '../../stores/themeStore'
+import { getEffectiveModifier, getModifierDisplay } from '../../utils/device'
+import { cn } from '../../utils/cn'
 
 interface TerminalSettingsSectionProps {
   draftUseWebGL: boolean
@@ -18,37 +21,17 @@ interface TerminalSettingsSectionProps {
   setDraftCustomFontFamily: (v: string) => void
   draftTheme: Theme
   setDraftTheme: (v: Theme) => void
+  draftShortcutModifier: ShortcutModifier | 'auto'
+  setDraftShortcutModifier: (v: ShortcutModifier | 'auto') => void
 }
 
-function FontSizeControl({ draftFontSize, setDraftFontSize }: { draftFontSize: number; setDraftFontSize: (v: number) => void }) {
-  return (
-    <div className="mt-4 flex items-center justify-between">
-      <div>
-        <div className="text-sm text-primary">Font Size</div>
-        <div className="text-[10px] text-muted">
-          Terminal text size in pixels (6-24)
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setDraftFontSize(Math.max(6, draftFontSize - 1))}
-          className="flex h-7 w-7 items-center justify-center rounded bg-surface border border-border text-secondary hover:bg-hover"
-        >
-          <span className="text-sm font-bold">−</span>
-        </button>
-        <span className="text-sm text-secondary w-6 text-center">{draftFontSize}</span>
-        <button
-          type="button"
-          onClick={() => setDraftFontSize(Math.min(24, draftFontSize + 1))}
-          className="flex h-7 w-7 items-center justify-center rounded bg-surface border border-border text-secondary hover:bg-hover"
-        >
-          <span className="text-sm font-bold">+</span>
-        </button>
-      </div>
-    </div>
-  )
-}
+const SHORTCUT_MODIFIERS: (ShortcutModifier | 'auto')[] = [
+  'auto',
+  'ctrl-option',
+  'ctrl-shift',
+  'cmd-option',
+  'cmd-shift',
+]
 
 export default function TerminalSettingsSection({
   draftUseWebGL,
@@ -66,80 +49,111 @@ export default function TerminalSettingsSection({
   setDraftCustomFontFamily,
   draftTheme,
   setDraftTheme,
+  draftShortcutModifier,
+  setDraftShortcutModifier,
 }: TerminalSettingsSectionProps) {
   return (
-    <div className="border-t border-border pt-4">
-      <label className="mb-2 block text-xs text-secondary">
-        Terminal Rendering
-      </label>
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="text-sm text-primary">WebGL Acceleration</div>
-          <div className="text-[10px] text-muted">
-            GPU rendering for better performance. Disable if you see flickering.
-          </div>
-        </div>
-        <Switch
-          checked={draftUseWebGL}
-          onCheckedChange={setDraftUseWebGL}
-        />
-      </div>
-      {draftUseWebGL !== useWebGL && (
-        <p className="mt-2 text-[10px] text-approval">
-          Terminal will reload when saved
-        </p>
-      )}
+    <>
+      {/* Terminal Rendering */}
+      <div className="border-t border-border pt-4 space-y-3">
+        <label className="mb-1 block text-xs text-secondary">Terminal Rendering</label>
 
-      <FontSizeControl draftFontSize={draftFontSize} setDraftFontSize={setDraftFontSize} />
-
-      <div className="mt-4 flex items-center justify-between">
-        <div>
-          <div className="text-sm text-primary">Line Height</div>
-          <div className="text-[10px] text-muted">
-            Vertical spacing (1.0 = compact, 2.0 = spacious)
+        {/* WebGL Acceleration */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">WebGL Acceleration</div>
+            <div className="text-[10px] text-muted">
+              Use WebGL for terminal rendering.
+            </div>
+            {draftUseWebGL !== useWebGL && (
+              <div className="text-[10px] text-yellow-500 mt-0.5">
+                Terminal will reload when saved
+              </div>
+            )}
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min="1.0"
-            max="2.0"
-            step="0.1"
-            value={draftLineHeight}
-            onChange={(e) => setDraftLineHeight(parseFloat(e.target.value))}
-            className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
+          <Switch
+            checked={draftUseWebGL}
+            onCheckedChange={setDraftUseWebGL}
           />
-          <span className="text-xs text-secondary w-8 text-right">{draftLineHeight.toFixed(1)}</span>
         </div>
-      </div>
 
-      <div className="mt-4 flex items-center justify-between">
-        <div>
-          <div className="text-sm text-primary">Letter Spacing</div>
-          <div className="text-[10px] text-muted">
-            Horizontal spacing between characters in pixels
+        {/* Font Size */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">Font Size</div>
+            <div className="text-[10px] text-muted">
+              Terminal font size (6–24).
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn text-xs px-2"
+              onClick={() => setDraftFontSize(Math.max(6, draftFontSize - 1))}
+            >
+              −
+            </button>
+            <span className="text-xs text-primary w-6 text-center">{draftFontSize}</span>
+            <button
+              type="button"
+              className="btn text-xs px-2"
+              onClick={() => setDraftFontSize(Math.min(24, draftFontSize + 1))}
+            >
+              +
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min="-3"
-            max="3"
-            step="1"
-            value={draftLetterSpacing}
-            onChange={(e) => setDraftLetterSpacing(parseInt(e.target.value, 10))}
-            className="w-20 h-1 bg-border rounded-lg appearance-none cursor-pointer accent-accent"
-          />
-          <span className="text-xs text-secondary w-8 text-right">{draftLetterSpacing}px</span>
-        </div>
-      </div>
 
-      <div className="mt-4">
+        {/* Line Height */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">Line Height</div>
+            <div className="text-[10px] text-muted">
+              Terminal line height.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={1.0}
+              max={2.0}
+              step={0.1}
+              value={draftLineHeight}
+              onChange={(e) => setDraftLineHeight(Number(e.target.value))}
+              className="w-24"
+            />
+            <span className="text-xs text-primary w-8 text-right">{draftLineHeight.toFixed(1)}</span>
+          </div>
+        </div>
+
+        {/* Letter Spacing */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">Letter Spacing</div>
+            <div className="text-[10px] text-muted">
+              Terminal letter spacing.
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={-3}
+              max={3}
+              step={1}
+              value={draftLetterSpacing}
+              onChange={(e) => setDraftLetterSpacing(Number(e.target.value))}
+              className="w-24"
+            />
+            <span className="text-xs text-primary w-8 text-right">{draftLetterSpacing}px</span>
+          </div>
+        </div>
+
+        {/* Font Family */}
         <div className="flex items-center justify-between">
           <div>
             <div className="text-sm text-primary">Font Family</div>
             <div className="text-[10px] text-muted">
-              Terminal typeface
+              Terminal font family.
             </div>
           </div>
           <select
@@ -154,28 +168,73 @@ export default function TerminalSettingsSection({
             ))}
           </select>
         </div>
+
+        {/* Custom Font Input */}
         {draftFontOption === 'custom' && (
-          <input
-            value={draftCustomFontFamily}
-            onChange={(e) => setDraftCustomFontFamily(e.target.value)}
-            placeholder='"Fira Code", monospace'
-            className="input text-xs mt-2 font-mono"
-          />
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-primary">Custom Font</div>
+              <div className="text-[10px] text-muted">
+                CSS font-family string for custom font.
+              </div>
+            </div>
+            <input
+              type="text"
+              value={draftCustomFontFamily}
+              onChange={(e) => setDraftCustomFontFamily(e.target.value)}
+              placeholder="'My Font', monospace"
+              className="input text-xs py-1 px-2 w-40"
+            />
+          </div>
         )}
+
+        {/* Dark Mode */}
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">Dark Mode</div>
+            <div className="text-[10px] text-muted">
+              Use dark terminal theme.
+            </div>
+          </div>
+          <Switch
+            checked={draftTheme === 'dark'}
+            onCheckedChange={(checked) => setDraftTheme(checked ? 'dark' : 'light')}
+          />
+        </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between">
-        <div>
-          <div className="text-sm text-primary">Dark Mode</div>
-          <div className="text-[10px] text-muted">
-            Switch between dark and light themes.
+      {/* Keyboard Shortcut Modifier */}
+      <div className="border-t border-border pt-4 space-y-3">
+        <label className="mb-1 block text-xs text-secondary">Keyboard Shortcut Modifier</label>
+
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-primary">Navigation Modifier</div>
+            <div className="text-[10px] text-muted">
+              Modifier combo for session navigation shortcuts.
+            </div>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {SHORTCUT_MODIFIERS.map((mod) => (
+              <button
+                key={mod}
+                type="button"
+                className={cn('btn text-xs px-2', draftShortcutModifier === mod && 'btn-primary')}
+                onClick={() => setDraftShortcutModifier(mod)}
+              >
+                {mod === 'auto' ? 'Auto' : getModifierDisplay(mod)}
+              </button>
+            ))}
           </div>
         </div>
-        <Switch
-          checked={draftTheme === 'dark'}
-          onCheckedChange={(checked) => setDraftTheme(checked ? 'dark' : 'light')}
-        />
+
+        <div className="text-[10px] text-muted">
+          {draftShortcutModifier === 'auto'
+            ? `Platform default: ${getModifierDisplay(getEffectiveModifier('auto'))}`
+            : `Current: ${getModifierDisplay(draftShortcutModifier)} (${getEffectiveModifier(draftShortcutModifier)})`
+          }
+        </div>
       </div>
-    </div>
+    </>
   )
 }

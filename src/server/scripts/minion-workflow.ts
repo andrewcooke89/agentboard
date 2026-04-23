@@ -29,6 +29,8 @@ interface ProjectConfig {
   test_cmd: string
   fix_model: string
   auto_merge_efforts?: string[]
+  // See minion-fix.ts — high-cascade tags forced out of auto-fix lane.
+  skip_auto_fix_tags?: string[]
   plan_model?: string
   impl_model?: string
   review_model?: string
@@ -565,17 +567,13 @@ Test framework: bun test (compatible with Jest/Vitest API)
   // Gate 1: compile check with retry
   const tsc = Bun.spawnSync(['tsc', '--noEmit'], { cwd: workCard.project })
   workCard.gates.tests_compile = tsc.exitCode === 0
-  if (workCard.gates.tests_compile) {
-    // tests compile, continue
-  } else {
+  if (!workCard.gates.tests_compile) {
     const compileErrors = (tsc.stdout.toString() || tsc.stderr.toString()).slice(0, 2000)
     // Filter to only test file errors
     const testFileErrors = compileErrors.split('\n').filter((l) =>
       workCard.phases.tests.files.some((f) => l.includes(path.basename(f)))
     ).join('\n')
-    if (!testFileErrors) {
-      console.warn(`${tag} WARNING: tests do not compile: ${compileErrors}`)
-    } else {
+    if (testFileErrors) {
       console.log(`${tag} Tests have type errors — retrying with error feedback`)
       workCard.retries.tests = (workCard.retries.tests || 0) + 1
       const testFilesToFix = testFiles.filter((testFile) => {
@@ -634,6 +632,8 @@ ${testFileErrors}
       } else {
         console.log(`${tag} Tests compile after fix`)
       }
+    } else {
+      console.warn(`${tag} WARNING: tests do not compile: ${compileErrors}`)
     }
   }
 

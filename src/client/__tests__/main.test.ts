@@ -57,8 +57,7 @@ globalAny.document = {
 
 describe('main entrypoint', () => {
   test('mounts the app', async () => {
-    // @ts-expect-error - TypeScript doesn't allow .tsx extensions without allowImportingTsExtensions
-    await import('../main.tsx')
+    await import('../main')
     expect(renderCalls).toHaveLength(1)
     expect(renderCalls[0]?.element?.id).toBe('root')
   })

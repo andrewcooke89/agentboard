@@ -9,7 +9,7 @@ interface TerminalSearchProps {
   onClose: () => void
 }
 
-function useTerminalSearch(searchAddon: SearchAddon | null, onClose: () => void) {
+export default function TerminalSearch({ searchAddon, onClose }: TerminalSearchProps) {
   const [query, setQuery] = useState('')
   const [matchCount, setMatchCount] = useState<{ current: number; total: number } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -110,12 +110,6 @@ function useTerminalSearch(searchAddon: SearchAddon | null, onClose: () => void)
       }
     }
   }
-
-  return { query, matchCount, inputRef, handleQueryChange, handleNext, handlePrevious, handleKeyDown }
-}
-
-export default function TerminalSearch({ searchAddon, onClose }: TerminalSearchProps) {
-  const { query, matchCount, inputRef, handleQueryChange, handleNext, handlePrevious, handleKeyDown } = useTerminalSearch(searchAddon, onClose)
 
   return (
     <div className="absolute top-2 right-2 z-30 flex items-center gap-2 rounded border border-border bg-elevated px-3 py-2 shadow-lg">
